@@ -40,17 +40,26 @@ _CLASSIFIER_USER = (
 class FakeProvider:
     def __init__(self, events: list[str] | None = None) -> None:
         self.preflight_calls: list[tuple[MessagesRequest, ReasoningPolicy]] = []
+        self.responses_preflight_calls: list[
+            tuple[OpenAIResponsesRequest, ReasoningPolicy]
+        ] = []
         self.requests: list[MessagesRequest] = []
+        self.responses_requests: list[OpenAIResponsesRequest] = []
         self.stream_kwargs: list[dict[str, Any]] = []
         self.events = events or [
             'event: message_start\ndata: {"type":"message_start"}\n\n',
             'event: message_stop\ndata: {"type":"message_stop"}\n\n',
         ]
 
-    def preflight_stream(
+    def preflight_messages(
         self, request: MessagesRequest, *, reasoning: ReasoningPolicy
     ) -> None:
         self.preflight_calls.append((request, reasoning))
+
+    def preflight_responses(
+        self, request: OpenAIResponsesRequest, *, reasoning: ReasoningPolicy
+    ) -> None:
+        self.responses_preflight_calls.append((request, reasoning))
 
     async def cleanup(self) -> None:
         return None
@@ -58,7 +67,7 @@ class FakeProvider:
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         return frozenset({ProviderModelInfo("test-model")})
 
-    async def stream_response(
+    async def stream_messages(
         self,
         request: MessagesRequest,
         input_tokens: int = 0,
@@ -78,6 +87,26 @@ class FakeProvider:
         )
         for event in self.events:
             yield event
+
+    async def stream_responses(
+        self,
+        request: OpenAIResponsesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        self.responses_requests.append(request)
+        self.stream_kwargs.append(
+            {
+                "input_tokens": input_tokens,
+                "request_id": request_id,
+                "response_model": response_model,
+                "reasoning": reasoning,
+            }
+        )
+        yield 'event: response.completed\ndata: {"type":"response.completed"}\n\n'
 
 
 async def _streaming_body_text(response: StreamingResponse) -> str:
@@ -134,7 +163,7 @@ async def test_messages_handler_preflight_invalid_request_stays_http_error(
     stream: bool,
 ) -> None:
     class RejectPreflightProvider(FakeProvider):
-        def preflight_stream(
+        def preflight_messages(
             self,
             request: MessagesRequest,
             *,
@@ -339,7 +368,7 @@ async def test_messages_handler_discards_partial_stream_false_output_on_error() 
 @pytest.mark.asyncio
 async def test_messages_handler_stream_false_provider_exception_keeps_status() -> None:
     class FailingProvider(FakeProvider):
-        async def stream_response(
+        async def stream_messages(
             self,
             request: Any,
             input_tokens: int = 0,
@@ -616,7 +645,7 @@ async def test_responses_handler_bypasses_message_only_optimizations() -> None:
     assert isinstance(response, StreamingResponse)
     body = await _streaming_body_text(response)
     assert "response.completed" in body
-    assert provider.requests[0].messages[0].content == "quota check"
+    assert provider.responses_requests[0].input == "quota check"
 
 
 @pytest.mark.asyncio
@@ -636,7 +665,9 @@ async def test_responses_handler_does_not_apply_safety_classifier_policy() -> No
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] == ReasoningPolicy.provider_default()
+    assert (
+        provider.responses_preflight_calls[0][1] == ReasoningPolicy.provider_default()
+    )
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.provider_default()
     assert (
         _trace_events(

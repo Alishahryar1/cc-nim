@@ -23,6 +23,7 @@ from free_claude_code.application.ports import (
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 
@@ -384,7 +385,7 @@ class _ControlledProvider:
         self.closed = asyncio.Event()
         self.request_ids: list[str] = []
 
-    def preflight_stream(
+    def preflight_messages(
         self,
         _request: MessagesRequest,
         *,
@@ -392,9 +393,36 @@ class _ControlledProvider:
     ) -> None:
         del reasoning
 
-    async def stream_response(
+    def preflight_responses(
+        self,
+        _request: OpenAIResponsesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+    ) -> None:
+        del reasoning
+
+    async def stream_messages(
         self,
         _request: MessagesRequest,
+        *,
+        input_tokens: int,
+        request_id: str,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        del input_tokens, response_model, reasoning
+        self.request_ids.append(request_id)
+        try:
+            for chunk in self._chunks:
+                yield chunk
+            self.blocked.set()
+            await asyncio.Event().wait()
+        finally:
+            self.closed.set()
+
+    async def stream_responses(
+        self,
+        _request: OpenAIResponsesRequest,
         *,
         input_tokens: int,
         request_id: str,
@@ -471,6 +499,23 @@ def _message_start() -> str:
             },
         },
     )
+
+
+def _response_created() -> str:
+    payload = {
+        "type": "response.created",
+        "sequence_number": 0,
+        "response": {
+            "id": "resp_lifetime",
+            "object": "response",
+            "model": "nvidia_nim/test-model",
+            "status": "in_progress",
+            "output": [],
+            "error": None,
+            "usage": None,
+        },
+    }
+    return f"event: response.created\ndata: {json.dumps(payload)}\n\n"
 
 
 def _partial_message_stream() -> tuple[str, ...]:
@@ -617,7 +662,7 @@ async def test_real_messages_post_start_disconnect_has_no_terminal_error() -> No
 
 @pytest.mark.asyncio
 async def test_real_responses_post_start_disconnect_has_no_failed_event() -> None:
-    provider = _ControlledProvider((_message_start(),))
+    provider = _ControlledProvider((_response_created(),))
 
     sent, lease = await _disconnect_real_app(
         path="/v1/responses",

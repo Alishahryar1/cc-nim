@@ -111,7 +111,7 @@ def test_replay_is_independent_of_current_turn_reasoning_control(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_uses_shared_openai_chat_provider(
+async def test_stream_messages_uses_shared_openai_chat_provider(
     provider: OpenAIChatProvider,
 ) -> None:
     chunk = MagicMock()
@@ -139,7 +139,7 @@ async def test_stream_response_uses_shared_openai_chat_provider(
         output = "".join(
             [
                 event
-                async for event in provider.stream_response(
+                async for event in provider.stream_messages(
                     make_messages_request(LLAMACPP_MODEL)
                 )
             ]

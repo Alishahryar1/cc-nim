@@ -11,6 +11,7 @@ from tests.api.model_fallback_support import (
     execution_failure,
     fallback_client,
     messages_payload,
+    responses_created_event,
     responses_payload,
     text_stream,
 )
@@ -175,24 +176,9 @@ def test_postframe_failure_never_opens_fallback_for_streaming_messages() -> None
 
 
 def test_postframe_failure_never_opens_fallback_for_responses() -> None:
-    first = format_sse_event(
-        "message_start",
-        {
-            "type": "message_start",
-            "message": {
-                "id": "msg_primary",
-                "type": "message",
-                "role": "assistant",
-                "model": "nvidia_nim/primary-model",
-                "content": [],
-                "stop_reason": None,
-                "stop_sequence": None,
-                "usage": {"input_tokens": 3, "output_tokens": 0},
-            },
-        },
-    )
+    first = responses_created_event(model="nvidia_nim/primary-model")
     primary = ControlledFallbackProvider(
-        chunks_before_failure=(first,),
+        responses_chunks_before_failure=(first,),
         failure=execution_failure("primary failed after start"),
     )
     fallback = ControlledFallbackProvider(text="must not run")

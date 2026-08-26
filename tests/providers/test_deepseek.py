@@ -17,6 +17,7 @@ from free_claude_code.core.anthropic.models import (
     Tool,
 )
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.openai_responses.models import OpenAIResponsesRequest
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from tests.providers.support import (
     REASONING_OFF,
@@ -55,6 +56,81 @@ def test_init(deepseek_config):
     assert provider._api_key == "test_deepseek_key"
     assert provider._base_url == "https://api.deepseek.com"
     assert mock_client.called
+
+
+def test_responses_request_uses_deepseek_chat_policy(deepseek_provider):
+    request = OpenAIResponsesRequest.model_validate(
+        {
+            "model": "deepseek-chat",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "Read",
+                    "arguments": '{"file_path":"x"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "ok",
+                },
+                {"role": "user", "content": "Continue"},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "Read",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"file_path": {"type": "string"}},
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "name": "Read"},
+        }
+    )
+
+    translated = deepseek_provider._build_responses_request_body(
+        request, reasoning=REASONING_ON
+    )
+
+    assert translated.body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+    assert translated.body["tool_choice"] == "auto"
+    assert translated.body["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
+    deepseek_provider,
+):
+    request = OpenAIResponsesRequest.model_validate(
+        {
+            "model": "deepseek-chat",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Inspect first"}],
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "Read",
+                    "arguments": '{"file_path":"x"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "ok",
+                },
+            ],
+        }
+    )
+
+    translated = deepseek_provider._build_responses_request_body(
+        request, reasoning=REASONING_ON
+    )
+
+    assert translated.body["messages"][0]["reasoning_content"] == "Inspect first"
+    assert translated.body["extra_body"] == {"thinking": {"type": "enabled"}}
 
 
 @pytest.mark.parametrize(
@@ -710,7 +786,7 @@ def test_preflight_strips_user_image():
         admission=immediate_admission(),
     )
     # Should not raise; image is stripped.
-    provider.preflight_stream(request, reasoning=REASONING_ON)
+    provider.preflight_messages(request, reasoning=REASONING_ON)
     body = provider._build_request_body(request, reasoning=reasoning_for(request))
     content = body["messages"][0]["content"]
     assert "attachment omitted" in content.lower()
@@ -748,7 +824,7 @@ def test_vision_model_forwards_user_image():
         admission=immediate_admission(),
     )
     # Must not raise on preflight (no InvalidRequestError for image blocks).
-    provider.preflight_stream(request, reasoning=REASONING_ON)
+    provider.preflight_messages(request, reasoning=REASONING_ON)
     body = provider._build_request_body(request, reasoning=reasoning_for(request))
     content = body["messages"][0]["content"]
     assert isinstance(content, list)
@@ -796,7 +872,7 @@ def test_vision_model_strips_user_document():
         ),
         admission=immediate_admission(),
     )
-    provider.preflight_stream(request, reasoning=REASONING_ON)
+    provider.preflight_messages(request, reasoning=REASONING_ON)
     body = provider._build_request_body(request, reasoning=reasoning_for(request))
     content = body["messages"][0]["content"]
     assert content
@@ -833,7 +909,7 @@ def test_preflight_rejects_mcp_servers():
         admission=immediate_admission(),
     )
     with pytest.raises(InvalidRequestError, match="mcp_servers"):
-        provider.preflight_stream(request)
+        provider.preflight_messages(request)
 
 
 def test_preflight_rejects_listed_server_tools_in_tools_list():
@@ -852,7 +928,7 @@ def test_preflight_rejects_listed_server_tools_in_tools_list():
         admission=immediate_admission(),
     )
     with pytest.raises(InvalidRequestError, match="web_search"):
-        provider.preflight_stream(request)
+        provider.preflight_messages(request)
 
 
 def test_preflight_rejects_server_tool_result_blocks():
@@ -889,7 +965,7 @@ def test_preflight_rejects_server_tool_result_blocks():
         admission=immediate_admission(),
     )
     with pytest.raises(InvalidRequestError, match=r"web_search_tool_result|server"):
-        provider.preflight_stream(request)
+        provider.preflight_messages(request)
 
 
 def test_non_tool_top_level_reasoning_is_not_replayed(deepseek_provider):
@@ -1081,7 +1157,7 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
     with patch.object(deepseek_provider._client.chat.completions, "create", create):
         chunks = [
             chunk
-            async for chunk in deepseek_provider.stream_response(
+            async for chunk in deepseek_provider.stream_messages(
                 request, input_tokens=7, request_id="r1"
             )
         ]

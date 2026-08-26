@@ -35,7 +35,6 @@ from .models import (
     Tool,
     Usage,
 )
-from .openai_tool_names import OpenAIToolNameCodec
 from .request_serialization import dump_messages_request, serialize_tool_result_content
 from .request_snapshot import anthropic_request_snapshot
 from .sse_aggregation import aggregate_anthropic_sse_to_message
@@ -72,7 +71,6 @@ __all__ = [
     "MessagesRequest",
     "MessagesResponse",
     "OpenAIConversionError",
-    "OpenAIToolNameCodec",
     "ReasoningReplayMode",
     "StreamBlockLedger",
     "SystemContent",

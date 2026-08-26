@@ -22,6 +22,7 @@ from free_claude_code.providers.model_listing import (
     extract_openai_model_infos,
 )
 from free_claude_code.providers.openai_chat import (
+    ChatStreamOutput,
     ChatTemplateReasoning,
     OpenAIChatProfile,
     OpenAIChatProvider,
@@ -131,14 +132,14 @@ class CloudflareProvider(OpenAIChatProvider):
             await maybe_await_aclose(response)
 
     def _handle_extra_reasoning(
-        self, delta: Any, ledger: Any, *, output_reasoning: bool
+        self, delta: Any, output: ChatStreamOutput, *, output_reasoning: bool
     ) -> Iterator[str]:
         """Map Cloudflare's ``reasoning`` delta field to Anthropic thinking."""
         reasoning = _cloudflare_reasoning(delta)
         if not output_reasoning or not reasoning:
             return
-        yield from ledger.ensure_thinking_block()
-        yield ledger.emit_thinking_delta(reasoning)
+        yield from output.ensure_reasoning_block()
+        yield output.emit_reasoning_delta(reasoning)
 
     def _model_list_headers(self) -> dict[str, str]:
         if self._api_key is None:

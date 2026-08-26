@@ -3,17 +3,26 @@
 from dataclasses import dataclass
 from typing import Any
 
-from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
+from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 
 
 class ResponsesStreamFailure(RuntimeError):
     """An upstream Responses stream reported a terminal failure."""
 
-    def __init__(self, message: str, *, code: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        event_type: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
+        self.event_type = event_type
+        self.payload = payload
 
 
 @dataclass(slots=True)
@@ -76,7 +85,7 @@ class ResponsesProviderStream:
         if event_type in {"response.completed", "response.incomplete"}:
             return self._finish(data, incomplete=event_type == "response.incomplete")
         if event_type in {"response.failed", "error", "response.error"}:
-            raise _stream_failure(data)
+            raise responses_stream_failure_from_event(event_type, data)
         return []
 
     def _item_added(self, data: dict[str, Any]) -> list[str]:
@@ -233,7 +242,12 @@ class ResponsesProviderStream:
         return events
 
 
-def _stream_failure(data: dict[str, Any]) -> ResponsesStreamFailure:
+def responses_stream_failure_from_event(
+    event_type: str,
+    data: dict[str, Any],
+) -> ResponsesStreamFailure:
+    """Retain one native failure event for provider-owned retry decisions."""
+
     response = data.get("response")
     response = response if isinstance(response, dict) else {}
     error = response.get("error", data.get("error"))
@@ -243,6 +257,8 @@ def _stream_failure(data: dict[str, Any]) -> ResponsesStreamFailure:
     return ResponsesStreamFailure(
         message if isinstance(message, str) and message else "OpenAI response failed.",
         code=code if isinstance(code, str) else None,
+        event_type=event_type,
+        payload=data,
     )
 
 

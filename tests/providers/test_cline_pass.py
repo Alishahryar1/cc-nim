@@ -316,7 +316,7 @@ async def test_stream_uses_upstream_sse_and_preserves_reasoning_details(
         event_text = "".join(
             [
                 event
-                async for event in cline_pass_provider.stream_response(
+                async for event in cline_pass_provider.stream_messages(
                     _request(),
                     reasoning=ReasoningPolicy.on(),
                 )

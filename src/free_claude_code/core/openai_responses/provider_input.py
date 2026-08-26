@@ -6,13 +6,14 @@ from typing import Any
 from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
 from free_claude_code.core.anthropic.conversion import resolve_anthropic_tool_choice
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.request_serialization import (
     serialize_tool_result_content,
 )
-from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
+from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
+from free_claude_code.core.reasoning import ReasoningPolicy
 
 from .errors import ResponsesConversionError
+from .reasoning import responses_reasoning_config
 
 
 def build_responses_provider_request(
@@ -78,7 +79,7 @@ def build_responses_provider_request(
     tool_choice = resolve_anthropic_tool_choice(request.tools, request.tool_choice)
     if tool_choice is not None:
         body["tool_choice"] = _tool_choice(tool_choice, tool_names=tool_names)
-    if reasoning_config := _reasoning_config(reasoning):
+    if reasoning_config := responses_reasoning_config(reasoning):
         body["reasoning"] = reasoning_config
     return body
 
@@ -340,13 +341,3 @@ def _tool_choice(
             raise ResponsesConversionError("Forced tool choice requires a tool name.")
         return {"type": "function", "name": tool_names.encode(name)}
     raise ResponsesConversionError(f"Unsupported tool_choice type {choice_type!r}.")
-
-
-def _reasoning_config(reasoning: ReasoningPolicy) -> dict[str, str]:
-    if reasoning.control is ReasoningControl.OFF:
-        return {"effort": "none"}
-    if reasoning.effort is not None:
-        return {"effort": reasoning.effort.value, "summary": "auto"}
-    if reasoning.requests_reasoning:
-        return {"summary": "auto"}
-    return {}
