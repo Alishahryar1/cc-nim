@@ -1,6 +1,7 @@
 """Application-owned provider execution contracts."""
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from unittest.mock import MagicMock, patch
 
@@ -145,6 +146,21 @@ class FailingPreflightProvider(FakeProvider):
         raise ValueError("invalid provider request")
 
 
+class ExecutionFailurePreflightProvider(FakeProvider):
+    def __init__(self, failure: ExecutionFailure) -> None:
+        super().__init__()
+        self._failure = failure
+
+    def preflight_stream(
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+    ) -> None:
+        del request, reasoning
+        raise self._failure
+
+
 class ApplicationErrorPreflightProvider(FakeProvider):
     def __init__(self, error: InvalidRequestError) -> None:
         super().__init__()
@@ -284,6 +300,217 @@ def _executor_stream(
         raw_log_payload={},
         request_id=request_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_candidate_execution_seam_needs_no_messages_or_provider_resolver() -> (
+    None
+):
+    primary = _target("primary", "primary-model")
+    fallback = _target("fallback", "fallback-model")
+    resolved = ResolvedModelRoute(
+        original_model="gateway-model",
+        primary=primary,
+        fallbacks=(fallback,),
+        reasoning_preference=ReasoningPreference.CLIENT,
+    )
+    opened: list[str] = []
+    closed: list[str] = []
+    primary_failure = _execution_failure("primary failed")
+
+    async def primary_stream() -> AsyncIterator[str]:
+        try:
+            raise primary_failure
+            yield
+        finally:
+            closed.append(primary.provider_model_ref)
+
+    async def fallback_stream() -> AsyncIterator[str]:
+        try:
+            yield "fallback-frame"
+        finally:
+            closed.append(fallback.provider_model_ref)
+
+    async def open_candidate(target: ProviderModelTarget) -> AsyncIterator[str]:
+        opened.append(target.provider_model_ref)
+        if target == primary:
+            return primary_stream()
+        return fallback_stream()
+
+    def unexpected_provider_resolution(_provider_id: str) -> FakeProvider:
+        raise AssertionError("protocol-neutral execution must not resolve providers")
+
+    executor = ProviderExecutor(
+        unexpected_provider_resolution,
+        progress_timeout_seconds=60.0,
+    )
+    stream = executor.stream_candidates(
+        resolved,
+        wire_api="responses",
+        request_id="req_protocol_neutral",
+        open_candidate=open_candidate,
+    )
+
+    assert [chunk async for chunk in stream] == ["fallback-frame"]
+    assert opened == [
+        "primary/primary-model",
+        "fallback/fallback-model",
+    ]
+    assert closed == [
+        "primary/primary-model",
+        "fallback/fallback-model",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_candidate_opening_obeys_request_progress_deadline() -> None:
+    primary = _target("primary", "primary-model")
+    fallback = _target("fallback", "fallback-model")
+    resolved = ResolvedModelRoute(
+        original_model="gateway-model",
+        primary=primary,
+        fallbacks=(fallback,),
+        reasoning_preference=ReasoningPreference.CLIENT,
+    )
+    opened: list[str] = []
+    never_ready = asyncio.Event()
+
+    async def open_candidate(target: ProviderModelTarget) -> AsyncIterator[str]:
+        opened.append(target.provider_model_ref)
+        await never_ready.wait()
+        raise AssertionError("candidate opening unexpectedly resumed")
+
+    executor = ProviderExecutor(
+        lambda _provider_id: FakeProvider(),
+        progress_timeout_seconds=0.02,
+    )
+    stream = executor.stream_candidates(
+        resolved,
+        wire_api="responses",
+        request_id="req_candidate_open_timeout",
+        open_candidate=open_candidate,
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await asyncio.wait_for(anext(stream), timeout=0.2)
+
+    assert exc_info.value.kind is FailureKind.TIMEOUT
+    assert exc_info.value.status_code == 504
+    assert opened == ["primary/primary-model"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_opening_overrun_maps_failure_to_current_timeout() -> None:
+    primary = _target("primary", "primary-model")
+    resolved = ResolvedModelRoute(
+        original_model="gateway-model",
+        primary=primary,
+        fallbacks=(),
+        reasoning_preference=ReasoningPreference.CLIENT,
+    )
+    provider_failure = _execution_failure("late provider failure")
+
+    async def open_candidate(_target: ProviderModelTarget) -> AsyncIterator[str]:
+        time.sleep(0.03)
+        raise provider_failure
+
+    executor = ProviderExecutor(
+        lambda _provider_id: FakeProvider(),
+        progress_timeout_seconds=0.01,
+    )
+    stream = executor.stream_candidates(
+        resolved,
+        wire_api="responses",
+        request_id="req_candidate_open_overrun",
+        open_candidate=open_candidate,
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await anext(stream)
+
+    assert exc_info.value.kind is FailureKind.TIMEOUT
+    assert exc_info.value.status_code == 504
+
+
+@pytest.mark.asyncio
+async def test_candidate_opening_overrun_closes_returned_stream_once() -> None:
+    primary = _target("primary", "primary-model")
+    resolved = ResolvedModelRoute(
+        original_model="gateway-model",
+        primary=primary,
+        fallbacks=(),
+        reasoning_preference=ReasoningPreference.CLIENT,
+    )
+    returned_stream = CloseControlledProvider(_execution_failure("unused"))
+
+    async def open_candidate(_target: ProviderModelTarget) -> AsyncIterator[str]:
+        time.sleep(0.03)
+        return returned_stream
+
+    executor = ProviderExecutor(
+        lambda _provider_id: FakeProvider(),
+        progress_timeout_seconds=0.01,
+    )
+    stream = executor.stream_candidates(
+        resolved,
+        wire_api="responses",
+        request_id="req_candidate_open_stream_overrun",
+        open_candidate=open_candidate,
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await anext(stream)
+
+    assert exc_info.value.kind is FailureKind.TIMEOUT
+    assert returned_stream.stream_close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_opening_propagates_external_cancellation() -> None:
+    primary = _target("primary", "primary-model")
+    fallback = _target("fallback", "fallback-model")
+    resolved = ResolvedModelRoute(
+        original_model="gateway-model",
+        primary=primary,
+        fallbacks=(fallback,),
+        reasoning_preference=ReasoningPreference.CLIENT,
+    )
+    opened: list[str] = []
+    opening_started = asyncio.Event()
+    opening_unwound = asyncio.Event()
+
+    async def open_candidate(target: ProviderModelTarget) -> AsyncIterator[str]:
+        opened.append(target.provider_model_ref)
+        try:
+            opening_started.set()
+            await asyncio.Event().wait()
+        finally:
+            opening_unwound.set()
+        raise AssertionError("candidate opening unexpectedly resumed")
+
+    executor = ProviderExecutor(
+        lambda _provider_id: FakeProvider(),
+        progress_timeout_seconds=60.0,
+    )
+    stream = executor.stream_candidates(
+        resolved,
+        wire_api="responses",
+        request_id="req_candidate_open_cancelled",
+        open_candidate=open_candidate,
+    )
+
+    async def read_first_chunk() -> str:
+        return await anext(stream)
+
+    read_task = asyncio.create_task(read_first_chunk())
+    await opening_started.wait()
+
+    read_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await read_task
+
+    assert opening_unwound.is_set()
+    assert opened == ["primary/primary-model"]
 
 
 @pytest.mark.asyncio
@@ -431,6 +658,43 @@ async def test_retryable_preframe_failure_selects_fallback_after_closing_primary
     )
     assert selected["selected_provider_model_ref"] == "fallback/fallback-model"
     assert selected["candidate_index"] == 2
+
+
+@pytest.mark.asyncio
+async def test_fallback_preflight_failure_remains_terminal() -> None:
+    primary = ControlledProvider([_execution_failure("primary failed")])
+    preflight_failure = _execution_failure("fallback preflight failed")
+    second = ExecutionFailurePreflightProvider(preflight_failure)
+    third = ControlledProvider(["unexpected-third-frame"])
+    resolved_ids: list[str] = []
+
+    def resolve(provider_id: str) -> FakeProvider:
+        resolved_ids.append(provider_id)
+        return {
+            "provider": primary,
+            "second": second,
+            "third": third,
+        }[provider_id]
+
+    executor = ProviderExecutor(resolve, progress_timeout_seconds=60.0)
+    stream = executor.stream(
+        _routed_request(
+            _target("second", "second-model"),
+            _target("third", "third-model"),
+        ),
+        wire_api="messages",
+        raw_log_label="FULL_PAYLOAD",
+        raw_log_payload={},
+        request_id="req_fallback_preflight_failure",
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await anext(stream)
+
+    assert exc_info.value is preflight_failure
+    assert resolved_ids == ["provider", "second"]
+    assert third.preflight_calls == []
+    assert third.stream_calls == []
 
 
 @pytest.mark.asyncio
