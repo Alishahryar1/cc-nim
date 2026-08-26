@@ -3,7 +3,7 @@
 import asyncio
 import math
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Literal
 
 from loguru import logger
@@ -31,9 +31,7 @@ TokenCounter = Callable[
 ]
 WireApi = Literal["messages", "responses"]
 type CandidateStreamResult = AsyncIterator[str] | ExecutionFailure
-type CandidateStreamFactory = Callable[
-    [ProviderModelTarget], Awaitable[CandidateStreamResult]
-]
+type CandidateStreamFactory = Callable[[ProviderModelTarget], CandidateStreamResult]
 
 
 class ProviderExecutor:
@@ -211,7 +209,7 @@ class ProviderExecutor:
             routed.request.tools,
         )
 
-        async def open_candidate(target: ProviderModelTarget) -> CandidateStreamResult:
+        def open_candidate(target: ProviderModelTarget) -> CandidateStreamResult:
             provider = (
                 primary_provider
                 if target is primary
@@ -258,9 +256,10 @@ class ProviderExecutor:
     ) -> AsyncIterator[str]:
         """Execute ordered candidates without owning their wire protocol.
 
-        The callback owns resources until it returns an iterator. The executor
-        owns and closes every returned iterator. Returning an ExecutionFailure
-        makes that failure fallback-eligible; raising remains terminal.
+        The synchronous callback owns resources until it returns an iterator.
+        The executor owns and closes every returned iterator. Returning an
+        ExecutionFailure makes that failure fallback-eligible; raising remains
+        terminal.
         """
         candidates = (resolved.primary, *resolved.fallbacks)
 
@@ -272,41 +271,11 @@ class ProviderExecutor:
                 candidate_committed = False
                 candidate_failure: ExecutionFailure | None = None
                 try:
-                    if loop.time() >= progress_deadline:
-                        raise self._progress_timeout_failure(
-                            request_id=request_id,
-                            provider_id=target.provider_id,
-                        )
-                    open_timeout = asyncio.timeout_at(progress_deadline)
-                    try:
-                        async with open_timeout:
-                            opened_candidate = await open_candidate(target)
-                    except TimeoutError as exc:
-                        if (
-                            not open_timeout.expired()
-                            and loop.time() < progress_deadline
-                        ):
-                            raise
-                        raise self._progress_timeout_failure(
-                            request_id=request_id,
-                            provider_id=target.provider_id,
-                        ) from exc
-                    except Exception as exc:
-                        if loop.time() < progress_deadline:
-                            raise
-                        raise self._progress_timeout_failure(
-                            request_id=request_id,
-                            provider_id=target.provider_id,
-                        ) from exc
+                    opened_candidate = open_candidate(target)
                     if isinstance(opened_candidate, ExecutionFailure):
                         candidate_failure = opened_candidate
                     else:
                         provider_stream = opened_candidate
-                    if open_timeout.expired() or loop.time() >= progress_deadline:
-                        raise self._progress_timeout_failure(
-                            request_id=request_id,
-                            provider_id=target.provider_id,
-                        )
 
                     if provider_stream is None and candidate_failure is None:
                         raise TypeError(
