@@ -97,7 +97,8 @@ class CanonicalFailureProvider:
 class StalledProvider:
     """Provider double that makes no protocol-visible progress."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, responses_chunks: tuple[str, ...] = ()) -> None:
+        self._responses_chunks = responses_chunks
         self.close_calls = 0
 
     def preflight_messages(
@@ -143,6 +144,8 @@ class StalledProvider:
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model, reasoning
         try:
+            for chunk in self._responses_chunks:
+                yield chunk
             await asyncio.Event().wait()
             yield ""
         finally:
@@ -784,6 +787,71 @@ def test_post_start_progress_timeout_is_terminal_protocol_event(path: str) -> No
         assert trace["client_should_retry"] is False
     else:
         trace_mock.assert_not_called()
+
+
+def test_responses_application_progress_timeout_closes_committed_lifecycle() -> None:
+    response_id = "resp_application_timeout"
+    provider = StalledProvider(
+        responses_chunks=(
+            _responses_event(
+                "response.created",
+                {
+                    "type": "response.created",
+                    "sequence_number": 0,
+                    "response": _responses_wire_payload(
+                        response_id=response_id,
+                        status="in_progress",
+                    ),
+                },
+            ),
+        )
+    )
+    resolver_patch, client = _client_for(
+        provider,
+        settings=Settings(provider_progress_timeout=0.02),
+    )
+
+    with (
+        resolver_patch,
+        patch("free_claude_code.api.response_streams.trace_event") as trace_mock,
+        client,
+    ):
+        response = client.post("/v1/responses", json=_responses_payload())
+
+    request_id = response.headers["request-id"]
+    events = parse_sse_text(response.text)
+    assert response.status_code == 200
+    assert [event.event for event in events] == [
+        "response.created",
+        "response.failed",
+    ]
+    assert events[-1].data["sequence_number"] == 1
+    failed = events[-1].data["response"]
+    assert failed["id"] == response_id
+    assert failed["status"] == "failed"
+    assert failed["error"] == {
+        "message": (
+            "Provider execution made no progress for 0.02 seconds.\n\n"
+            f"Request ID: {request_id}"
+        ),
+        "type": "timeout_error",
+        "param": None,
+        "code": None,
+    }
+    assert provider.close_calls == 1
+    assert _terminal_trace(trace_mock) == {
+        "stage": "egress",
+        "event": "free_claude_code.api.response.terminal_execution_error",
+        "source": "api",
+        "wire_api": "responses",
+        "request_id": request_id,
+        "status_code": 504,
+        "error_type": "timeout_error",
+        "client_should_retry": False,
+        "exc_type": "ExecutionFailure",
+        "failure_kind": "timeout",
+        "provider_retryable": False,
+    }
 
 
 def test_stream_false_progress_timeout_discards_partial_content() -> None:

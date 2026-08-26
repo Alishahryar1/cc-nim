@@ -352,3 +352,35 @@ def test_build_responses_chat_request_rejects_message_with_only_skipped_parts() 
             ),
             reasoning_replay=ReasoningReplayMode.DISABLED,
         )
+
+
+def test_build_responses_chat_request_rejects_colliding_tool_wire_names() -> None:
+    with pytest.raises(ResponsesConversionError, match="same Chat-compatible name"):
+        build_responses_chat_request(
+            _request(
+                tools=[
+                    {
+                        "type": "function",
+                        "name": "mcp_shell__echo_value",
+                        "parameters": {"type": "object"},
+                    },
+                    {
+                        "type": "namespace",
+                        "name": "mcp.shell",
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "echo value",
+                                "parameters": {"type": "object"},
+                            }
+                        ],
+                    },
+                ],
+                tool_choice={
+                    "type": "function",
+                    "namespace": "mcp.shell",
+                    "name": "echo value",
+                },
+            ),
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+        )

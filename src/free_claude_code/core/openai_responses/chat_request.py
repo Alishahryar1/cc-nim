@@ -448,12 +448,10 @@ def _chat_tools(
         tool_type = tool.get("type")
         if tool_type == "function":
             converted_tool, name = _chat_function_tool(tool, namespace=None)
-            converted.append(converted_tool)
-            names.add(name)
+            _append_unique_chat_tool(converted, names, converted_tool, name)
         elif tool_type == "custom":
             converted_tool, name = _chat_custom_tool(tool, namespace=None)
-            converted.append(converted_tool)
-            names.add(name)
+            _append_unique_chat_tool(converted, names, converted_tool, name)
         elif tool_type == "namespace":
             namespace = required_str(tool.get("name"), "tool.namespace.name")
             nested = tool.get("tools")
@@ -477,11 +475,24 @@ def _chat_tools(
                     )
                 else:
                     continue
-                converted.append(converted_tool)
-                names.add(name)
+                _append_unique_chat_tool(converted, names, converted_tool, name)
         elif isinstance(tool_type, str) and tool_type in _PASSIVE_TOOL_TYPES:
             continue
     return converted, frozenset(names)
+
+
+def _append_unique_chat_tool(
+    converted: list[dict[str, object]],
+    names: set[str],
+    tool: dict[str, object],
+    name: str,
+) -> None:
+    if name in names:
+        raise ResponsesConversionError(
+            f"Responses tools map to the same Chat-compatible name {name!r}"
+        )
+    converted.append(tool)
+    names.add(name)
 
 
 def _chat_function_tool(

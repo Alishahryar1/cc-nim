@@ -82,6 +82,7 @@ class ResponsesHandler:
                 pre_start_error_response=lambda exc: self._pre_start_error_response(
                     exc, request_id=request_id
                 ),
+                request_id=request_id,
             )
         except ApplicationError:
             raise
