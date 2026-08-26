@@ -69,6 +69,37 @@ async def test_telegram_voice_unauthorized_ignored(telegram_platform):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("allowed_user_id", [None, "   "])
+async def test_telegram_voice_rejects_when_allowlist_unset(allowed_user_id):
+    """Voice is ignored when ALLOWED_TELEGRAM_USER_ID is missing or blank."""
+    transcriber = MagicMock()
+    transcriber.transcribe = AsyncMock(return_value="should not run")
+    with patch(
+        "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
+    ):
+        platform = TelegramRuntime(
+            bot_token="test_token",
+            allowed_user_id=allowed_user_id,
+            limiter=MagicMock(),
+            transcriber=transcriber,
+        )
+    mock_update = MagicMock()
+    mock_update.message.voice = MagicMock(file_id="f1", mime_type="audio/ogg")
+    mock_update.effective_user.id = 12345
+    mock_update.effective_chat.id = 6789
+    mock_update.message.reply_text = AsyncMock()
+
+    with patch.object(
+        platform._voice_flow, "handle", new=AsyncMock()
+    ) as voice_handle:
+        await platform._on_telegram_voice(mock_update, MagicMock())
+        voice_handle.assert_not_awaited()
+
+    mock_update.message.reply_text.assert_not_called()
+    transcriber.transcribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_telegram_voice_success_invokes_handler(telegram_platform):
     """Successful transcription invokes message handler with transcribed text."""
     platform, transcriber = telegram_platform

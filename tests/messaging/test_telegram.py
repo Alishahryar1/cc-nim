@@ -4,6 +4,9 @@ import pytest
 from telegram.error import TelegramError
 
 from free_claude_code.messaging.platforms.telegram import TelegramRuntime
+from free_claude_code.messaging.platforms.telegram_inbound import (
+    telegram_text_message_from_update,
+)
 
 
 def _limiter_mock() -> MagicMock:
@@ -334,10 +337,6 @@ async def test_on_telegram_message_rejects_when_allowlist_unset():
 
 
 def test_telegram_text_message_fails_closed_without_allowlist():
-    from free_claude_code.messaging.platforms.telegram_inbound import (
-        telegram_text_message_from_update,
-    )
-
     update = MagicMock()
     update.message.text = "hello"
     update.message.message_id = 1
