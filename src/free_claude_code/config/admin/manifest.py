@@ -321,6 +321,10 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "messaging",
         settings_attr="allowed_telegram_user_id",
         session_sensitive=True,
+        description=(
+            "Required for Telegram. Only this Telegram user ID may message the bot. "
+            "Telegram will not start if this is empty."
+        ),
     ),
     ConfigFieldSpec(
         "TELEGRAM_PROXY_URL",

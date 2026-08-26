@@ -4,6 +4,9 @@ import pytest
 from telegram.error import TelegramError
 
 from free_claude_code.messaging.platforms.telegram import TelegramRuntime
+from free_claude_code.messaging.platforms.telegram_inbound import (
+    telegram_text_message_from_update,
+)
 
 
 def _limiter_mock() -> MagicMock:
@@ -310,3 +313,58 @@ async def test_on_telegram_message_unauthorized(telegram_platform):
     await telegram_platform._on_telegram_message(mock_update, MagicMock())
 
     handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_telegram_message_rejects_when_allowlist_unset():
+    with patch(
+        "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
+    ):
+        platform = _telegram_runtime(bot_token="test_token", allowed_user_id=None)
+        handler = AsyncMock()
+        platform.on_message(handler)
+
+        mock_update = MagicMock()
+        mock_update.message.text = "hello"
+        mock_update.message.message_id = 1
+        mock_update.message.reply_to_message = None
+        mock_update.effective_user.id = 12345
+        mock_update.effective_chat.id = 6789
+
+        await platform._on_telegram_message(mock_update, MagicMock())
+
+        handler.assert_not_called()
+
+
+def test_telegram_text_message_fails_closed_without_allowlist():
+    update = MagicMock()
+    update.message.text = "hello"
+    update.message.message_id = 1
+    update.message.reply_to_message = None
+    update.message.message_thread_id = None
+    update.effective_user.id = 12345
+    update.effective_chat.id = 6789
+
+    assert (
+        telegram_text_message_from_update(
+            update,
+            allowed_user_id=None,
+            log_raw_messaging_content=False,
+        )
+        is None
+    )
+    assert (
+        telegram_text_message_from_update(
+            update,
+            allowed_user_id="   ",
+            log_raw_messaging_content=False,
+        )
+        is None
+    )
+    accepted = telegram_text_message_from_update(
+        update,
+        allowed_user_id="12345",
+        log_raw_messaging_content=False,
+    )
+    assert accepted is not None
+    assert accepted.user_id == "12345"

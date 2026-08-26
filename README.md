@@ -492,7 +492,7 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 2. Get your numeric user ID from [@userinfobot](https://t.me/userinfobot).
    In groups, grant the bot permission to delete messages.
 3. Set **Messaging Platform** to **telegram**.
-4. Enter **Telegram Bot Token**, **Allowed Telegram User ID**, and an absolute **Allowed Directory**.
+4. Enter **Telegram Bot Token**, **Allowed Telegram User ID** (required — Telegram will not start without it), and an absolute **Allowed Directory**.
 5. Apply the settings and restart the server if requested.
 
 </details>
