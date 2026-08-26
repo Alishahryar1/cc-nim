@@ -430,7 +430,7 @@ def test_build_request_body_adds_current_turn_fallback_signature(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text(gemini_provider):
+async def test_stream_messages_text(gemini_provider):
     req = make_request(thinking={"type": "enabled"})
 
     mock_chunk = MagicMock()
@@ -456,7 +456,7 @@ async def test_stream_response_text(gemini_provider):
 
         events = [
             event
-            async for event in gemini_provider.stream_response(
+            async for event in gemini_provider.stream_messages(
                 req, reasoning=reasoning_for(req)
             )
         ]
@@ -478,7 +478,7 @@ async def test_stream_response_text(gemini_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_preserves_tool_call_extra_content(gemini_provider):
+async def test_stream_messages_preserves_tool_call_extra_content(gemini_provider):
     req = make_request()
 
     mock_tc = MagicMock()
@@ -510,7 +510,7 @@ async def test_stream_response_preserves_tool_call_extra_content(gemini_provider
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in gemini_provider.stream_response(req)]
+        events = [event async for event in gemini_provider.stream_messages(req)]
 
     tool_starts = [
         event
@@ -587,7 +587,7 @@ async def test_colliding_stream_tool_id_rekeys_cached_thought_signature(
         new_callable=AsyncMock,
         return_value=mock_stream(),
     ):
-        events = [event async for event in gemini_provider.stream_response(request)]
+        events = [event async for event in gemini_provider.stream_messages(request)]
 
     starts = [
         event.data["content_block"]
@@ -641,7 +641,7 @@ async def test_colliding_stream_tool_id_rekeys_cached_thought_signature(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_reasoning_content(gemini_provider):
+async def test_stream_messages_reasoning_content(gemini_provider):
     req = make_request()
 
     mock_chunk = MagicMock()
@@ -665,7 +665,7 @@ async def test_stream_response_reasoning_content(gemini_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in gemini_provider.stream_response(req)]
+        events = [event async for event in gemini_provider.stream_messages(req)]
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

@@ -265,7 +265,7 @@ async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
         return_value=stream,
     ):
         event_text = "".join(
-            [event async for event in kilo_provider.stream_response(request)]
+            [event async for event in kilo_provider.stream_messages(request)]
         )
 
     events = parse_sse_text(event_text)
@@ -306,7 +306,7 @@ async def test_stream_restarts_reasoning_reconciliation_after_early_retry(
         side_effect=[abandoned, recovered],
     ) as create:
         event_text = "".join(
-            [event async for event in kilo_provider.stream_response(request)]
+            [event async for event in kilo_provider.stream_messages(request)]
         )
 
     events = parse_sse_text(event_text)
@@ -348,7 +348,7 @@ async def test_stream_omits_all_reasoning_representations_when_disabled(
         event_text = "".join(
             [
                 event
-                async for event in kilo_provider.stream_response(
+                async for event in kilo_provider.stream_messages(
                     request,
                     reasoning=ReasoningPolicy.off(),
                 )

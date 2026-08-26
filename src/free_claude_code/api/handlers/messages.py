@@ -133,10 +133,8 @@ class MessagesHandler:
             if result is None:
                 logger.debug("No optimization matched, routing to provider")
                 result = _MessagesStreamResult(
-                    self._provider_executor.stream(
+                    self._provider_executor.stream_messages(
                         routed,
-                        wire_api="messages",
-                        raw_log_label="FULL_PAYLOAD",
                         raw_log_payload=routed.request.model_dump(),
                         request_id=request_id,
                     )

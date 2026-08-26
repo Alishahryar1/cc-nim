@@ -24,12 +24,16 @@ from free_claude_code.core.async_iterators import try_close_async_iterator
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import find_execution_failure
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.openai_responses import (
+    committed_response_failure_frame,
+    openai_error_type_for_failure,
+)
 from free_claude_code.core.trace import close_stream_input, trace_event
 
 TERMINAL_EXECUTION_ERROR_HEADERS = {"x-should-retry": "false"}
 
 PreStartErrorResponse = Callable[[BaseException], Response]
-TerminalFrameEmitter = Callable[[BaseException], str]
+TerminalFrameEmitter = Callable[[str, str, BaseException], str]
 TerminalFailureObserver = Callable[[BaseException], None]
 ReleaseResponseResource = Callable[[], Awaitable[None]]
 WireApi = Literal["messages", "responses"]
@@ -281,6 +285,8 @@ class _PrefetchedStream(AsyncIterator[str]):
         terminal_failure_observer: TerminalFailureObserver | None,
     ) -> None:
         self._first_chunk: str | None = first_chunk
+        self._initial_chunk = first_chunk
+        self._latest_chunk = first_chunk
         self._body = body
         self._terminal_frame = terminal_frame
         self._terminal_failure_observer = terminal_failure_observer
@@ -298,7 +304,9 @@ class _PrefetchedStream(AsyncIterator[str]):
             self._first_chunk = None
             return first_chunk
         try:
-            return await anext(self._body)
+            chunk = await anext(self._body)
+            self._latest_chunk = chunk
+            return chunk
         except StopAsyncIteration:
             self._done = True
             raise
@@ -323,7 +331,7 @@ class _PrefetchedStream(AsyncIterator[str]):
         self._done = True
         if self._terminal_failure_observer is not None:
             self._terminal_failure_observer(exc)
-        return terminal_frame(exc)
+        return terminal_frame(self._initial_chunk, self._latest_chunk, exc)
 
 
 async def anthropic_sse_streaming_response(
@@ -345,7 +353,11 @@ async def anthropic_sse_streaming_response(
     )
 
 
-def _anthropic_terminal_frame(exc: BaseException) -> str:
+def _anthropic_terminal_frame(
+    _first_chunk: str,
+    _latest_chunk: str,
+    exc: BaseException,
+) -> str:
     failure = find_execution_failure(exc)
     if failure is not None:
         return anthropic_terminal_failure_frame(failure)
@@ -376,12 +388,35 @@ async def openai_responses_sse_streaming_response(
     *,
     headers: Mapping[str, str],
     pre_start_error_response: PreStartErrorResponse,
+    request_id: str,
 ) -> Response:
     """Return a streaming response for OpenAI Responses-style SSE."""
     return await _first_chunk_streaming_response(
         body,
         headers=headers,
         pre_start_error_response=pre_start_error_response,
-        terminal_frame=None,
-        terminal_failure_observer=None,
+        terminal_frame=committed_response_failure_frame,
+        terminal_failure_observer=lambda exc: _trace_responses_terminal_failure(
+            exc,
+            request_id=request_id,
+        ),
+    )
+
+
+def _trace_responses_terminal_failure(
+    exc: BaseException,
+    *,
+    request_id: str,
+) -> None:
+    failure = find_execution_failure(exc)
+    trace_terminal_execution_error(
+        wire_api="responses",
+        request_id=request_id,
+        status_code=failure.status_code if failure is not None else 500,
+        error_type=(
+            openai_error_type_for_failure(failure)
+            if failure is not None
+            else "api_error"
+        ),
+        error=exc,
     )

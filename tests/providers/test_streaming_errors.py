@@ -11,16 +11,17 @@ import openai
 import pytest
 
 from free_claude_code.config.nim import NimSettings
-from free_claude_code.core.anthropic import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
 )
 from free_claude_code.core.anthropic.streaming import (
-    AnthropicStreamLedger,
     make_response_recovery_body,
     make_text_recovery_body,
+    tool_schemas_by_name,
 )
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
+from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import (
     UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
@@ -29,12 +30,15 @@ from free_claude_code.providers.admission import (
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.provider import (
     _OpenAIChatStreamRunner,
+    _reserved_anthropic_tool_ids,
+)
+from free_claude_code.providers.openai_chat.stream_output import (
+    AnthropicChatStreamOutput,
 )
 from free_claude_code.providers.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
     OpenAIToolCallCollector,
-    has_committed_sse_output,
-    iter_heuristic_tool_use_sse,
+    iter_heuristic_tool_use_events,
 )
 from free_claude_code.providers.stream_recovery import TruncatedProviderStreamError
 from tests.providers.request_factory import make_messages_request
@@ -126,9 +130,18 @@ def _make_provider():
 def _make_tool_assembler(
     provider: NvidiaNimProvider, *, request=None
 ) -> OpenAIToolCallAssembler:
+    concrete_request = request or _make_request()
     return OpenAIToolCallAssembler(
-        request=request or _make_request(),
+        reserved_tool_ids=_reserved_anthropic_tool_ids(concrete_request),
         record_extra_content=provider._record_tool_call_extra_content,
+    )
+
+
+def _make_anthropic_output() -> AnthropicChatStreamOutput:
+    return AnthropicChatStreamOutput(
+        message_id="msg_test",
+        model="test-model",
+        input_tokens=0,
     )
 
 
@@ -155,12 +168,17 @@ def _make_stream_runner(
     request=None,
     request_id: str | None = None,
 ) -> _OpenAIChatStreamRunner:
+    concrete_request = request or _make_request()
     return _OpenAIChatStreamRunner(
         provider,
-        request=request or _make_request(),
+        body=provider._build_request_body(concrete_request),
+        tool_names=OpenAIToolNameCodec.from_request(concrete_request),
+        tool_schemas=tool_schemas_by_name(concrete_request),
+        reserved_tool_ids=_reserved_anthropic_tool_ids(concrete_request),
+        output_factory=_make_anthropic_output,
         input_tokens=0,
         request_id=request_id,
-        response_model=None,
+        response_model=concrete_request.model,
         reasoning=DEFAULT_REASONING_POLICY,
     )
 
@@ -215,12 +233,12 @@ async def _collect_stream(
     reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
 ):
     """Collect all SSE events from a stream."""
-    return [e async for e in provider.stream_response(request, reasoning=reasoning)]
+    return [e async for e in provider.stream_messages(request, reasoning=reasoning)]
 
 
 async def _collect_stream_error(provider, request, **kwargs) -> ExecutionFailure:
     with pytest.raises(ExecutionFailure) as exc_info:
-        [e async for e in provider.stream_response(request, **kwargs)]
+        [e async for e in provider.stream_messages(request, **kwargs)]
     return exc_info.value
 
 
@@ -229,7 +247,7 @@ async def _collect_stream_and_error(
 ) -> tuple[list[str], ExecutionFailure]:
     events: list[str] = []
     with pytest.raises(ExecutionFailure) as exc_info:
-        async for event in provider.stream_response(request, **kwargs):
+        async for event in provider.stream_messages(request, **kwargs):
             events.extend((event,))
     return events, exc_info.value
 
@@ -312,7 +330,7 @@ class TestStreamingExceptionHandling:
 
         assert stream.closed
 
-    """Tests for error paths during stream_response."""
+    """Tests for error paths during stream_messages."""
 
     @pytest.mark.asyncio
     async def test_pre_start_api_error_raises_provider_error(self):
@@ -1204,6 +1222,76 @@ class TestStreamingExceptionHandling:
         assert parsed[-1].event == "message_stop"
 
     @pytest.mark.asyncio
+    async def test_responses_precommit_retry_emits_one_unduplicated_lifecycle(self):
+        """Responses output also discards every frame from an abandoned attempt."""
+        provider = _make_provider()
+        request = OpenAIResponsesRequest(model="test-model", input="hello")
+        first_stream = AsyncStreamMock(
+            [_make_chunk(content="hidden")],
+            error=httpx.ReadError("early cutoff"),
+        )
+        second_stream = AsyncStreamMock(
+            [
+                _make_chunk(content="visible"),
+                _make_chunk(finish_reason="stop"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[first_stream, second_stream],
+        ) as create:
+            events = [
+                event
+                async for event in provider.stream_responses(
+                    request,
+                    request_id="req_responses_retry",
+                    response_model="public-model",
+                )
+            ]
+
+        event_text = "".join(events)
+        parsed = parse_sse_text(event_text)
+        event_names = [event.event for event in parsed]
+        assert create.await_count == 2
+        assert "hidden" not in event_text
+        assert "visible" in event_text
+        assert event_names.count("response.created") == 1
+        assert event_names.count("response.completed") == 1
+        assert "response.failed" not in event_names
+
+    @pytest.mark.asyncio
+    async def test_responses_cancellation_closes_upstream_without_retry(self):
+        provider = _make_provider()
+        request = OpenAIResponsesRequest(model="test-model", input="hello")
+        stream = BlockingClosableAsyncStreamMock()
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream,
+        ) as create:
+            task = asyncio.create_task(
+                anext(
+                    provider.stream_responses(
+                        request,
+                        request_id="req_responses_cancel",
+                        response_model="public-model",
+                    )
+                )
+            )
+            await asyncio.wait_for(stream.entered.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert create.await_count == 1
+        assert stream.close_calls == 1
+
+    @pytest.mark.asyncio
     async def test_precommit_retry_discards_abandoned_parser_and_usage_state(self):
         """A replay owns fresh parsers and terminal usage metadata."""
         provider = _make_provider()
@@ -1816,11 +1904,11 @@ class TestStreamingExceptionHandling:
             _make_provider(), request=_make_request(), request_id="req_recovery"
         )
         assembler = runner._new_stream_assembler(output_reasoning=True)
-        ledger = assembler.ledger
-        ledger.start_thinking_block()
-        ledger.emit_thinking_delta("hidden reasoning")
-        list(ledger.ensure_text_block())
-        ledger.emit_text_delta("visible answer")
+        output = assembler.output
+        output.ensure_reasoning_block()
+        output.emit_reasoning_delta("hidden reasoning")
+        output.ensure_text_block()
+        output.emit_text_delta("visible answer")
 
         with patch.object(
             runner,
@@ -2000,12 +2088,10 @@ class TestProcessToolCall:
 
     def test_heuristic_tool_use_sse_marks_committed_tool_output(self):
         """Heuristic tool blocks are emitted content, even without OpenAI tool state."""
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        ledger = AnthropicStreamLedger("msg_test", "test-model")
+        output = _make_anthropic_output()
         events = list(
-            iter_heuristic_tool_use_sse(
-                ledger,
+            iter_heuristic_tool_use_events(
+                output,
                 {
                     "id": "toolu_heuristic",
                     "name": "Read",
@@ -2016,15 +2102,13 @@ class TestProcessToolCall:
 
         event_text = "".join(events)
         assert "tool_use" in event_text
-        assert ledger.has_emitted_tool_block()
-        assert has_committed_sse_output(ledger)
+        assert output.has_emitted_tool_block()
+        assert output.committed_output
 
     def test_tool_call_with_id(self):
         """Tool call with id starts a tool block."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": 0,
             "id": "call_123",
@@ -2044,7 +2128,7 @@ class TestProcessToolCall:
     def test_missing_or_blank_tool_call_id_generates_public_id(self, missing_id):
         """An absent identity never escapes as an empty Anthropic tool-use ID."""
         provider = _make_provider()
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
 
         events = list(
             _make_tool_assembler(provider).process_tool_call(
@@ -2089,7 +2173,7 @@ class TestProcessToolCall:
                 },
             ]
         )
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
 
         events = list(
             _make_tool_assembler(provider, request=request).process_tool_call(
@@ -2112,7 +2196,7 @@ class TestProcessToolCall:
     def test_current_response_tool_call_id_collision_is_remapped(self):
         """Two simultaneous calls cannot expose the same public identity."""
         provider = _make_provider()
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         assembler = _make_tool_assembler(provider)
 
         first = list(
@@ -2150,7 +2234,7 @@ class TestProcessToolCall:
         )
         codec = OpenAIToolNameCodec.from_request(request)
         alias = codec.encode(original)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
 
         events = list(
             _make_tool_assembler(provider).process_tool_call(
@@ -2193,7 +2277,7 @@ class TestProcessToolCall:
             ]
         )
         codec = OpenAIToolNameCodec.from_request(request)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
 
         events = list(
             _make_tool_assembler(provider).process_tool_call(
@@ -2238,7 +2322,7 @@ class TestProcessToolCall:
         alias = codec.encode(original)
         split = len(alias) // 2
         buffers: dict[int, str] = {}
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         assembler = _make_tool_assembler(provider)
 
         first = list(
@@ -2293,7 +2377,7 @@ class TestProcessToolCall:
         codec = OpenAIToolNameCodec.from_request(request)
         assert codec.is_alias_prefix(original)
         buffers: dict[int, str] = {}
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         assembler = _make_tool_assembler(provider)
 
         initial = list(
@@ -2338,7 +2422,9 @@ class TestProcessToolCall:
             )
         )
 
-        calls = collector.completed_calls(request, tool_names=codec)
+        calls = collector.completed_calls(
+            tool_schemas_by_name(request), tool_names=codec
+        )
 
         assert calls is not None
         assert calls[0]["function"]["name"] == original
@@ -2350,10 +2436,10 @@ class TestProcessToolCall:
             tools=[{"name": original, "input_schema": {"type": "object"}}]
         )
         codec = OpenAIToolNameCodec.from_request(request)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
 
         events = list(
-            iter_heuristic_tool_use_sse(
+            iter_heuristic_tool_use_events(
                 sse,
                 {
                     "id": "call_heuristic",
@@ -2371,9 +2457,7 @@ class TestProcessToolCall:
     def test_tool_call_id_arrives_before_name_still_emits_id_and_name(self):
         """Split-stream tool: id (no name) then name then args; id preserved on start."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         t1 = {
             "index": 0,
             "id": "call_split",
@@ -2401,9 +2485,7 @@ class TestProcessToolCall:
     def test_tool_call_arguments_buffered_until_name(self):
         """Argument deltas before tool name are emitted after the block starts."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         t1 = {
             "index": 0,
             "id": "call_buf",
@@ -2426,7 +2508,7 @@ class TestProcessToolCall:
     def test_late_upstream_id_cannot_overwrite_started_public_id(self):
         """The identity emitted at block start stays authoritative."""
         provider = _make_provider()
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         assembler = _make_tool_assembler(provider)
 
         initial = list(
@@ -2454,14 +2536,12 @@ class TestProcessToolCall:
         )
 
         assert later == []
-        assert sse.blocks.tool_states[0].tool_id == generated_id
+        assert sse.tool_states[0].tool_id == generated_id
 
     def test_task_tool_forces_background_false(self):
         """Task tool with run_in_background=true is forced to false."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         args = json.dumps({"run_in_background": True, "prompt": "test"})
         tc = {
             "index": 0,
@@ -2476,9 +2556,7 @@ class TestProcessToolCall:
     def test_task_tool_chunked_args_forces_background_false(self):
         """Chunked Task args are buffered until valid JSON, then forced to false."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc1 = {
             "index": 0,
             "id": "call_task_chunked",
@@ -2502,9 +2580,7 @@ class TestProcessToolCall:
     def test_task_tool_invalid_json_logs_warning_on_flush(self, caplog):
         """Invalid JSON args for Task tool emits {} on flush and logs a warning."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": 0,
             "id": "call_task2",
@@ -2523,9 +2599,7 @@ class TestProcessToolCall:
     def test_negative_tool_index_fallback(self):
         """tc_index < 0 uses len(tool_indices) as fallback."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": -1,
             "id": "call_neg",
@@ -2538,9 +2612,7 @@ class TestProcessToolCall:
     def test_none_tool_index_defaults_to_zero(self):
         """Gemini may stream tool_call deltas with a null index."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": None,
             "id": "call_none",
@@ -2555,9 +2627,7 @@ class TestProcessToolCall:
     def test_tool_args_emitted_as_delta(self):
         """Arguments are emitted as input_json_delta events."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": 0,
             "id": "call_args",
@@ -2654,9 +2724,7 @@ class TestStreamChunkEdgeCases:
     def test_stream_malformed_tool_args_chunked(self):
         """Chunked tool args that never form valid JSON are flushed with {}."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc1 = {
             "index": 0,
             "id": "call_malformed",

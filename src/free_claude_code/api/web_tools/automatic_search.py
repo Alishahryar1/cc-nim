@@ -40,10 +40,8 @@ async def stream_automatic_web_search_response(
         request_id=request_id,
         model=routed.resolved.original_model,
     )
-    provider_stream = provider_executor.stream(
+    provider_stream = provider_executor.stream_messages(
         translated,
-        wire_api="messages",
-        raw_log_label="FULL_PAYLOAD",
         raw_log_payload=plan.request.model_dump(),
         request_id=request_id,
     )

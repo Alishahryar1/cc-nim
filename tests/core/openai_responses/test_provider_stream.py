@@ -1,6 +1,5 @@
 import pytest
 
-from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     parse_sse_text,
@@ -10,6 +9,7 @@ from free_claude_code.core.openai_responses.provider_stream import (
     ResponsesProviderStream,
     ResponsesStreamFailure,
 )
+from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 
 
 def test_responses_provider_stream_preserves_reasoning_tools_usage_and_ids() -> None:

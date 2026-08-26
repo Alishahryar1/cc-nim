@@ -482,13 +482,15 @@ to a client that has already left. Non-inference routes bypass this machinery.
 `MessagesHandler` validates non-empty messages, resolves models, applies
 Claude-only safety-classifier and local optimization policy, handles local web
 server tools, then streams Anthropic SSE. `ResponsesHandler` owns streaming-only
-OpenAI Responses validation and conversion for Codex clients. `TokenCountHandler`
-owns Anthropic token counting. Shared provider execution lives in
+OpenAI Responses validation for Codex clients and passes the concrete Responses
+request into the shared executor. `TokenCountHandler` owns Anthropic token
+counting. Shared provider execution lives in
 [application/execution.py](src/free_claude_code/application/execution.py). `ProviderExecutor` resolves the narrow
-consumer-owned `ProviderPort`, synchronously preflights the primary upstream
-request, emits trace events, counts input tokens, and returns an Anthropic SSE
-iterator. It also owns application-level model fallback after provider-owned
-retries are exhausted; providers do not select alternate models.
+consumer-owned `ProviderPort`, synchronously preflights the concrete ingress
+protocol, emits trace events, counts input tokens, and returns an SSE iterator
+in that same public protocol. It also owns application-level model fallback
+after provider-owned retries are exhausted; providers do not select alternate
+models.
 It receives only a provider resolver and the few scalar collaborators it needs;
 it does not depend on FastAPI, provider implementations, or the full settings
 object. The executor also owns FCC's provider-progress deadline: every wait for
@@ -533,13 +535,14 @@ non-2xx JSON for any terminal stream error, discarding incomplete content rather
 than presenting a partial success.
 
 The public response chain follows a transitive close-ownership rule. A response
-owns its replay iterator; replay owns the active protocol adapter; each protocol
-adapter owns its direct input; tracing owns the executor body; the executor body
-owns the provider iterator; and the provider runner owns its upstream stream.
-Each of these response-chain owners closes its direct input on normal completion,
-failure, cancellation, and early consumer close. Failures from those explicit
-cleanup calls are trace metadata and cannot replace an established wire outcome;
-a generation lease is released only after the body chain has finished closing.
+owns its prefetched replay iterator; replay owns the traced executor body;
+tracing owns the provider-execution iterator; and the provider runner owns its
+upstream stream. Provider-owned conversion and presentation iterators stay
+inside their concrete transport chain and close their direct inputs. Each
+response-chain owner closes its direct input on normal completion, failure,
+cancellation, and early consumer close. Failures from those explicit cleanup
+calls are trace metadata and cannot replace an established wire outcome; a
+generation lease is released only after the body chain has finished closing.
 
 Ingress authentication, request validation, model routing, and deterministic
 preflight failures remain ordinary HTTP errors and do not receive the terminal
@@ -571,18 +574,20 @@ sequenceDiagram
     Exec->>Lease: resolve provider
     Lease->>Runtime: cached or new provider
     Runtime->>Provider: cached or new provider
-    Exec->>Provider: preflight_stream
-    Exec->>Provider: stream_response
+    Exec->>Provider: preflight_messages
+    Exec->>Provider: stream_messages
     Provider-->>Client: Anthropic SSE events
     Route->>Lease: release after complete body
 ```
 
 OpenAI Responses uses the same provider execution primitive without importing
-Claude-only message intercepts. `ResponsesHandler` delegates protocol work to
-the `OpenAIResponsesAdapter` in
-[src/free_claude_code/core/openai_responses/adapter.py](src/free_claude_code/core/openai_responses/adapter.py). The adapter
-converts the Responses payload into an Anthropic Messages payload before
-provider execution, then converts Anthropic SSE back to Responses SSE.
+Claude-only message intercepts. `ResponsesHandler` calls
+`ProviderExecutor.stream_responses`, and the concrete `OpenAIResponsesRequest`
+remains a Responses request across the application boundary. The selected
+provider transport then owns one explicit matrix cell: Messages-to-Chat,
+Messages-to-Responses, Responses-to-Chat, or native Responses-to-Responses.
+There is no compatibility facade and no Responses-to-Messages-to-Responses
+round trip.
 
 ## Model Routing
 
@@ -782,11 +787,12 @@ state.
 model-list modules retain response parsing and construct that value directly;
 there is no provider-layer alias for the former owner.
 
-[application/ports.py](src/free_claude_code/application/ports.py) defines the two provider operations consumed by request
-execution: synchronous `preflight_stream()` and lazy `stream_response()`. API
-handlers and application execution depend on that structural port, never on a
-provider base class. Provider adapters implement it without registration or a
-compatibility layer.
+[application/ports.py](src/free_claude_code/application/ports.py) defines the
+four protocol-specific provider operations consumed by request execution:
+synchronous `preflight_messages()` and `preflight_responses()`, followed by
+lazy `stream_messages()` and `stream_responses()`. API handlers and application
+execution depend on that structural port, never on a provider base class.
+Providers implement it without registration or a compatibility layer.
 
 [providers/base.py](src/free_claude_code/providers/base.py) defines provider-internal construction and lifecycle contracts:
 
@@ -794,9 +800,10 @@ compatibility layer.
   limits, timeouts, proxy, and logging flags. It is a frozen internal
   value whose base URL has already been resolved from the catalog.
 - `BaseProvider`: the abstract implementation base for cleanup, explicit
-  preflight, `stream_response()`, and the sole provider catalog operation,
-  `list_model_infos()`. Providers return application-owned `ProviderModelInfo`
-  values directly; there is no parallel IDs-only catalog contract.
+  Messages and Responses preflight/stream operations, and the sole provider
+  catalog operation, `list_model_infos()`. Providers return application-owned
+  `ProviderModelInfo` values directly; there is no parallel IDs-only catalog
+  contract.
 
 Provider execution is organized around explicit protocol owners.
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
@@ -893,14 +900,14 @@ client-specific recovery phrase.
 Providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
 reasoning replay selection, `extra_body`, and chat-completion field normalization.
 The SDK-free `OpenAIToolNameCodec` in
-[core/anthropic/](src/free_claude_code/core/anthropic/) owns reversible
-translation from client tool identities to OpenAI's portable function-name
-grammar. OpenAI Chat and upstream Responses adapters apply that codec only to
-their explicit declaration, forced-choice, and replay fields, then restore the
-original identity before Anthropic tool state or schema validation. Valid names
-remain unchanged, while deterministic aliases keep retries, replay, and
-append-only prompt prefixes stable. This is target-protocol conversion, never a
-provider or model capability switch.
+[core/openai_tool_names.py](src/free_claude_code/core/openai_tool_names.py) owns
+reversible translation from client tool identities to OpenAI's portable
+function-name grammar. OpenAI Chat and upstream Responses converters apply that
+codec only to their explicit declaration, forced-choice, and replay fields,
+then restore the original identity before Anthropic tool state or schema
+validation. Valid names remain unchanged, while deterministic aliases keep
+retries, replay, and append-only prompt prefixes stable. This is target-protocol
+conversion, never a provider or model capability switch.
 When an Anthropic request declares tools but omits `tool_choice`, the conversion
 boundary resolves Anthropic's implicit `auto` intent once. Both upstream OpenAI
 Chat and OpenAI Responses encoders materialize that value explicitly, while
@@ -1047,10 +1054,11 @@ streamed usage handling: it requests
 providers omit or reject optional usage metadata. Provider modules only own true
 usage quirks: DeepSeek validates a complete hit/miss partition, maps misses to
 ordinary input and hits to cache reads, and never reports a miss as an
-Anthropic cache creation. The native Responses-to-Anthropic adapter likewise
-partitions a valid cached-token detail from the upstream total. At the reverse
-protocol boundary, the Anthropic-to-Responses adapter recombines those
-disjoint input categories into its single `input_tokens` total.
+Anthropic cache creation. The Messages-to-Responses presenter likewise
+partitions a valid cached-token detail from the upstream total. The
+Chat-to-Responses presenter recombines disjoint Chat input categories into its
+single `input_tokens` total, while the native Responses relay preserves the
+upstream usage object unchanged.
 
 ### Adding A Provider
 
@@ -1190,78 +1198,44 @@ same commit-state split but do not acquire provider retry semantics.
 [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/) owns OpenAI Responses support:
 
 - the permissive `OpenAIResponsesRequest` ingress model used directly by the
-  FastAPI route and the protocol adapter;
-- the `OpenAIResponsesAdapter` facade used by the API layer;
-- streaming-only `/v1/responses` support for Codex/FCC workflows;
-- Responses request conversion into Anthropic Messages payloads;
-- Anthropic SSE conversion into Responses SSE;
-- OpenAI-compatible error envelopes.
+  FastAPI route, application executor, and provider ports;
+- direct Responses-to-Chat request translation in `chat_request.py`;
+- Messages-to-Responses request and stream translation in
+  `provider_input.py` and `provider_stream.py`;
+- native Responses request shaping and event relay in `native.py`;
+- Responses event, block, tool-identity, reasoning, token-estimation, ID, and
+  error-envelope helpers used by the transport-owned presenters.
 
 The package intentionally does not implement the full OpenAI Responses surface.
 FCC accepts omitted `stream` or `stream: true`; `stream: false` is rejected with
 an OpenAI-shaped client error because installed FCC/Codex workflows only need
-streaming. Request conversion, stream transformation, Anthropic SSE parsing,
-Responses SSE event formatting, output item construction, tool identity mapping,
-reasoning mapping, ID generation, and error envelope construction each live
-behind the adapter boundary. The concrete request object crosses that boundary
-unchanged; nested Responses input and tool data stays permissive and is
-interpreted by the conversion functions. `stream.py` is the public streaming
-entrypoint;
-[src/free_claude_code/core/openai_responses/streaming/](src/free_claude_code/core/openai_responses/streaming/) owns the
-block-indexed Responses stream assembler. The package separates Anthropic SSE
-dispatch, block state, output ledger ordering, block completion, SSE event
-builders, and error mapping. API code should depend on the adapter, not on
-those internal module owners directly. Responses output payloads stay
-OpenAI-shaped. Canonical execution failures enter the assembler directly, so
-Responses does not infer provider failure semantics by parsing an Anthropic
-terminal error.
-Post-start Responses failures are assembler-owned: the active
-`ResponsesStreamAssembler` emits `response.failed` so the terminal event keeps
-the same `response.id`, output ledger, and usage state as the earlier
-`response.created`.
-Provider completion reasons remain canonical until that same assembler chooses
-the Responses terminal event. Anthropic `max_tokens` becomes
-`response.incomplete` with `incomplete_details.reason=max_output_tokens` while
-preserving partial output and usage; normal terminal reasons remain
-`response.completed`.
+streaming. The application port exposes separate Messages and Responses
+preflight/stream methods; providers choose the upstream transport without
+changing the public request type. This produces exactly three translations:
+Messages-to-Chat, Messages-to-Responses, and Responses-to-Chat. Native
+Responses-to-Responses is an identity relay, not a fourth translation. FCC does
+not maintain a universal canonical inference schema between these boundaries.
 
-Responses custom tools are also boundary-owned. The adapter accepts native
-Responses `custom` tool declarations, represents them internally as Anthropic
-tools with a single string `input` field, and restores `custom_tool_call`,
-`custom_tool_call_output`, and `response.custom_tool_call_input.*` shapes at the
-Responses edge. Text or grammar format metadata is preserved as model guidance;
-FCC does not validate custom-tool grammars.
+The direct Responses-to-Chat cell preserves text, images, function/custom tool
+identity, call IDs, reasoning replay data, supported request options, and usage,
+then writes one coherent Responses lifecycle from Chat stream semantics. The
+Messages-to-Responses cell preserves the corresponding Anthropic semantics and
+writes Anthropic SSE from Responses events. Native Responses forwarding keeps
+nested request extensions and upstream response/item/call IDs, event order,
+reasoning payloads, and exact usage; it rewrites only FCC-owned routing fields
+such as the public model and enforces stateless streaming. Unsupported
+cross-protocol semantics fail in the owning translator before upstream I/O.
 
-Client-facing Responses tool identity mapping is distinct from upstream wire
-portability. Namespaces and custom-tool identities are restored at the public
-Responses edge; the OpenAI tool-name codec operates beneath that mapping only
-while the canonical Anthropic request crosses an OpenAI upstream transport.
-
-Responses reasoning is handled as lossless protocol conversion before provider
-policy. The adapter preserves `reasoning.effort` in Anthropic `output_config`;
-the application reasoning boundary then interprets `none` as off and preserves
-all other named efforts. It never translates OpenAI effort names into Anthropic
-token budgets.
-Application-resolved source controls remain on the immutable canonical request;
-provider adapters consume the resolved `ReasoningPolicy` rather than parsing
-those controls again. A target converter validates only the unrepresented
-semantic remainder: it may omit an application-consumed control or an exact
-no-op, but must reject active or unknown behavior before upstream I/O. For the
-connected OpenAI Responses transport, `output_config.effort` is already
-represented by the policy and an empty context edit or exact
-`clear_thinking_20251015` edit with `keep: "all"` is inert. Structured-output
-configuration and any active, malformed, or extended context edit remain
-unsupported and fail preflight rather than being silently discarded.
-Prior Responses `reasoning` input items replay plaintext `reasoning_text`, or
-fallback `summary_text`, into assistant `reasoning_content`. Encrypted reasoning
-input is ignored because the proxy cannot decrypt it.
-
-Provider thinking output maps back to Responses reasoning in the same block
-order the upstream Anthropic stream produced. Anthropic `thinking` blocks become
-Responses `reasoning` output items and `response.reasoning_text.*` stream
-events. Anthropic `redacted_thinking` becomes a Responses `reasoning` item with
-`encrypted_content`; the opaque value is not exposed as visible text and FCC
-does not synthesize reasoning summaries.
+Application-resolved reasoning controls remain on the immutable source request.
+Provider adapters consume the resolved `ReasoningPolicy`; each cross-protocol
+translator maps the replay material its target supports, while the native cell
+passes Responses reasoning through unchanged. Tool-name flattening is likewise
+limited to OpenAI-compatible cross-protocol boundaries and is reversed at the
+public edge. Output presenters own provider-attempt event construction and
+terminal failure framing. If an application-owned failure occurs after the
+public stream commits, the API wire boundary closes that same public lifecycle;
+providers continue to own HTTP classification, retry policy, admission, and
+physical stream cleanup.
 
 Provider code should delegate protocol details to these modules. Avoid copying
 conversion code into individual providers, and avoid provider-to-provider imports

@@ -201,7 +201,7 @@ async def test_model_list_returns_empty_set_when_no_models_support_streaming_too
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text(
+async def test_stream_messages_text(
     github_models_provider: GitHubModelsProvider,
 ) -> None:
     delta = SimpleNamespace(
@@ -217,7 +217,7 @@ async def test_stream_response_text(
         return_value=_stream(_chunk(delta)),
     ) as mock_create:
         events = [
-            event async for event in github_models_provider.stream_response(_request())
+            event async for event in github_models_provider.stream_messages(_request())
         ]
 
     parsed = parse_sse_text("".join(events))
@@ -231,7 +231,7 @@ async def test_stream_response_text(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_tool_call(
+async def test_stream_messages_tool_call(
     github_models_provider: GitHubModelsProvider,
 ) -> None:
     tool_call = SimpleNamespace(
@@ -267,7 +267,7 @@ async def test_stream_response_tool_call(
         return_value=_stream(_chunk(delta, finish_reason="tool_calls")),
     ):
         events = [
-            event async for event in github_models_provider.stream_response(request)
+            event async for event in github_models_provider.stream_messages(request)
         ]
 
     parsed = parse_sse_text("".join(events))
@@ -285,7 +285,7 @@ async def test_stream_response_tool_call(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_reasoning_content(
+async def test_stream_messages_reasoning_content(
     github_models_provider: GitHubModelsProvider,
 ) -> None:
     delta = SimpleNamespace(
@@ -301,7 +301,7 @@ async def test_stream_response_reasoning_content(
         return_value=_stream(_chunk(delta)),
     ):
         events = [
-            event async for event in github_models_provider.stream_response(_request())
+            event async for event in github_models_provider.stream_messages(_request())
         ]
 
     parsed = parse_sse_text("".join(events))

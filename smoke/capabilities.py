@@ -73,7 +73,8 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "OpenAI-shaped error or conversion error",
         (
             "tests/api/test_openai_responses.py",
-            "tests/core/openai_responses/test_sse.py",
+            "tests/core/openai_responses/test_native.py",
+            "tests/providers/test_openai_chat_stream_output.py",
             "tests/cli/test_entrypoints.py",
             "tests/cli/test_codex_model_catalog.py",
         ),

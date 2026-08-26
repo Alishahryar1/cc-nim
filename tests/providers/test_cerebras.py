@@ -186,7 +186,7 @@ def test_build_request_body_preserves_caller_extra_body(cerebras_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text(cerebras_provider):
+async def test_stream_messages_text(cerebras_provider):
     """Text content deltas are emitted as text blocks."""
     req = make_request()
 
@@ -211,7 +211,7 @@ async def test_stream_response_text(cerebras_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in cerebras_provider.stream_response(req)]
+        events = [event async for event in cerebras_provider.stream_messages(req)]
 
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
@@ -219,7 +219,7 @@ async def test_stream_response_text(cerebras_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_reasoning(cerebras_provider):
+async def test_stream_messages_reasoning(cerebras_provider):
     """Cerebras reasoning deltas are emitted as thinking blocks."""
     req = make_request()
 
@@ -244,7 +244,7 @@ async def test_stream_response_reasoning(cerebras_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in cerebras_provider.stream_response(req)]
+        events = [event async for event in cerebras_provider.stream_messages(req)]
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

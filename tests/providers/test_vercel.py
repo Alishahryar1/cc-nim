@@ -95,7 +95,7 @@ def test_build_request_body_preserves_caller_extra_body(vercel_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text(vercel_provider):
+async def test_stream_messages_text(vercel_provider):
     mock_chunk = MagicMock()
     mock_chunk.choices = [
         MagicMock(
@@ -118,7 +118,7 @@ async def test_stream_response_text(vercel_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in vercel_provider.stream_response(make_request())
+            event async for event in vercel_provider.stream_messages(make_request())
         ]
 
     assert any(
@@ -127,7 +127,7 @@ async def test_stream_response_text(vercel_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_reasoning_content(vercel_provider):
+async def test_stream_messages_reasoning_content(vercel_provider):
     mock_chunk = MagicMock()
     mock_chunk.choices = [
         MagicMock(
@@ -150,7 +150,7 @@ async def test_stream_response_reasoning_content(vercel_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in vercel_provider.stream_response(make_request())
+            event async for event in vercel_provider.stream_messages(make_request())
         ]
 
     assert any(

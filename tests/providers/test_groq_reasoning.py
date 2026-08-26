@@ -707,7 +707,7 @@ async def test_reasoning_correction_emits_one_downstream_lifecycle() -> None:
         raw = "".join(
             [
                 event
-                async for event in provider.stream_response(
+                async for event in provider.stream_messages(
                     request,
                     reasoning=policy,
                 )

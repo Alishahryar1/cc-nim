@@ -29,7 +29,7 @@ def build_nim_request_body(
         reasoning=reasoning,
         policy=NIM_REQUEST_POLICY,
         postprocessors=(
-            lambda body, request, policy: apply_nim_request_options(
+            lambda body, request, policy: _apply_nim_messages_request_options(
                 body,
                 request,
                 policy,
@@ -39,17 +39,31 @@ def build_nim_request_body(
     )
 
 
-def apply_nim_request_options(
+def _apply_nim_messages_request_options(
     body: dict[str, Any],
     request_data: MessagesRequest,
     reasoning: ReasoningPolicy,
     *,
     nim: NimSettings,
 ) -> None:
-    """Apply NIM schema repairs and configured request defaults."""
+    """Copy Messages-only fields, then apply the common NIM finalizer."""
+    extra_body = deepcopy(request_data.extra_body or {})
+    _set_extra(extra_body, "top_k", request_data.top_k, ignore_value=-1)
+    if extra_body:
+        body["extra_body"] = extra_body
+    apply_nim_request_options(body, reasoning, nim=nim)
+
+
+def apply_nim_request_options(
+    body: dict[str, Any],
+    reasoning: ReasoningPolicy,
+    *,
+    nim: NimSettings,
+) -> None:
+    """Apply source-independent NIM policy to one Chat body."""
     sanitize_nim_tool_schemas(body)
 
-    max_tokens = body.get("max_tokens") or request_data.max_tokens
+    max_tokens = body.get("max_tokens")
     if max_tokens is None:
         max_tokens = nim.max_tokens
     elif nim.max_tokens:
@@ -72,10 +86,10 @@ def apply_nim_request_options(
 
     body["parallel_tool_calls"] = nim.parallel_tool_calls
 
-    extra_body: dict[str, Any] = {}
-    request_extra = request_data.extra_body
-    if request_extra:
-        extra_body.update(deepcopy(request_extra))
+    request_extra = body.get("extra_body")
+    extra_body: dict[str, Any] = (
+        deepcopy(request_extra) if isinstance(request_extra, dict) else {}
+    )
     for key in (
         "reasoning",
         "reasoning_budget",
@@ -101,9 +115,7 @@ def apply_nim_request_options(
             if enabled and (budget := reasoning.numeric_budget_tokens) is not None:
                 chat_template_kwargs["reasoning_budget"] = budget
 
-    req_top_k = request_data.top_k
-    top_k = req_top_k if req_top_k is not None else nim.top_k
-    _set_extra(extra_body, "top_k", top_k, ignore_value=-1)
+    _set_extra(extra_body, "top_k", nim.top_k, ignore_value=-1)
     _set_extra(extra_body, "min_p", nim.min_p, ignore_value=0.0)
     _set_extra(
         extra_body, "repetition_penalty", nim.repetition_penalty, ignore_value=1.0
