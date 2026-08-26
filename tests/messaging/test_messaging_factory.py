@@ -72,6 +72,25 @@ class TestCreateMessagingComponents:
         result = create_messaging_components("telegram")
         assert result is None
 
+    def test_telegram_without_allowlist(self):
+        """Return None when Telegram token is set but allowlist is missing."""
+        result = create_messaging_components(
+            "telegram",
+            MessagingPlatformOptions(telegram_bot_token="test_token"),
+        )
+        assert result is None
+
+    def test_telegram_empty_allowlist(self):
+        """Return None when allowlist is whitespace-only."""
+        result = create_messaging_components(
+            "telegram",
+            MessagingPlatformOptions(
+                telegram_bot_token="test_token",
+                allowed_telegram_user_id="   ",
+            ),
+        )
+        assert result is None
+
     def test_telegram_empty_token(self):
         """Return None when bot_token is empty string."""
         result = create_messaging_components(
@@ -173,17 +192,29 @@ class TestCreateMessagingComponents:
         ):
             first = create_messaging_components(
                 "telegram",
-                MessagingPlatformOptions(telegram_bot_token="one"),
+                MessagingPlatformOptions(
+                    telegram_bot_token="one",
+                    allowed_telegram_user_id="111",
+                ),
             )
             second = create_messaging_components(
                 "telegram",
-                MessagingPlatformOptions(telegram_bot_token="two"),
+                MessagingPlatformOptions(
+                    telegram_bot_token="two",
+                    allowed_telegram_user_id="222",
+                ),
             )
 
         assert first is not None
         assert second is not None
-        assert first.startup_notice is None
-        assert second.startup_notice is None
+        assert first.startup_notice == MessagingStartupNotice(
+            chat_id="111",
+            transport_label="Bot API",
+        )
+        assert second.startup_notice == MessagingStartupNotice(
+            chat_id="222",
+            transport_label="Bot API",
+        )
         first_limiter = runtime_cls.call_args_list[0].kwargs["limiter"]
         second_limiter = runtime_cls.call_args_list[1].kwargs["limiter"]
         assert first_limiter is not second_limiter

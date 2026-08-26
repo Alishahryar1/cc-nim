@@ -41,6 +41,17 @@ def create_messaging_components(
         if not bot_token:
             logger.info("No Telegram bot token configured, skipping platform setup")
             return None
+        allowed_telegram_user_id = (
+            str(opts.allowed_telegram_user_id).strip()
+            if opts.allowed_telegram_user_id
+            else ""
+        )
+        if not allowed_telegram_user_id:
+            logger.warning(
+                "ALLOWED_TELEGRAM_USER_ID is required for Telegram; "
+                "refusing to start without an allowlist"
+            )
+            return None
 
         from .telegram import TelegramRuntime
 
@@ -51,20 +62,16 @@ def create_messaging_components(
         )
         runtime = TelegramRuntime(
             bot_token=bot_token,
-            allowed_user_id=opts.allowed_telegram_user_id,
+            allowed_user_id=allowed_telegram_user_id,
             telegram_proxy_url=opts.telegram_proxy_url,
             limiter=limiter,
             transcriber=opts.transcriber,
             log_raw_messaging_content=opts.log_raw_messaging_content,
             log_api_error_tracebacks=opts.log_api_error_tracebacks,
         )
-        startup_notice = (
-            MessagingStartupNotice(
-                chat_id=opts.allowed_telegram_user_id,
-                transport_label="Bot API",
-            )
-            if opts.allowed_telegram_user_id
-            else None
+        startup_notice = MessagingStartupNotice(
+            chat_id=allowed_telegram_user_id,
+            transport_label="Bot API",
         )
         return MessagingPlatformComponents(
             name=runtime.name,

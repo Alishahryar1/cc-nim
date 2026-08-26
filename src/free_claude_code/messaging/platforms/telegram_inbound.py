@@ -9,6 +9,21 @@ from ..rendering.telegram_markdown import format_status
 from .voice_flow import VoiceNoteRequest, audio_suffix_from_metadata
 
 
+def _telegram_sender_allowed(allowed_user_id: str | None, user_id: str) -> bool:
+    """Fail closed: reject when no allowlist is configured or the sender differs."""
+    expected = str(allowed_user_id).strip() if allowed_user_id else ""
+    if not expected:
+        logger.warning(
+            "Rejecting Telegram sender {}: ALLOWED_TELEGRAM_USER_ID is not configured",
+            user_id,
+        )
+        return False
+    if user_id != expected:
+        logger.warning("Unauthorized access attempt from {}", user_id)
+        return False
+    return True
+
+
 def telegram_text_message_from_update(
     update: Update,
     *,
@@ -26,8 +41,7 @@ def telegram_text_message_from_update(
 
     user_id = str(update.effective_user.id)
     chat_id = str(update.effective_chat.id)
-    if allowed_user_id and user_id != str(allowed_user_id).strip():
-        logger.warning("Unauthorized access attempt from {}", user_id)
+    if not _telegram_sender_allowed(allowed_user_id, user_id):
         return None
 
     message = update.message
@@ -92,8 +106,7 @@ def telegram_voice_request_from_update(
         return None
 
     user_id = str(effective_user.id)
-    if allowed_user_id and user_id != str(allowed_user_id).strip():
-        logger.warning("Unauthorized voice access attempt from {}", user_id)
+    if not _telegram_sender_allowed(allowed_user_id, user_id):
         return None
 
     voice = message.voice
