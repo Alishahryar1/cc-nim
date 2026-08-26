@@ -573,8 +573,8 @@ sequenceDiagram
     Exec->>Lease: resolve provider
     Lease->>Runtime: cached or new provider
     Runtime->>Provider: cached or new provider
-    Exec->>Provider: preflight_stream
-    Exec->>Provider: stream_response
+    Exec->>Provider: preflight_messages
+    Exec->>Provider: stream_messages
     Provider-->>Client: Anthropic SSE events
     Route->>Lease: release after complete body
 ```
@@ -786,11 +786,12 @@ state.
 model-list modules retain response parsing and construct that value directly;
 there is no provider-layer alias for the former owner.
 
-[application/ports.py](src/free_claude_code/application/ports.py) defines the two provider operations consumed by request
-execution: synchronous `preflight_stream()` and lazy `stream_response()`. API
-handlers and application execution depend on that structural port, never on a
-provider base class. Provider adapters implement it without registration or a
-compatibility layer.
+[application/ports.py](src/free_claude_code/application/ports.py) defines the
+four protocol-specific provider operations consumed by request execution:
+synchronous `preflight_messages()` and `preflight_responses()`, followed by
+lazy `stream_messages()` and `stream_responses()`. API handlers and application
+execution depend on that structural port, never on a provider base class.
+Providers implement it without registration or a compatibility layer.
 
 [providers/base.py](src/free_claude_code/providers/base.py) defines provider-internal construction and lifecycle contracts:
 
@@ -798,9 +799,10 @@ compatibility layer.
   limits, timeouts, proxy, and logging flags. It is a frozen internal
   value whose base URL has already been resolved from the catalog.
 - `BaseProvider`: the abstract implementation base for cleanup, explicit
-  preflight, `stream_response()`, and the sole provider catalog operation,
-  `list_model_infos()`. Providers return application-owned `ProviderModelInfo`
-  values directly; there is no parallel IDs-only catalog contract.
+  Messages and Responses preflight/stream operations, and the sole provider
+  catalog operation, `list_model_infos()`. Providers return application-owned
+  `ProviderModelInfo` values directly; there is no parallel IDs-only catalog
+  contract.
 
 Provider execution is organized around explicit protocol owners.
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
