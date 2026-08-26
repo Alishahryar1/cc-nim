@@ -1569,7 +1569,10 @@ Messaging is optional. [runtime/application.py](src/free_claude_code/runtime/app
 `create_messaging_components()` from
 [messaging/platforms/factory.py](src/free_claude_code/messaging/platforms/factory.py) during startup.
 If `MESSAGING_PLATFORM` is `none`, or if the selected platform token is missing,
-the messaging bridge is skipped.
+the messaging bridge is skipped. For Telegram, `ALLOWED_TELEGRAM_USER_ID` is also
+required: without a non-empty allowlist the factory refuses to start the platform
+(fail closed). Inbound text and voice handlers independently reject senders when
+the allowlist is unset or the sender does not match.
 
 `ApplicationRuntime` privately owns the selected platform runtime, the
 `MessagingWorkflow`, configured `Transcriber`, and managed CLI session manager.
