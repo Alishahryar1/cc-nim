@@ -123,6 +123,23 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "skip only when OpenCode is absent; configured providers must pass",
     ),
     FeatureCoverage(
+        "aider_cli_integration",
+        "Aider discovers FCC models and sends Anthropic Messages through the proxy",
+        (
+            "tests/cli/test_aider_config.py",
+            "tests/cli/test_aider_launcher.py",
+            "tests/cli/test_model_catalog.py",
+        ),
+        ("test_probe_and_models_routes",),
+        ("test_aider_cli_prompt_e2e",),
+        ("clients",),
+        (
+            "Aider 0.86.2+",
+            "configured provider credentials or local provider endpoint",
+        ),
+        "skip only when Aider is absent; configured providers must pass",
+    ),
+    FeatureCoverage(
         "cline_cli_integration",
         "Cline discovers FCC models and sends Responses through the proxy",
         (
