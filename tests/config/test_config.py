@@ -1,20 +1,25 @@
 """Contracts for pure Settings and canonical source composition."""
 
 from enum import Enum
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
 from free_claude_code.application.routing import ModelRouter
+from free_claude_code.config import loader
 from free_claude_code.config.constants import (
     ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
     HTTP_CONNECT_TIMEOUT_DEFAULT,
 )
+from free_claude_code.config.env_files import dotenv_values_from_file
 from free_claude_code.config.loader import (
     ConfigSource,
     clear_settings_cache,
     compose_settings_snapshot,
     get_settings,
+    repair_invalid_managed_provider_proxies,
 )
 from free_claude_code.config.model_refs import (
     configured_chat_model_refs,
@@ -22,7 +27,11 @@ from free_claude_code.config.model_refs import (
     parse_provider_type,
 )
 from free_claude_code.config.nim import NimSettings
-from free_claude_code.config.paths import messaging_state_dir_path, server_log_path
+from free_claude_code.config.paths import (
+    managed_env_path,
+    messaging_state_dir_path,
+    server_log_path,
+)
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
 
@@ -189,6 +198,153 @@ def test_get_settings_is_cached_and_creates_managed_schema() -> None:
     second = get_settings()
 
     assert first is second
+
+
+def _write_managed_config(text: str) -> Path:
+    path = managed_env_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_repair_invalid_managed_provider_proxies_removes_all_eligible_values() -> None:
+    invalid_openai = "invalid://user:leaked-secret@proxy.example:8080"
+    managed = _write_managed_config(
+        "\n".join(
+            (
+                "FCC_CONFIG_SCHEMA=1",
+                "MODEL=nvidia_nim/test-model",
+                "OPENROUTER_PROXY=http://proxy.example:notaport",
+                "GROQ_PROXY=https://proxy.example:8443",
+                f"OPENAI_PROXY={invalid_openai}",
+                "PRESERVE_UNKNOWN=present",
+                "",
+            )
+        )
+    )
+
+    removed = repair_invalid_managed_provider_proxies({})
+
+    values = dotenv_values_from_file(managed)
+    assert removed == ("OPENROUTER_PROXY", "OPENAI_PROXY")
+    assert "OPENROUTER_PROXY" not in values
+    assert "OPENAI_PROXY" not in values
+    assert values["GROQ_PROXY"] == "https://proxy.example:8443"
+    assert values["MODEL"] == "nvidia_nim/test-model"
+    assert values["PRESERVE_UNKNOWN"] == "present"
+    assert list(managed.parent.glob(f".{managed.name}.*.tmp")) == []
+
+
+def test_repair_valid_managed_provider_proxy_leaves_file_unchanged() -> None:
+    managed = _write_managed_config(
+        "# Keep this exact text on a no-op.\n"
+        "FCC_CONFIG_SCHEMA=1\n"
+        "OPENAI_PROXY=https://proxy.example:8443\n"
+    )
+    baseline = managed.read_bytes()
+
+    assert repair_invalid_managed_provider_proxies({}) == ()
+    assert managed.read_bytes() == baseline
+
+
+def test_repair_without_managed_file_is_a_noop() -> None:
+    managed = managed_env_path()
+
+    assert repair_invalid_managed_provider_proxies({}) == ()
+    assert not managed.exists()
+
+
+@pytest.mark.parametrize("process_value", ("", "invalid://process-proxy"))
+def test_repair_preserves_process_owned_managed_proxy(
+    process_value: str,
+) -> None:
+    invalid_openai = "invalid://managed-proxy"
+    managed = _write_managed_config(
+        "FCC_CONFIG_SCHEMA=1\n"
+        f"OPENAI_PROXY={invalid_openai}\n"
+        "OPENROUTER_PROXY=invalid://unshadowed\n"
+    )
+    process = {"OPENAI_PROXY": process_value, "KEEP_PROCESS": "unchanged"}
+    baseline_process = dict(process)
+
+    assert repair_invalid_managed_provider_proxies(process) == ("OPENROUTER_PROXY",)
+
+    values = dotenv_values_from_file(managed)
+    assert values["OPENAI_PROXY"] == invalid_openai
+    assert "OPENROUTER_PROXY" not in values
+    assert process == baseline_process
+
+
+def test_repair_propagates_atomic_write_failure_without_changing_source() -> None:
+    managed = _write_managed_config(
+        "FCC_CONFIG_SCHEMA=1\nOPENAI_PROXY=invalid://managed-proxy\n"
+    )
+    baseline = managed.read_bytes()
+
+    with (
+        patch.object(
+            loader,
+            "atomic_write_managed_config",
+            side_effect=OSError("disk full"),
+        ),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        repair_invalid_managed_provider_proxies({})
+
+    assert managed.read_bytes() == baseline
+
+
+def test_repair_is_idempotent_and_writes_only_once() -> None:
+    managed = _write_managed_config(
+        "FCC_CONFIG_SCHEMA=1\nOPENAI_PROXY=invalid://managed-proxy\n"
+    )
+
+    with patch.object(
+        loader,
+        "atomic_write_managed_config",
+        wraps=loader.atomic_write_managed_config,
+    ) as writer:
+        assert repair_invalid_managed_provider_proxies({}) == ("OPENAI_PROXY",)
+        repaired = managed.read_bytes()
+        assert repair_invalid_managed_provider_proxies({}) == ()
+
+    assert writer.call_count == 1
+    assert managed.read_bytes() == repaired
+
+
+def test_repair_propagates_malformed_managed_config() -> None:
+    managed = _write_managed_config('FCC_CONFIG_SCHEMA=1\nOPENAI_PROXY="unterminated\n')
+    baseline = managed.read_bytes()
+
+    with pytest.raises(ValueError, match="Could not parse configuration file"):
+        repair_invalid_managed_provider_proxies({})
+
+    assert managed.read_bytes() == baseline
+
+
+def test_repair_propagates_config_lock_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    managed = _write_managed_config(
+        "FCC_CONFIG_SCHEMA=1\nOPENAI_PROXY=invalid://managed-proxy\n"
+    )
+    baseline = managed.read_bytes()
+
+    class UnavailableLock:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def acquire(self, *, wait: bool, timeout: float) -> bool:
+            assert wait is True
+            assert timeout == 10.0
+            return False
+
+    monkeypatch.setattr(loader, "InterprocessFileLock", UnavailableLock)
+
+    with pytest.raises(TimeoutError, match="Could not acquire managed-config lock"):
+        repair_invalid_managed_provider_proxies({})
+
+    assert managed.read_bytes() == baseline
 
 
 def test_optional_strings_share_one_normalization_rule() -> None:

@@ -4,8 +4,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
-
 from free_claude_code.config.env_files import (
     FCC_CONFIG_SCHEMA_ENV,
     dotenv_values_from_file,
@@ -17,7 +15,7 @@ from free_claude_code.config.env_migrations import (
     render_managed_config,
 )
 from free_claude_code.config.paths import managed_env_path
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.provider_proxies import invalid_provider_proxy_keys
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.json_types import JsonObject
 
@@ -26,16 +24,6 @@ from .state import ConfigInputValue
 from .validation import settings_from_values
 from .values import MASKED_SECRET, is_locked_source, load_value_state, normalize_for_env
 
-_PROVIDER_PROXY_ATTRS = frozenset(
-    descriptor.proxy_attr
-    for descriptor in PROVIDER_CATALOG.values()
-    if descriptor.proxy_attr is not None
-)
-_PROVIDER_PROXY_KEYS = tuple(
-    field.key
-    for field in FIELD_BY_KEY.values()
-    if field.settings_attr in _PROVIDER_PROXY_ATTRS
-)
 _PROVIDER_PROXY_ERROR = (
     "must be a proxy URL with a supported scheme and host "
     "(for example http://127.0.0.1:8080 or socks5://127.0.0.1:1080)"
@@ -210,19 +198,9 @@ def _update_protocol_errors(
 
 
 def _provider_proxy_errors(values: Mapping[str, str]) -> tuple[str, ...]:
-    errors: list[str] = []
-    for key in _PROVIDER_PROXY_KEYS:
-        value = values.get(key)
-        if not value:
-            continue
-        try:
-            proxy = httpx.Proxy(value)
-        except httpx.InvalidURL, ValueError:
-            errors.append(f"{key}: {_PROVIDER_PROXY_ERROR}")
-            continue
-        if not proxy.url.host:
-            errors.append(f"{key}: {_PROVIDER_PROXY_ERROR}")
-    return tuple(errors)
+    return tuple(
+        f"{key}: {_PROVIDER_PROXY_ERROR}" for key in invalid_provider_proxy_keys(values)
+    )
 
 
 def _active_voice_credential(settings: Settings) -> str | None:
