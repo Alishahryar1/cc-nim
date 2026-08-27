@@ -26,6 +26,7 @@ $HermesInstallUrl = "https://hermes-agent.nousresearch.com/install.ps1"
 $DshVersion = "0.1.0-rc.8"
 $DshPackage = "@deepseek-ai/dsh@$DshVersion"
 $GrokInstallUrl = "https://x.ai/cli/install.ps1"
+$AiderInstallUrl = "https://aider.chat/install.ps1"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -40,6 +41,7 @@ $script:InstallHermes = $true
 $script:InstallDsh = $true
 $script:InstallGrok = $true
 $script:InstallMuse = $true
+$script:InstallAider = $true
 $script:PiAvailable = $false
 $script:MuseAvailable = $false
 $script:EnableRtk = $Rtk.IsPresent
@@ -56,6 +58,7 @@ $FccCommands = @(
     "fcc-dsh",
     "fcc-grok",
     "fcc-muse",
+    "fcc-aider",
     "fcc-init",
     "free-claude-code"
 )
@@ -131,8 +134,11 @@ function Select-CodingAgents {
         $script:InstallMuse = Read-YesNo `
             -Prompt "Install or verify Muse Code for fcc-muse?" `
             -DefaultYes $script:InstallMuse
+        $script:InstallAider = Read-YesNo `
+            -Prompt "Install or verify Aider for fcc-aider?" `
+            -DefaultYes $script:InstallAider
 
-        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline -or $script:InstallHermes -or $script:InstallDsh -or $script:InstallGrok -or $script:InstallMuse) {
+        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline -or $script:InstallHermes -or $script:InstallDsh -or $script:InstallGrok -or $script:InstallMuse -or $script:InstallAider) {
             break
         }
         Write-Host "Select at least one coding agent."
@@ -825,6 +831,23 @@ function Ensure-Grok {
     Confirm-Application -CommandName "grok" -DisplayName "Grok Build"
 }
 
+function Install-Aider {
+    Invoke-DownloadedPowerShellInstaller -Url $AiderInstallUrl -Name "Aider"
+    Add-KnownBinDirectories
+}
+
+function Ensure-Aider {
+    $command = Get-ApplicationCommand "aider"
+    if ($command) {
+        Write-Host "Aider already found on PATH; verifying it."
+    }
+    else {
+        Install-Aider
+    }
+
+    Confirm-Application -CommandName "aider" -DisplayName "Aider"
+}
+
 function Ensure-Muse {
     $script:MuseAvailable = $false
     $command = Get-ApplicationCommand "muse"
@@ -1010,7 +1033,12 @@ function Ensure-SelectedCodingAgents {
         Ensure-Muse
     }
 
-    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline) -and (-not $script:InstallHermes) -and (-not $script:InstallDsh) -and (-not $script:InstallGrok) -and (-not $script:MuseAvailable)) {
+    if ($script:InstallAider) {
+        Write-Step "Ensuring Aider is installed"
+        Ensure-Aider
+    }
+
+    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline) -and (-not $script:InstallHermes) -and (-not $script:InstallDsh) -and (-not $script:InstallGrok) -and (-not $script:MuseAvailable) -and (-not $script:InstallAider)) {
         throw "No selected coding agent was installed. Re-run the installer and choose at least one."
     }
 }
@@ -1165,7 +1193,7 @@ function Configure-AndConfirmFreeClaudeCode {
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
-        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, fcc-grok, and fcc-muse in the uv tool bin directory"
+        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, fcc-grok, fcc-muse, and fcc-aider in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
         Export-FccDesktopIcon `
             -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
@@ -1192,7 +1220,7 @@ function Configure-AndConfirmFreeClaudeCode {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $installedCommands = @{}
-    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline", "fcc-hermes", "fcc-dsh", "fcc-grok", "fcc-muse")) {
+    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline", "fcc-hermes", "fcc-dsh", "fcc-grok", "fcc-muse", "fcc-aider")) {
         $command = Get-ApplicationCommand $commandName
         if (-not $command) {
             throw "Free Claude Code installation did not create '$commandName'."
@@ -1374,5 +1402,11 @@ else {
     }
     else {
         Write-Host "The fcc-muse wrapper is ready after you install Muse Code."
+    }
+    if ($script:InstallAider) {
+        Write-Host "Run Aider with: fcc-aider"
+    }
+    else {
+        Write-Host "The fcc-aider wrapper is ready after you install Aider."
     }
 }
