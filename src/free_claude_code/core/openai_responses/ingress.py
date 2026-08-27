@@ -215,9 +215,13 @@ def validate_responses_field_policy(wire: OpenAIResponsesRequest) -> None:
     _tools(wire.tools, raw_choice=wire.tool_choice)
 
 
+_IGNORED_TOP_LEVEL_EXTRAS = {"client_metadata", "text"}
+
+
 def _validate_top_level(wire: OpenAIResponsesRequest) -> None:
-    if wire.model_extra:
-        key = sorted(str(key) for key in wire.model_extra)[0]
+    unsupported_extras = (wire.model_extra or {}).keys() - _IGNORED_TOP_LEVEL_EXTRAS
+    if unsupported_extras:
+        key = sorted(str(key) for key in unsupported_extras)[0]
         raise ResponsesConversionError(f"request.{key} is not supported")
     if wire.stream is False:
         raise ResponsesConversionError(
