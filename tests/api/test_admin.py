@@ -61,6 +61,23 @@ def _clear_process_config(monkeypatch) -> None:
         "CLAUDE_CLI_BIN",
     ):
         monkeypatch.delenv(key, raising=False)
+    for descriptor in PROVIDER_CATALOG.values():
+        if descriptor.proxy_attr is None:
+            continue
+        alias = Settings.model_fields[descriptor.proxy_attr].validation_alias
+        if alias is not None:
+            monkeypatch.delenv(str(alias), raising=False)
+
+
+def _catalog_proxy_env_keys() -> tuple[str, ...]:
+    keys: list[str] = []
+    for descriptor in PROVIDER_CATALOG.values():
+        if descriptor.proxy_attr is None:
+            continue
+        alias = Settings.model_fields[descriptor.proxy_attr].validation_alias
+        if alias is not None:
+            keys.append(str(alias))
+    return tuple(keys)
 
 
 def test_admin_page_is_loopback_only(monkeypatch, tmp_path):
@@ -816,6 +833,180 @@ def test_admin_validate_rejects_duplicate_model_fallbacks(monkeypatch, tmp_path)
     body = response.json()
     assert body["valid"] is False
     assert any("duplicate" in error.lower() for error in body["errors"])
+
+
+@pytest.mark.parametrize("proxy_key", _catalog_proxy_env_keys())
+def test_admin_validate_rejects_invalid_catalog_provider_proxy(
+    monkeypatch,
+    tmp_path,
+    proxy_key,
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    invalid_proxy = "not-a-proxy://user:leaked-secret@proxy.example:8080"
+
+    response = _local_client(create_test_app()).post(
+        "/admin/api/config/validate",
+        json={"values": {proxy_key: invalid_proxy}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert body["errors"] == [
+        (
+            f"{proxy_key}: must be a proxy URL with a supported scheme and host "
+            "(for example http://127.0.0.1:8080 or socks5://127.0.0.1:1080)"
+        )
+    ]
+    assert invalid_proxy not in response.text
+    assert "leaked-secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    "proxy",
+    (
+        "http://user:password@127.0.0.1:8080",
+        "https://proxy.example:8443",
+        "socks5://127.0.0.1:1080",
+        "socks5h://proxy.example:1080",
+        "  http://127.0.0.1:8080  ",
+    ),
+)
+def test_admin_validate_accepts_httpx_provider_proxy(monkeypatch, tmp_path, proxy):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+
+    response = _local_client(create_test_app()).post(
+        "/admin/api/config/validate",
+        json={"values": {"OPENAI_PROXY": proxy}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is True
+
+
+@pytest.mark.parametrize(
+    "proxy",
+    (
+        "copied Admin page text",
+        "socks://127.0.0.1:1080",
+        "http://",
+        "http:///path",
+        "http://proxy.example:notaport",
+    ),
+)
+def test_admin_validate_rejects_unusable_provider_proxy(monkeypatch, tmp_path, proxy):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+
+    response = _local_client(create_test_app()).post(
+        "/admin/api/config/validate",
+        json={"values": {"OPENAI_PROXY": proxy}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert len(body["errors"]) == 1
+    assert body["errors"][0].startswith("OPENAI_PROXY: must be a proxy URL")
+    assert "OPENAI_PROXY=********" in body["env_preview"]
+
+
+def test_admin_apply_rejects_invalid_provider_proxy_without_side_effects(
+    monkeypatch,
+    tmp_path,
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text("MODEL=open_router/test-model\n", encoding="utf-8")
+    callbacks: list[str] = []
+
+    async def restart_callback() -> None:
+        callbacks.append("restart")
+
+    app = create_test_app(restart_callback=restart_callback)
+    _local_client(app).get("/admin/api/config")
+    baseline = env_file.read_bytes()
+    invalid_proxy = "invalid://user:leaked-secret@proxy.example:8080"
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"OPENAI_PROXY": invalid_proxy}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert body["applied"] is False
+    assert body["pending_fields"] == []
+    assert env_file.read_bytes() == baseline
+    assert callbacks == []
+    assert invalid_proxy not in response.text
+    assert "leaked-secret" not in response.text
+
+
+def test_admin_apply_validates_retained_proxy_and_allows_removal(
+    monkeypatch,
+    tmp_path,
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    invalid_proxy = "invalid://proxy.example:8080"
+    original = f"GROQ_PROXY={invalid_proxy}\n"
+    env_file.write_text(original, encoding="utf-8")
+    app = create_test_app()
+    _local_client(app).get("/admin/api/config")
+    baseline = env_file.read_bytes()
+
+    rejected = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"MODEL": "open_router/test-model"}},
+    )
+
+    assert rejected.status_code == 200
+    assert rejected.json()["applied"] is False
+    assert env_file.read_bytes() == baseline
+
+    removed = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"GROQ_PROXY": None}},
+    )
+
+    assert removed.status_code == 200
+    assert removed.json()["applied"] is True
+    assert "GROQ_PROXY=" not in env_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("submitted", (MASKED_SECRET, "", "   "))
+def test_admin_validate_preserves_valid_stored_proxy_secret(
+    monkeypatch,
+    tmp_path,
+    submitted,
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
+        "OPENAI_PROXY=http://user:password@127.0.0.1:8080\n",
+        encoding="utf-8",
+    )
+
+    response = _local_client(create_test_app()).post(
+        "/admin/api/config/validate",
+        json={"values": {"OPENAI_PROXY": submitted}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is True
+    assert "OPENAI_PROXY=********" in body["env_preview"]
+    assert "password" not in response.text
 
 
 def test_admin_apply_writes_complete_managed_env_and_masks_preview(
