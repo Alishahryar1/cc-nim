@@ -4,6 +4,7 @@ import pytest
 
 from free_claude_code.cli.launchers.model_catalog import (
     ClientModel,
+    catalog_wire_slug_for_ref,
     client_models_from_response,
     fetch_proxy_models_response,
 )
@@ -169,3 +170,54 @@ def test_fetch_proxy_models_rejects_non_object_json() -> None:
         pytest.raises(ValueError, match="JSON object"),
     ):
         fetch_proxy_models_response("http://127.0.0.1:9191", "proxy-token")
+
+
+def _client_model(wire_slug: str, provider_model_ref: str) -> ClientModel:
+    return ClientModel(
+        wire_slug=wire_slug,
+        provider_model_ref=provider_model_ref,
+        display_name=provider_model_ref,
+        allows_reasoning=wire_slug == provider_model_ref,
+    )
+
+
+def test_catalog_wire_slug_prefers_the_advertised_no_thinking_slug() -> None:
+    models = (
+        _client_model(
+            "claude-3-freecc-no-thinking/open_router/vendor/chat-model",
+            "open_router/vendor/chat-model",
+        ),
+    )
+
+    assert (
+        catalog_wire_slug_for_ref(models, "open_router/vendor/chat-model")
+        == "claude-3-freecc-no-thinking/open_router/vendor/chat-model"
+    )
+
+
+def test_catalog_wire_slug_keeps_a_directly_advertised_ref() -> None:
+    models = (
+        _client_model("open_router/vendor/chat-model", "open_router/vendor/chat-model"),
+    )
+
+    assert (
+        catalog_wire_slug_for_ref(models, "open_router/vendor/chat-model")
+        == "open_router/vendor/chat-model"
+    )
+
+
+def test_catalog_wire_slug_falls_back_when_the_catalog_omits_the_ref() -> None:
+    models = (_client_model("open_router/vendor/other", "open_router/vendor/other"),)
+
+    assert (
+        catalog_wire_slug_for_ref(models, "open_router/vendor/chat-model")
+        == "open_router/vendor/chat-model"
+    )
+    assert catalog_wire_slug_for_ref((), "open_router/vendor/chat-model") == (
+        "open_router/vendor/chat-model"
+    )
+
+
+def test_catalog_wire_slug_passes_through_an_unset_model() -> None:
+    assert catalog_wire_slug_for_ref((), None) is None
+    assert catalog_wire_slug_for_ref((), "") == ""

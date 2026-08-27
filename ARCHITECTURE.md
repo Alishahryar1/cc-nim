@@ -1332,6 +1332,9 @@ client environment.
   `model_catalog_json` file under `~/.fcc/`, and injects that path so Codex's
   native `/model` picker lists FCC provider slugs. Catalog generation is
   fail-open: launch continues with a warning if the catalog cannot be prepared.
+- When the catalog projects the configured provider reference under a different
+  wire slug, `fcc-codex` selects that advertised slug. Failed, empty, or
+  incomplete discovery leaves the configured provider reference unchanged.
 - The server lifecycle independently keeps that same file synchronized for
   Codex App and IDE processes that are not launched through `fcc-codex`.
 - Launcher-side catalog discovery authenticates directly with the canonical proxy
