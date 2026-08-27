@@ -145,6 +145,75 @@ def test_usage_int_reads_dict_object_and_model_extra():
     assert usage_int({"prompt_tokens": True}, "prompt_tokens") is None
 
 
+def test_anthropic_usage_fields_maps_cached_tokens():
+    provider = _UsageTestProvider()
+    usage = {
+        "prompt_tokens": 22,
+        "completion_tokens": 4,
+        "prompt_tokens_details": {"cached_tokens": 15},
+    }
+
+    assert provider._anthropic_usage_fields(usage) == {
+        "input_tokens": 7,
+        "cache_read_input_tokens": 15,
+    }
+
+
+def test_anthropic_usage_fields_reads_sdk_style_details_object():
+    provider = _UsageTestProvider()
+    usage = SimpleNamespace(
+        prompt_tokens=22,
+        completion_tokens=4,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=15),
+    )
+
+    assert provider._anthropic_usage_fields(usage) == {
+        "input_tokens": 7,
+        "cache_read_input_tokens": 15,
+    }
+
+
+def test_anthropic_usage_fields_ignores_invalid_cache_values():
+    provider = _UsageTestProvider()
+
+    # Zero or negative cache hits carry nothing to report.
+    assert (
+        provider._anthropic_usage_fields(
+            {"prompt_tokens": 22, "prompt_tokens_details": {"cached_tokens": 0}}
+        )
+        == {}
+    )
+    assert (
+        provider._anthropic_usage_fields(
+            {"prompt_tokens": 22, "prompt_tokens_details": {"cached_tokens": -3}}
+        )
+        == {}
+    )
+    # A cache hit larger than the prompt is incoherent; refuse to split.
+    assert (
+        provider._anthropic_usage_fields(
+            {"prompt_tokens": 5, "prompt_tokens_details": {"cached_tokens": 15}}
+        )
+        == {}
+    )
+    # Without a prompt total there is nothing to subtract from.
+    assert (
+        provider._anthropic_usage_fields(
+            {"prompt_tokens_details": {"cached_tokens": 15}}
+        )
+        == {}
+    )
+    # A non-mapping details value cannot be read.
+    assert (
+        provider._anthropic_usage_fields(
+            {"prompt_tokens": 22, "prompt_tokens_details": "odd"}
+        )
+        == {}
+    )
+    # No usage at all.
+    assert provider._anthropic_usage_fields(None) == {}
+
+
 def test_stream_usage_rejection_matches_usage_option_400():
     error = _bad_request(
         "Unrecognized request argument supplied: stream_options",
@@ -198,6 +267,45 @@ async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens
     )
     assert start_usage["input_tokens"] == 7
     assert final_usage == {"input_tokens": 22, "output_tokens": 4}
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_stream_reports_cache_read_input_tokens():
+    # Upstream counts cached prompt tokens inside ``prompt_tokens``; the
+    # Anthropic usage contract reports them separately as
+    # ``cache_read_input_tokens`` with ``input_tokens`` exclusive of them.
+    provider = _UsageTestProvider()
+    request = make_messages_request(model="m")
+    usage = SimpleNamespace(
+        prompt_tokens=22,
+        completion_tokens=4,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=15),
+    )
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+                _chunk(usage=usage),
+            ]
+        )
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        events = [
+            event async for event in provider.stream_response(request, input_tokens=7)
+        ]
+
+    final_usage = next(
+        event.data["usage"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "message_delta"
+    )
+    assert final_usage == {
+        "input_tokens": 7,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 15,
+    }
 
 
 @pytest.mark.asyncio

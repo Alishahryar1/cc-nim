@@ -201,8 +201,45 @@ class OpenAIChatProvider(BaseProvider):
         return {}
 
     def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
-        """Return provider-specific Anthropic usage fields for final SSE usage."""
-        return {}
+        """Return provider-specific Anthropic usage fields for final SSE usage.
+
+        The base mapping surfaces OpenAI-compatible prompt caching: upstream
+        reports cached prompt tokens under
+        ``prompt_tokens_details.cached_tokens`` and counts them inside
+        ``prompt_tokens``, while Anthropic usage reports ``input_tokens``
+        exclusive of ``cache_read_input_tokens``. Subtract the cached share
+        and report it as ``cache_read_input_tokens`` so clients see the
+        cache hit instead of paying full input price for it.
+        """
+
+        details = self._usage_details(usage_info)
+        cached_tokens = usage_int(details, "cached_tokens")
+        prompt_tokens = usage_int(usage_info, "prompt_tokens")
+        if (
+            cached_tokens is None
+            or cached_tokens <= 0
+            or prompt_tokens is None
+            or cached_tokens > prompt_tokens
+        ):
+            return {}
+        return {
+            "input_tokens": prompt_tokens - cached_tokens,
+            "cache_read_input_tokens": cached_tokens,
+        }
+
+    @staticmethod
+    def _usage_details(usage_info: Any) -> Any:
+        """Return ``prompt_tokens_details`` from SDK usage objects or dicts.
+
+        The details value may be a plain dict or an SDK/pydantic object;
+        ``usage_int`` reads either, so no shape filtering happens here.
+        """
+
+        if usage_info is None:
+            return None
+        if isinstance(usage_info, Mapping):
+            return usage_info.get("prompt_tokens_details")
+        return getattr(usage_info, "prompt_tokens_details", None)
 
     async def _create_stream(
         self,
