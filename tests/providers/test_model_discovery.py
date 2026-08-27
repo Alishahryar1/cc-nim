@@ -354,7 +354,15 @@ class FakeProvider(BaseProvider):
         self.cleaned = False
         self.model_list_calls = 0
 
-    def preflight_stream(
+    def preflight_messages(
+        self,
+        request: Any,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> None:
+        return None
+
+    def preflight_responses(
         self,
         request: Any,
         *,
@@ -378,7 +386,19 @@ class FakeProvider(BaseProvider):
         await self._before_model_list()
         return self._model_infos
 
-    async def stream_response(
+    async def stream_messages(
+        self,
+        request: Any,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> AsyncIterator[str]:
+        if False:
+            yield ""
+
+    async def stream_responses(
         self,
         request: Any,
         input_tokens: int = 0,

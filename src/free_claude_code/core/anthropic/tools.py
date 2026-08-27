@@ -10,8 +10,8 @@ from typing import Any
 
 from loguru import logger
 
+from ..openai_tool_names import OpenAIToolNameCodec
 from .models import MessagesRequest
-from .openai_tool_names import OpenAIToolNameCodec
 from .tool_schema import arguments_match_schema, coerce_text_argument
 
 _CONTROL_TOKEN_RE = re.compile(r"<\|[^|>]{1,80}\|>")
@@ -43,11 +43,10 @@ class FunctionTagToolParser:
     """Parse an exact terminal function-tag envelope into tool use."""
 
     def __init__(self, request: MessagesRequest):
-        self._tool_names = OpenAIToolNameCodec.from_request(request)
-        self._schemas: dict[str, dict[str, Any]] = {}
+        schemas: dict[str, dict[str, Any]] = {}
         for tool in request.tools or ():
             if tool.name:
-                self._schemas[tool.name] = (
+                schemas[tool.name] = (
                     tool.input_schema
                     if tool.input_schema is not None
                     else {"type": "object"}
@@ -56,9 +55,41 @@ class FunctionTagToolParser:
         tool_choice_type = (
             tool_choice.get("type") if isinstance(tool_choice, dict) else None
         )
+        self._initialize(
+            tool_names=OpenAIToolNameCodec.from_request(request),
+            schemas=schemas,
+            enabled=tool_choice_type != "none",
+        )
+
+    @classmethod
+    def from_schemas(
+        cls,
+        *,
+        tool_names: OpenAIToolNameCodec,
+        schemas: Mapping[str, Mapping[str, Any]],
+        enabled: bool,
+    ) -> FunctionTagToolParser:
+        """Build the parser from a protocol-neutral Chat tool contract."""
+        parser = cls.__new__(cls)
+        parser._initialize(
+            tool_names=tool_names,
+            schemas={name: dict(schema) for name, schema in schemas.items()},
+            enabled=enabled,
+        )
+        return parser
+
+    def _initialize(
+        self,
+        *,
+        tool_names: OpenAIToolNameCodec,
+        schemas: dict[str, dict[str, Any]],
+        enabled: bool,
+    ) -> None:
+        self._tool_names = tool_names
+        self._schemas = schemas
         self._state = (
             _FunctionTagState.SEARCHING
-            if self._schemas and tool_choice_type != "none"
+            if self._schemas and enabled
             else _FunctionTagState.DISABLED
         )
         self._parts: list[str] = []

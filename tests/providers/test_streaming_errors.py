@@ -11,16 +11,17 @@ import openai
 import pytest
 
 from free_claude_code.config.nim import NimSettings
-from free_claude_code.core.anthropic import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
 )
 from free_claude_code.core.anthropic.streaming import (
-    AnthropicStreamLedger,
     make_response_recovery_body,
     make_text_recovery_body,
+    tool_schemas_by_name,
 )
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
+from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import (
     UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
@@ -29,12 +30,15 @@ from free_claude_code.providers.admission import (
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.provider import (
     _OpenAIChatStreamRunner,
+    _reserved_anthropic_tool_ids,
+)
+from free_claude_code.providers.openai_chat.stream_output import (
+    AnthropicChatStreamOutput,
 )
 from free_claude_code.providers.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
     OpenAIToolCallCollector,
-    has_committed_sse_output,
-    iter_heuristic_tool_use_sse,
+    iter_heuristic_tool_use_events,
 )
 from free_claude_code.providers.stream_recovery import TruncatedProviderStreamError
 from tests.providers.request_factory import make_messages_request
@@ -123,9 +127,21 @@ def _make_provider():
     )
 
 
-def _make_tool_assembler(provider: NvidiaNimProvider) -> OpenAIToolCallAssembler:
+def _make_tool_assembler(
+    provider: NvidiaNimProvider, *, request=None
+) -> OpenAIToolCallAssembler:
+    concrete_request = request or _make_request()
     return OpenAIToolCallAssembler(
-        record_extra_content=provider._record_tool_call_extra_content
+        reserved_tool_ids=_reserved_anthropic_tool_ids(concrete_request),
+        record_extra_content=provider._record_tool_call_extra_content,
+    )
+
+
+def _make_anthropic_output() -> AnthropicChatStreamOutput:
+    return AnthropicChatStreamOutput(
+        message_id="msg_test",
+        model="test-model",
+        input_tokens=0,
     )
 
 
@@ -152,12 +168,17 @@ def _make_stream_runner(
     request=None,
     request_id: str | None = None,
 ) -> _OpenAIChatStreamRunner:
+    concrete_request = request or _make_request()
     return _OpenAIChatStreamRunner(
         provider,
-        request=request or _make_request(),
+        body=provider._build_request_body(concrete_request),
+        tool_names=OpenAIToolNameCodec.from_request(concrete_request),
+        tool_schemas=tool_schemas_by_name(concrete_request),
+        reserved_tool_ids=_reserved_anthropic_tool_ids(concrete_request),
+        output_factory=_make_anthropic_output,
         input_tokens=0,
         request_id=request_id,
-        response_model=None,
+        response_model=concrete_request.model,
         reasoning=DEFAULT_REASONING_POLICY,
     )
 
@@ -191,7 +212,9 @@ def _make_usage_chunk(*, prompt_tokens: int, completion_tokens: int):
     return chunk
 
 
-def _make_tool_calls_chunk(*, name: str, arguments: str, tool_id: str, index: int = 0):
+def _make_tool_calls_chunk(
+    *, name: str | None, arguments: str, tool_id: str | None, index: int = 0
+):
     """Single OpenAI-style tool_calls delta (starts a native streamed tool block)."""
     tc = MagicMock()
     tc.index = index
@@ -210,12 +233,12 @@ async def _collect_stream(
     reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
 ):
     """Collect all SSE events from a stream."""
-    return [e async for e in provider.stream_response(request, reasoning=reasoning)]
+    return [e async for e in provider.stream_messages(request, reasoning=reasoning)]
 
 
 async def _collect_stream_error(provider, request, **kwargs) -> ExecutionFailure:
     with pytest.raises(ExecutionFailure) as exc_info:
-        [e async for e in provider.stream_response(request, **kwargs)]
+        [e async for e in provider.stream_messages(request, **kwargs)]
     return exc_info.value
 
 
@@ -224,9 +247,18 @@ async def _collect_stream_and_error(
 ) -> tuple[list[str], ExecutionFailure]:
     events: list[str] = []
     with pytest.raises(ExecutionFailure) as exc_info:
-        async for event in provider.stream_response(request, **kwargs):
+        async for event in provider.stream_messages(request, **kwargs):
             events.extend((event,))
     return events, exc_info.value
+
+
+def _tool_use_starts(events: list[str]) -> list[dict]:
+    return [
+        event.data["content_block"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "content_block_start"
+        and event.data.get("content_block", {}).get("type") == "tool_use"
+    ]
 
 
 def _assert_no_content_deltas_after_error_text(
@@ -298,7 +330,7 @@ class TestStreamingExceptionHandling:
 
         assert stream.closed
 
-    """Tests for error paths during stream_response."""
+    """Tests for error paths during stream_messages."""
 
     @pytest.mark.asyncio
     async def test_pre_start_api_error_raises_provider_error(self):
@@ -1007,6 +1039,147 @@ class TestStreamingExceptionHandling:
         assert [block["name"] for block in tool_starts] == ["Bash"]
 
     @pytest.mark.asyncio
+    async def test_precommit_retry_discards_abandoned_tool_id_candidate(self):
+        """An ID observed only by an invisible attempt cannot leak into its replay."""
+        provider = _make_provider()
+        request = _make_request()
+        first_stream = AsyncStreamMock(
+            [
+                _make_tool_calls_chunk(
+                    name=None,
+                    arguments="",
+                    tool_id="call_abandoned",
+                )
+            ],
+            error=httpx.ReadError("early cutoff"),
+        )
+        second_stream = AsyncStreamMock(
+            [
+                _make_tool_calls_chunk(
+                    name="Bash",
+                    arguments="{}",
+                    tool_id=None,
+                ),
+                _make_chunk(finish_reason="tool_calls"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[first_stream, second_stream],
+        ) as mock_create:
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        [start] = _tool_use_starts(events)
+        assert mock_create.await_count == 2
+        assert start["id"].startswith("tool_")
+        assert start["id"] != "call_abandoned"
+        assert sum(event.event == "message_start" for event in parsed) == 1
+        assert sum(event.event == "content_block_start" for event in parsed) == 1
+        assert sum(event.event == "message_delta" for event in parsed) == 1
+        assert sum(event.event == "message_stop" for event in parsed) == 1
+
+    @pytest.mark.asyncio
+    async def test_colliding_tool_id_round_trips_as_distinct_matched_pair(self):
+        """A repaired public ID stays paired when Claude replays the next turn."""
+        provider = _make_provider()
+        first_pair = [
+            {"role": "user", "content": "Run it once."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "Bash:0",
+                        "name": "Bash",
+                        "input": {"command": "printf first"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "Bash:0",
+                        "content": "first",
+                    }
+                ],
+            },
+        ]
+        request = _make_request(
+            messages=[*first_pair, {"role": "user", "content": "Run it again."}]
+        )
+        stream = AsyncStreamMock(
+            [
+                _make_tool_calls_chunk(
+                    name="Bash",
+                    arguments='{"command":"printf second"}',
+                    tool_id="Bash:0",
+                ),
+                _make_chunk(finish_reason="tool_calls"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream,
+        ):
+            events = await _collect_stream(provider, request)
+
+        [start] = _tool_use_starts(events)
+        public_id = start["id"]
+        assert public_id != "Bash:0"
+
+        replay = _make_request(
+            messages=[
+                *request.messages,
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": public_id,
+                            "name": "Bash",
+                            "input": {"command": "printf second"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": public_id,
+                            "content": "second",
+                        }
+                    ],
+                },
+            ]
+        )
+        body = provider._build_request_body(
+            replay,
+            reasoning=DEFAULT_REASONING_POLICY,
+        )
+        assistant_ids = [
+            message["tool_calls"][0]["id"]
+            for message in body["messages"]
+            if message.get("role") == "assistant" and message.get("tool_calls")
+        ]
+        result_ids = [
+            message["tool_call_id"]
+            for message in body["messages"]
+            if message.get("role") == "tool"
+        ]
+        assert assistant_ids == ["Bash:0", public_id]
+        assert result_ids == ["Bash:0", public_id]
+
+    @pytest.mark.asyncio
     async def test_precommit_retry_emits_one_unduplicated_downstream_lifecycle(self):
         """An abandoned attempt contributes no frame to the successful replay."""
         provider = _make_provider()
@@ -1047,6 +1220,76 @@ class TestStreamingExceptionHandling:
         assert sum(event.event == "message_stop" for event in parsed) == 1
         assert parsed[0].event == "message_start"
         assert parsed[-1].event == "message_stop"
+
+    @pytest.mark.asyncio
+    async def test_responses_precommit_retry_emits_one_unduplicated_lifecycle(self):
+        """Responses output also discards every frame from an abandoned attempt."""
+        provider = _make_provider()
+        request = OpenAIResponsesRequest(model="test-model", input="hello")
+        first_stream = AsyncStreamMock(
+            [_make_chunk(content="hidden")],
+            error=httpx.ReadError("early cutoff"),
+        )
+        second_stream = AsyncStreamMock(
+            [
+                _make_chunk(content="visible"),
+                _make_chunk(finish_reason="stop"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[first_stream, second_stream],
+        ) as create:
+            events = [
+                event
+                async for event in provider.stream_responses(
+                    request,
+                    request_id="req_responses_retry",
+                    response_model="public-model",
+                )
+            ]
+
+        event_text = "".join(events)
+        parsed = parse_sse_text(event_text)
+        event_names = [event.event for event in parsed]
+        assert create.await_count == 2
+        assert "hidden" not in event_text
+        assert "visible" in event_text
+        assert event_names.count("response.created") == 1
+        assert event_names.count("response.completed") == 1
+        assert "response.failed" not in event_names
+
+    @pytest.mark.asyncio
+    async def test_responses_cancellation_closes_upstream_without_retry(self):
+        provider = _make_provider()
+        request = OpenAIResponsesRequest(model="test-model", input="hello")
+        stream = BlockingClosableAsyncStreamMock()
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream,
+        ) as create:
+            task = asyncio.create_task(
+                anext(
+                    provider.stream_responses(
+                        request,
+                        request_id="req_responses_cancel",
+                        response_model="public-model",
+                    )
+                )
+            )
+            await asyncio.wait_for(stream.entered.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert create.await_count == 1
+        assert stream.close_calls == 1
 
     @pytest.mark.asyncio
     async def test_precommit_retry_discards_abandoned_parser_and_usage_state(self):
@@ -1660,11 +1903,12 @@ class TestStreamingExceptionHandling:
         runner = _make_stream_runner(
             _make_provider(), request=_make_request(), request_id="req_recovery"
         )
-        ledger = AnthropicStreamLedger("msg_recovery", "model")
-        ledger.start_thinking_block()
-        ledger.emit_thinking_delta("hidden reasoning")
-        list(ledger.ensure_text_block())
-        ledger.emit_text_delta("visible answer")
+        assembler = runner._new_stream_assembler(output_reasoning=True)
+        output = assembler.output
+        output.ensure_reasoning_block()
+        output.emit_reasoning_delta("hidden reasoning")
+        output.ensure_text_block()
+        output.emit_text_delta("visible answer")
 
         with patch.object(
             runner,
@@ -1678,7 +1922,7 @@ class TestStreamingExceptionHandling:
             execution = runner._provider._admission.start_execution()
             events = await runner._recovery_events(
                 body={"messages": [{"role": "user", "content": "hello"}]},
-                ledger=ledger,
+                assembler=assembler,
                 error=TimeoutError("cutoff"),
                 tool_argument_alias_buffers={},
                 output_reasoning=True,
@@ -1844,12 +2088,10 @@ class TestProcessToolCall:
 
     def test_heuristic_tool_use_sse_marks_committed_tool_output(self):
         """Heuristic tool blocks are emitted content, even without OpenAI tool state."""
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        ledger = AnthropicStreamLedger("msg_test", "test-model")
+        output = _make_anthropic_output()
         events = list(
-            iter_heuristic_tool_use_sse(
-                ledger,
+            iter_heuristic_tool_use_events(
+                output,
                 {
                     "id": "toolu_heuristic",
                     "name": "Read",
@@ -1860,25 +2102,128 @@ class TestProcessToolCall:
 
         event_text = "".join(events)
         assert "tool_use" in event_text
-        assert ledger.has_emitted_tool_block()
-        assert has_committed_sse_output(ledger)
+        assert output.has_emitted_tool_block()
+        assert output.committed_output
 
     def test_tool_call_with_id(self):
         """Tool call with id starts a tool block."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": 0,
             "id": "call_123",
             "function": {"name": "search", "arguments": '{"q": "test"}'},
         }
         events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
-        event_text = "".join(events)
-        assert "tool_use" in event_text
-        assert "search" in event_text
-        assert "call_123" in event_text
+        assert _tool_use_starts(events) == [
+            {
+                "type": "tool_use",
+                "id": "call_123",
+                "name": "search",
+                "input": {},
+            }
+        ]
+
+    @pytest.mark.parametrize("missing_id", [None, "", "   "])
+    def test_missing_or_blank_tool_call_id_generates_public_id(self, missing_id):
+        """An absent identity never escapes as an empty Anthropic tool-use ID."""
+        provider = _make_provider()
+        sse = _make_anthropic_output()
+
+        events = list(
+            _make_tool_assembler(provider).process_tool_call(
+                {
+                    "index": 0,
+                    "id": missing_id,
+                    "function": {"name": "Bash", "arguments": "{}"},
+                },
+                sse,
+            )
+        )
+
+        [start] = _tool_use_starts(events)
+        assert start["id"].startswith("tool_")
+
+    def test_historical_tool_call_id_collision_is_remapped(self):
+        """A later turn cannot reuse a tool identity already visible in history."""
+        provider = _make_provider()
+        request = _make_request(
+            messages=[
+                {"role": "user", "content": "Run it once."},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "Bash:0",
+                            "name": "Bash",
+                            "input": {"command": "printf first"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "Bash:0",
+                            "content": "first",
+                        }
+                    ],
+                },
+            ]
+        )
+        sse = _make_anthropic_output()
+
+        events = list(
+            _make_tool_assembler(provider, request=request).process_tool_call(
+                {
+                    "index": 0,
+                    "id": "Bash:0",
+                    "function": {
+                        "name": "Bash",
+                        "arguments": '{"command":"printf second"}',
+                    },
+                },
+                sse,
+            )
+        )
+
+        [start] = _tool_use_starts(events)
+        assert start["id"].startswith("tool_")
+        assert start["id"] != "Bash:0"
+
+    def test_current_response_tool_call_id_collision_is_remapped(self):
+        """Two simultaneous calls cannot expose the same public identity."""
+        provider = _make_provider()
+        sse = _make_anthropic_output()
+        assembler = _make_tool_assembler(provider)
+
+        first = list(
+            assembler.process_tool_call(
+                {
+                    "index": 0,
+                    "id": "Bash:0",
+                    "function": {"name": "Bash", "arguments": "{}"},
+                },
+                sse,
+            )
+        )
+        second = list(
+            assembler.process_tool_call(
+                {
+                    "index": 1,
+                    "id": "Bash:0",
+                    "function": {"name": "Bash", "arguments": "{}"},
+                },
+                sse,
+            )
+        )
+
+        starts = _tool_use_starts(first + second)
+        assert starts[0]["id"] == "Bash:0"
+        assert starts[1]["id"].startswith("tool_")
+        assert starts[1]["id"] != starts[0]["id"]
 
     def test_structured_tool_call_restores_portable_wire_alias(self):
         """A wire alias never escapes in the Anthropic tool block."""
@@ -1889,7 +2234,7 @@ class TestProcessToolCall:
         )
         codec = OpenAIToolNameCodec.from_request(request)
         alias = codec.encode(original)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
 
         events = list(
             _make_tool_assembler(provider).process_tool_call(
@@ -1932,7 +2277,7 @@ class TestProcessToolCall:
             ]
         )
         codec = OpenAIToolNameCodec.from_request(request)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
 
         events = list(
             _make_tool_assembler(provider).process_tool_call(
@@ -1977,7 +2322,7 @@ class TestProcessToolCall:
         alias = codec.encode(original)
         split = len(alias) // 2
         buffers: dict[int, str] = {}
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         assembler = _make_tool_assembler(provider)
 
         first = list(
@@ -2032,7 +2377,7 @@ class TestProcessToolCall:
         codec = OpenAIToolNameCodec.from_request(request)
         assert codec.is_alias_prefix(original)
         buffers: dict[int, str] = {}
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         assembler = _make_tool_assembler(provider)
 
         initial = list(
@@ -2077,7 +2422,9 @@ class TestProcessToolCall:
             )
         )
 
-        calls = collector.completed_calls(request, tool_names=codec)
+        calls = collector.completed_calls(
+            tool_schemas_by_name(request), tool_names=codec
+        )
 
         assert calls is not None
         assert calls[0]["function"]["name"] == original
@@ -2089,10 +2436,10 @@ class TestProcessToolCall:
             tools=[{"name": original, "input_schema": {"type": "object"}}]
         )
         codec = OpenAIToolNameCodec.from_request(request)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
 
         events = list(
-            iter_heuristic_tool_use_sse(
+            iter_heuristic_tool_use_events(
                 sse,
                 {
                     "id": "call_heuristic",
@@ -2110,9 +2457,7 @@ class TestProcessToolCall:
     def test_tool_call_id_arrives_before_name_still_emits_id_and_name(self):
         """Split-stream tool: id (no name) then name then args; id preserved on start."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         t1 = {
             "index": 0,
             "id": "call_split",
@@ -2128,9 +2473,10 @@ class TestProcessToolCall:
             "id": "call_split",
             "function": {"name": None, "arguments": "{}"},
         }
-        b1 = "".join(_make_tool_assembler(provider).process_tool_call(t1, sse))
-        b2 = "".join(_make_tool_assembler(provider).process_tool_call(t2, sse))
-        b3 = "".join(_make_tool_assembler(provider).process_tool_call(t3, sse))
+        assembler = _make_tool_assembler(provider)
+        b1 = "".join(assembler.process_tool_call(t1, sse))
+        b2 = "".join(assembler.process_tool_call(t2, sse))
+        b3 = "".join(assembler.process_tool_call(t3, sse))
         combined = b1 + b2 + b3
         assert "call_split" in combined
         assert "Grep" in combined
@@ -2139,9 +2485,7 @@ class TestProcessToolCall:
     def test_tool_call_arguments_buffered_until_name(self):
         """Argument deltas before tool name are emitted after the block starts."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         t1 = {
             "index": 0,
             "id": "call_buf",
@@ -2152,35 +2496,52 @@ class TestProcessToolCall:
             "id": "call_buf",
             "function": {"name": "Read", "arguments": "1}"},
         }
-        b1 = "".join(_make_tool_assembler(provider).process_tool_call(t1, sse))
-        b2 = "".join(_make_tool_assembler(provider).process_tool_call(t2, sse))
+        assembler = _make_tool_assembler(provider)
+        b1 = "".join(assembler.process_tool_call(t1, sse))
+        b2 = "".join(assembler.process_tool_call(t2, sse))
         assert b1 == ""
         combined = b2
         assert "Read" in combined
         assert "call_buf" in combined
         assert '{"x":' in combined or "partial_json" in combined
 
-    def test_tool_call_without_id_generates_uuid(self):
-        """Tool call without id generates a uuid-based id."""
+    def test_late_upstream_id_cannot_overwrite_started_public_id(self):
+        """The identity emitted at block start stays authoritative."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
+        sse = _make_anthropic_output()
+        assembler = _make_tool_assembler(provider)
 
-        sse = AnthropicStreamLedger("msg_test", "test-model")
-        tc = {
-            "index": 0,
-            "id": None,
-            "function": {"name": "test", "arguments": "{}"},
-        }
-        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
-        event_text = "".join(events)
-        assert "tool_" in event_text
+        initial = list(
+            assembler.process_tool_call(
+                {
+                    "index": 0,
+                    "id": None,
+                    "function": {"name": "Bash", "arguments": "{}"},
+                },
+                sse,
+            )
+        )
+        [start] = _tool_use_starts(initial)
+        generated_id = start["id"]
+
+        later = list(
+            assembler.process_tool_call(
+                {
+                    "index": 0,
+                    "id": "late_upstream_id",
+                    "function": {"name": None, "arguments": ""},
+                },
+                sse,
+            )
+        )
+
+        assert later == []
+        assert sse.tool_states[0].tool_id == generated_id
 
     def test_task_tool_forces_background_false(self):
         """Task tool with run_in_background=true is forced to false."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         args = json.dumps({"run_in_background": True, "prompt": "test"})
         tc = {
             "index": 0,
@@ -2195,9 +2556,7 @@ class TestProcessToolCall:
     def test_task_tool_chunked_args_forces_background_false(self):
         """Chunked Task args are buffered until valid JSON, then forced to false."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc1 = {
             "index": 0,
             "id": "call_task_chunked",
@@ -2209,30 +2568,30 @@ class TestProcessToolCall:
             "function": {"name": None, "arguments": ' "prompt": "test"}'},
         }
 
-        events1 = list(_make_tool_assembler(provider).process_tool_call(tc1, sse))
+        assembler = _make_tool_assembler(provider)
+        events1 = list(assembler.process_tool_call(tc1, sse))
         assert len(events1) > 0
         assert "false" not in "".join(events1).lower()
 
-        events2 = list(_make_tool_assembler(provider).process_tool_call(tc2, sse))
+        events2 = list(assembler.process_tool_call(tc2, sse))
         event_text = "".join(events1 + events2)
         assert "false" in event_text.lower()
 
     def test_task_tool_invalid_json_logs_warning_on_flush(self, caplog):
         """Invalid JSON args for Task tool emits {} on flush and logs a warning."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": 0,
             "id": "call_task2",
             "function": {"name": "Task", "arguments": "not json"},
         }
-        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
+        assembler = _make_tool_assembler(provider)
+        events = list(assembler.process_tool_call(tc, sse))
         assert len(events) > 0
 
         with caplog.at_level("WARNING"):
-            flushed = list(_make_tool_assembler(provider).flush_task_arg_buffers(sse))
+            flushed = list(assembler.flush_task_arg_buffers(sse))
         assert len(flushed) > 0
         assert "{}" in "".join(flushed)
         assert any("Task args invalid JSON" in r.message for r in caplog.records)
@@ -2240,9 +2599,7 @@ class TestProcessToolCall:
     def test_negative_tool_index_fallback(self):
         """tc_index < 0 uses len(tool_indices) as fallback."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": -1,
             "id": "call_neg",
@@ -2255,9 +2612,7 @@ class TestProcessToolCall:
     def test_none_tool_index_defaults_to_zero(self):
         """Gemini may stream tool_call deltas with a null index."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": None,
             "id": "call_none",
@@ -2272,9 +2627,7 @@ class TestProcessToolCall:
     def test_tool_args_emitted_as_delta(self):
         """Arguments are emitted as input_json_delta events."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc = {
             "index": 0,
             "id": "call_args",
@@ -2371,9 +2724,7 @@ class TestStreamChunkEdgeCases:
     def test_stream_malformed_tool_args_chunked(self):
         """Chunked tool args that never form valid JSON are flushed with {}."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _make_anthropic_output()
         tc1 = {
             "index": 0,
             "id": "call_malformed",
@@ -2385,9 +2736,10 @@ class TestStreamChunkEdgeCases:
             "function": {"name": None, "arguments": " never valid }"},
         }
 
-        events1 = list(_make_tool_assembler(provider).process_tool_call(tc1, sse))
-        events2 = list(_make_tool_assembler(provider).process_tool_call(tc2, sse))
-        flushed = list(_make_tool_assembler(provider).flush_task_arg_buffers(sse))
+        assembler = _make_tool_assembler(provider)
+        events1 = list(assembler.process_tool_call(tc1, sse))
+        events2 = list(assembler.process_tool_call(tc2, sse))
+        flushed = list(assembler.flush_task_arg_buffers(sse))
 
         event_text = "".join(events1 + events2 + flushed)
         assert "tool_use" in event_text

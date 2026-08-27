@@ -141,6 +141,14 @@ class OpenAIChatProfile:
         _request: MessagesRequest,
         policy: ReasoningPolicy,
     ) -> None:
+        self.apply_reasoning_to_body(body, policy)
+
+    def apply_reasoning_to_body(
+        self,
+        body: dict[str, Any],
+        policy: ReasoningPolicy,
+    ) -> None:
+        """Encode resolved reasoning policy after either client translation."""
         self.reasoning.encode(body, policy)
 
     @property

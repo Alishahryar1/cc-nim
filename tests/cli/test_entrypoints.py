@@ -70,6 +70,7 @@ def test_cli_scripts_are_registered() -> None:
         "fcc-dsh": "free_claude_code.cli.launchers.dsh:launch",
         "fcc-grok": "free_claude_code.cli.launchers.grok:launch",
         "fcc-muse": "free_claude_code.cli.launchers.muse:launch",
+        "fcc-aider": "free_claude_code.cli.launchers.aider:launch",
     }
     assert pyproject["project"]["gui-scripts"] == {
         "fcc-desktop": "free_claude_code.cli.desktop_entrypoint:launch",
@@ -179,6 +180,145 @@ def test_serve_respects_admin_browser_setting(open_admin_browser: bool) -> None:
         open_admin_browser=open_admin_browser,
         restart_generation=0,
     )
+
+
+def test_server_startup_repairs_invalid_managed_provider_proxy(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli import commands
+    from free_claude_code.config.env_files import dotenv_values_from_file
+    from free_claude_code.config.paths import managed_env_path
+
+    monkeypatch.delenv("OPENAI_PROXY", raising=False)
+    invalid_proxy = "invalid://user:leaked-secret@proxy.example:8080"
+    managed = managed_env_path()
+    managed.parent.mkdir(parents=True)
+    managed.write_text(
+        "\n".join(
+            (
+                "FCC_CONFIG_SCHEMA=1",
+                "MODEL=nvidia_nim/test-model",
+                f"OPENAI_PROXY={invalid_proxy}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    handed_off_settings: list[Settings] = []
+
+    def run_once(
+        _self: commands.ServerSupervisor,
+        settings: Settings,
+        *,
+        open_admin_browser: bool,
+        restart_generation: int,
+    ) -> bool:
+        assert open_admin_browser is False
+        assert restart_generation == 0
+        handed_off_settings.append(settings)
+        return False
+
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(commands.ServerSupervisor, "_run_once", run_once),
+        patch.object(commands, "kill_all_best_effort"),
+    ):
+        commands.ServerSupervisor().run(open_admin_browser=False)
+
+    assert len(handed_off_settings) == 1
+    assert handed_off_settings[0].openai_proxy is None
+    assert "OPENAI_PROXY" not in dotenv_values_from_file(managed)
+    assert "OPENAI_PROXY" in caplog.text
+    assert invalid_proxy not in caplog.text
+    assert "leaked-secret" not in caplog.text
+
+
+def test_load_server_settings_skips_reload_when_no_repair_occurs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from free_claude_code.cli import commands
+
+    settings = _launcher_settings()
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(commands, "get_settings", return_value=settings) as get_settings,
+        patch.object(
+            commands,
+            "repair_invalid_managed_provider_proxies",
+            return_value=(),
+        ) as repair,
+        patch.object(commands, "clear_settings_cache") as clear_cache,
+    ):
+        loaded = commands.load_server_settings()
+
+    assert loaded is settings
+    get_settings.assert_called_once_with()
+    repair.assert_called_once_with()
+    clear_cache.assert_not_called()
+    assert "Removed invalid managed provider proxy settings" not in caplog.text
+
+
+def test_load_server_settings_reloads_once_and_warns_after_repair(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from free_claude_code.cli import commands
+    from free_claude_code.config.paths import managed_env_path
+
+    invalid_proxy = "invalid://user:leaked-secret@proxy.example:8080"
+    stale = Settings(openai_proxy=invalid_proxy)
+    repaired = Settings()
+    get_settings = MagicMock(side_effect=(stale, repaired))
+
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(commands, "get_settings", get_settings),
+        patch.object(
+            commands,
+            "repair_invalid_managed_provider_proxies",
+            return_value=("OPENAI_PROXY", "GROQ_PROXY"),
+        ),
+        patch.object(commands, "clear_settings_cache") as clear_cache,
+    ):
+        loaded = commands.load_server_settings()
+
+    assert loaded is repaired
+    assert get_settings.call_count == 2
+    clear_cache.assert_called_once_with()
+    warning = next(
+        record.message
+        for record in caplog.records
+        if "Removed invalid managed provider proxy settings" in record.message
+    )
+    assert str(managed_env_path()) in warning
+    assert "OPENAI_PROXY, GROQ_PROXY" in warning
+    assert invalid_proxy not in warning
+    assert "leaked-secret" not in warning
+
+
+def test_load_server_settings_leaves_process_owned_invalid_proxy_explicit(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli import commands
+    from free_claude_code.config.paths import managed_env_path
+
+    process_proxy = "invalid://process-proxy"
+    monkeypatch.setenv("OPENAI_PROXY", process_proxy)
+    managed = managed_env_path()
+    managed.parent.mkdir(parents=True)
+    managed.write_text(
+        "FCC_CONFIG_SCHEMA=1\nOPENAI_PROXY=invalid://managed-proxy\n",
+        encoding="utf-8",
+    )
+    baseline = managed.read_bytes()
+
+    with caplog.at_level("WARNING"):
+        settings = commands.load_server_settings()
+
+    assert settings.openai_proxy == process_proxy
+    assert managed.read_bytes() == baseline
+    assert "Removed invalid managed provider proxy settings" not in caplog.text
 
 
 def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
@@ -488,6 +628,177 @@ def test_launch_codex_passes_responses_config_and_child_env(
     assert "OPENAI_BASE_URL" not in child_env
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
+
+
+def test_launch_codex_selects_the_slug_its_catalog_advertises(
+    tmp_path: Path,
+    empty_proxy_bypass_env: None,
+) -> None:
+    """A non-thinking configured model is advertised under its no-thinking slug."""
+
+    from free_claude_code.cli.launchers.codex import launch
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+    catalog_path = tmp_path / "codex-model-catalog.json"
+    no_thinking_slug = "claude-3-freecc-no-thinking/nvidia_nim/test-model"
+
+    def fake_urlopen(request: Request, *, timeout: float) -> _JsonResponse:
+        del request, timeout
+        return _JsonResponse(
+            {
+                "data": [
+                    {
+                        "id": no_thinking_slug,
+                        "provider_model_ref": "nvidia_nim/test-model",
+                        "display_name": "NVIDIA model (no thinking)",
+                    }
+                ]
+            }
+        )
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.codex.get_settings", return_value=settings
+        ),
+        patch(
+            "free_claude_code.cli.launchers.codex.preflight_proxy", return_value=None
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-codex.cmd",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.codex.codex_model_catalog_path",
+            return_value=catalog_path,
+        ),
+        patch(
+            "free_claude_code.cli.launchers.model_catalog.open_local_request",
+            side_effect=fake_urlopen,
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit),
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch(["exec", "hello"])
+
+    command = popen.call_args.args[0]
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert [model["slug"] for model in catalog["models"]] == [no_thinking_slug]
+    assert f"model={json.dumps(no_thinking_slug)}" in command
+    assert 'model="nvidia_nim/test-model"' not in command
+
+
+def test_launch_codex_keeps_the_configured_ref_without_a_catalog(
+    tmp_path: Path,
+    empty_proxy_bypass_env: None,
+) -> None:
+    """A failed catalog fetch must not change the model Codex is told to use."""
+
+    from free_claude_code.cli.launchers.codex import launch
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.codex.get_settings", return_value=settings
+        ),
+        patch(
+            "free_claude_code.cli.launchers.codex.preflight_proxy", return_value=None
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-codex.cmd",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.codex.codex_model_catalog_path",
+            return_value=tmp_path / "codex-model-catalog.json",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.model_catalog.open_local_request",
+            side_effect=URLError("boom"),
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit),
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch(["exec", "hello"])
+
+    assert 'model="nvidia_nim/test-model"' in popen.call_args.args[0]
+
+
+def test_codex_empty_catalog_keeps_the_configured_ref_without_catalog_config(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli.launchers import codex
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+    with (
+        patch.object(codex, "fetch_proxy_models_response", return_value={"data": []}),
+        patch.object(codex, "write_codex_model_catalog") as write_catalog,
+    ):
+        catalog = codex.codex_model_catalog_plan("http://127.0.0.1:9191", settings)
+
+    command = codex.build_codex_launcher_command(
+        binary_path="resolved-codex.cmd",
+        argv=("exec", "hello"),
+        settings=settings,
+        proxy_root_url="http://127.0.0.1:9191",
+        catalog_config_args=catalog.config_args,
+        catalog_models=catalog.models,
+    )
+
+    assert catalog == codex.CodexModelCatalogPlan()
+    assert not any("model_catalog_json=" in arg for arg in command)
+    assert 'model="nvidia_nim/test-model"' in command
+    write_catalog.assert_not_called()
+    assert "Codex model catalog is empty" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "failing_step", ("build_codex_model_catalog", "write_codex_model_catalog")
+)
+def test_codex_catalog_plan_fails_open_when_catalog_processing_fails(
+    failing_step: str,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers import codex
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+    models_response = {
+        "data": [
+            {
+                "id": "nvidia_nim/test-model",
+                "provider_model_ref": "nvidia_nim/test-model",
+                "display_name": "NVIDIA model",
+            }
+        ]
+    }
+    with (
+        patch.object(
+            codex, "fetch_proxy_models_response", return_value=models_response
+        ),
+        patch.object(
+            codex,
+            "codex_model_catalog_path",
+            return_value=tmp_path / "codex-model-catalog.json",
+        ),
+        patch.object(codex, failing_step, side_effect=OSError("boom")),
+    ):
+        catalog = codex.codex_model_catalog_plan("http://127.0.0.1:9191", settings)
+
+    assert catalog == codex.CodexModelCatalogPlan()
+    captured = capsys.readouterr()
+    assert "could not prepare Codex model catalog" in captured.err
+    assert "launching without model picker catalog" in captured.err
 
 
 def test_codex_proxy_auth_command_prints_only_current_token(

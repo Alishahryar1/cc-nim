@@ -73,7 +73,8 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "OpenAI-shaped error or conversion error",
         (
             "tests/api/test_openai_responses.py",
-            "tests/core/openai_responses/test_sse.py",
+            "tests/core/openai_responses/test_native.py",
+            "tests/providers/test_openai_chat_stream_output.py",
             "tests/cli/test_entrypoints.py",
             "tests/cli/test_codex_model_catalog.py",
         ),
@@ -552,6 +553,21 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
             "tests/cli/test_model_catalog.py",
         ),
         ("test_opencode_cli_prompt_e2e",),
+    ),
+    CapabilityContract(
+        "cli",
+        "aider_cli_integration",
+        "aider_cli_integration",
+        "free_claude_code.cli.launchers.aider",
+        "Aider 0.86.2+, live FCC Messages catalog, and private process files",
+        "Anthropic Messages route scoped to FCC for native Aider sessions",
+        "binary, proxy, route conflict, catalog, or private-file failure exits before inference",
+        (
+            "tests/cli/test_aider_config.py",
+            "tests/cli/test_aider_launcher.py",
+            "tests/cli/test_model_catalog.py",
+        ),
+        ("test_aider_cli_prompt_e2e",),
     ),
     CapabilityContract(
         "cli",

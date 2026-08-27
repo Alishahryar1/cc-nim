@@ -6,8 +6,7 @@ from typing import Any
 from loguru import logger
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
-from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
@@ -15,7 +14,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
-    build_openai_chat_request_body,
 )
 
 from .reasoning import (
@@ -44,17 +42,12 @@ class MistralProvider(OpenAIChatProvider):
             admission=admission,
         )
 
-    def _build_request_body(
+    def _finalize_chat_body(
         self,
-        request: MessagesRequest,
+        body: dict[str, Any],
         *,
-        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        reasoning: ReasoningPolicy,
     ) -> dict:
-        body = build_openai_chat_request_body(
-            request,
-            reasoning=reasoning,
-            policy=_REQUEST_POLICY,
-        )
         apply_mistral_reasoning_request_shape(body, reasoning=reasoning)
         return body
 

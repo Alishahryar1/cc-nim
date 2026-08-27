@@ -14,6 +14,8 @@ AUTH_DIRNAME = "auth"
 OPENAI_AUTH_FILENAME = "openai.json"
 OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
 CONFIG_LOCK_FILENAME = "config.lock"
+FCC_TEMP_DIRNAME = "tmp"
+AIDER_TEMP_DIRNAME = "aider"
 
 
 def config_dir_path() -> Path:
@@ -32,6 +34,12 @@ def config_lock_path() -> Path:
     """Return the cross-process managed-config migration lock path."""
 
     return config_dir_path() / CONFIG_LOCK_FILENAME
+
+
+def aider_temp_dir_path() -> Path:
+    """Return the base directory for managed per-launch Aider files."""
+
+    return config_dir_path() / FCC_TEMP_DIRNAME / AIDER_TEMP_DIRNAME
 
 
 def legacy_env_paths() -> tuple[Path, ...]:

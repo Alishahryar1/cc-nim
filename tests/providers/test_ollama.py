@@ -168,7 +168,7 @@ def test_replay_is_independent_of_disabled_current_turn_reasoning(provider) -> N
 
 
 @pytest.mark.asyncio
-async def test_stream_response_uses_shared_openai_chat_provider() -> None:
+async def test_stream_messages_uses_shared_openai_chat_provider() -> None:
     provider = _provider()
     chunk = MagicMock()
     chunk.choices = [
@@ -195,7 +195,7 @@ async def test_stream_response_uses_shared_openai_chat_provider() -> None:
         output = "".join(
             [
                 event
-                async for event in provider.stream_response(
+                async for event in provider.stream_messages(
                     make_messages_request(OLLAMA_MODEL)
                 )
             ]
@@ -235,7 +235,7 @@ async def test_cloud_stream_maps_ollama_reasoning_delta_to_anthropic_thinking() 
         output = "".join(
             [
                 event
-                async for event in client.stream_response(
+                async for event in client.stream_messages(
                     make_messages_request(OLLAMA_CLOUD_MODEL)
                 )
             ]

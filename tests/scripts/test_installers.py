@@ -23,6 +23,7 @@ FCC_COMMANDS = (
     "fcc-dsh",
     "fcc-grok",
     "fcc-muse",
+    "fcc-aider",
     "fcc-init",
     "free-claude-code",
 )
@@ -149,6 +150,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-dsh"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-grok"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-muse"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-aider"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
         cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-codex"
     fi
@@ -338,7 +340,7 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*x.ai*:grok-download|*dev.meta.ai*:muse-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*x.ai*:grok-download|*dev.meta.ai*:muse-download|*aider.chat*:aider-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
@@ -350,6 +352,7 @@ case "$url" in
     *hermes-agent.nousresearch.com*) source="$FAKE_FIXTURES/hermes-installer.sh" ;;
     *x.ai*) source="$FAKE_FIXTURES/grok-installer.sh" ;;
     *dev.meta.ai*) source="$FAKE_FIXTURES/muse-installer.sh" ;;
+    *aider.chat*) source="$FAKE_FIXTURES/aider-installer.sh" ;;
     *rtk-ai*)
         if [ "$FAIL_STEP" = "rtk-install" ]; then
             printf 'invalid archive\n' > "$output"
@@ -441,6 +444,16 @@ chmod +x "$HOME/.local/bin/muse"
 """,
     )
     _write_executable(
+        fixtures / "aider-installer.sh",
+        """#!/bin/sh
+echo "aider-install" >> "$CALL_LOG"
+[ "$FAIL_STEP" = "aider-install" ] && exit 29
+mkdir -p "$HOME/.local/bin"
+cp "$FAKE_FIXTURES/aider-command.sh" "$HOME/.local/bin/aider"
+chmod +x "$HOME/.local/bin/aider"
+""",
+    )
+    _write_executable(
         fixtures / "uv-installer.sh",
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
@@ -459,6 +472,7 @@ chmod +x "$HOME/.local/bin/uv"
     _write_executable(fixtures / "dsh-command.sh", _posix_command("dsh"))
     _write_executable(fixtures / "grok-command.sh", _posix_command("grok"))
     _write_executable(fixtures / "muse-command.sh", _posix_command("muse"))
+    _write_executable(fixtures / "aider-command.sh", _posix_command("aider"))
     rtk_command = _posix_rtk_command().encode()
     with tarfile.open(
         fixtures / "rtk-x86_64-unknown-linux-musl.tar.gz", "w:gz"
@@ -555,6 +569,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     )
     assert calls.index("grok-install") < calls.index("grok:--version")
     assert calls.index("muse-install") < calls.index("muse:--version")
+    assert calls.index("aider-install") < calls.index("aider:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -594,7 +609,7 @@ def test_install_sh_discovers_grok_in_custom_bin_directory(
 def test_install_sh_installs_selected_hermes_without_setup(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     calls = posix_harness.calls()
@@ -614,7 +629,7 @@ def test_install_sh_stops_when_selected_hermes_install_fails(
     failure: str,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\ny\nn\nn\nn\nn\n", fail_step=failure
+        "n\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\n", fail_step=failure
     )
 
     assert result.returncode != 0
@@ -628,7 +643,7 @@ def test_install_sh_rejects_unsupported_hermes_platform_before_download(
     posix_harness.env["FAKE_UNAME"] = "Darwin"
     posix_harness.env["FAKE_UNAME_MACHINE"] = "x86_64"
 
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\n")
 
     assert result.returncode != 0
     assert "does not provide a supported release for Darwin x86_64" in result.stdout
@@ -645,6 +660,7 @@ def test_install_sh_rejects_unsupported_hermes_platform_before_download(
         ("hermes", "hermes-install:--non-interactive --skip-setup"),
         ("grok", "grok-install"),
         ("muse", "muse-install"),
+        ("aider", "aider-install"),
     ],
 )
 def test_install_sh_preserves_upstream_managed_harness_without_parsing_version(
@@ -671,7 +687,7 @@ def test_install_sh_stops_when_grok_install_fails(
     failure: str,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\nn\nn\ny\nn\nn\n", fail_step=failure
+        "n\nn\nn\nn\nn\nn\nn\ny\nn\nn\nn\n", fail_step=failure
     )
 
     assert result.returncode != 0
@@ -685,7 +701,7 @@ def test_install_sh_stops_when_muse_install_fails(
     failure: str,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\nn\nn\nn\ny\nn\n", fail_step=failure
+        "n\nn\nn\nn\nn\nn\nn\nn\ny\nn\nn\n", fail_step=failure
     )
 
     assert result.returncode != 0
@@ -693,10 +709,51 @@ def test_install_sh_stops_when_muse_install_fails(
     assert not any(call.startswith("uv:") for call in posix_harness.calls())
 
 
+@pytest.mark.parametrize("failure", ["aider-download", "aider-install"])
+def test_install_sh_stops_when_aider_install_fails(
+    posix_harness: PosixHarness,
+    failure: str,
+) -> None:
+    result = posix_harness.run_interactive(
+        "n\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\n", fail_step=failure
+    )
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+
+
+def test_install_sh_accepts_aider_as_the_only_selected_agent(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\n")
+
+    assert result.returncode == 0, result.stdout
+    calls = posix_harness.calls()
+    assert "download:https://aider.chat/install.sh" in calls
+    assert calls.index("aider-install") < calls.index("aider:--version")
+    assert "Run Aider with: fcc-aider" in result.stdout
+    assert "Select at least one coding agent." not in result.stdout
+
+
+def test_install_sh_rejects_broken_existing_aider_without_replacing_it(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_client("aider")
+
+    result = posix_harness.run(fail_step="aider-verify")
+
+    assert result.returncode != 0
+    calls = posix_harness.calls()
+    assert "aider:--version" in calls
+    assert "aider-install" not in calls
+    assert not any("aider.chat" in call for call in calls)
+
+
 def test_install_sh_installs_selected_dsh_at_exact_preview(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     calls = posix_harness.calls()
@@ -749,7 +806,7 @@ def test_install_sh_rejects_incompatible_node_for_selected_dsh(
         _posix_command("node").replace("node 22.19.0", f"node {node_version}"),
     )
 
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\n")
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
@@ -775,7 +832,7 @@ def test_install_sh_stops_when_selected_dsh_install_fails(
     posix_harness: PosixHarness,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\nn\ny\nn\nn\nn\n", fail_step="dsh-install"
+        "n\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\n", fail_step="dsh-install"
     )
 
     assert result.returncode != 0
@@ -870,7 +927,7 @@ def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
 ) -> None:
     posix_harness.add_rtk()
 
-    result = posix_harness.run_interactive("n\ny\nn\nn\nn\nn\nn\nn\nn\ny\n")
+    result = posix_harness.run_interactive("n\ny\nn\nn\nn\nn\nn\nn\nn\nn\ny\n")
 
     assert result.returncode == 0, result.stdout
     assert "verifying it without updating it" in result.stdout
@@ -917,9 +974,7 @@ def test_install_sh_stops_when_rtk_setup_fails(
 def test_install_sh_reprompts_then_installs_only_selected_agent(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\nn\nn\nn\n"
-    )
+    result = posix_harness.run_interactive("n\n" * 11 + "y\n" + "n\n" * 9)
 
     assert result.returncode == 0, result.stdout
     assert "Select at least one coding agent." in result.stdout
@@ -939,7 +994,7 @@ def test_install_sh_rejects_uninstalled_only_selection(
     posix_harness: PosixHarness,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\ny\nn\nn\nn\nn\nn\nn\nn\n", fail_step="pi-skip"
+        "n\nn\ny\nn\nn\nn\nn\nn\nn\nn\nn\n", fail_step="pi-skip"
     )
 
     assert result.returncode != 0
@@ -1044,6 +1099,7 @@ def test_install_sh_preserves_valid_existing_tools(
     posix_harness.add_client("hermes")
     posix_harness.add_client("grok")
     posix_harness.add_client("muse")
+    posix_harness.add_client("aider")
     posix_harness.add_uv(uv_version)
 
     result = posix_harness.run()
@@ -1577,6 +1633,7 @@ copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-hermes.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-dsh.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-grok.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-muse.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-aider.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
 exit /b 0
 :update_shell
@@ -1710,6 +1767,9 @@ def powershell_harness(
     (fixtures / "dsh-command.cmd").write_text(_batch_client("dsh"), encoding="utf-8")
     (fixtures / "grok-command.cmd").write_text(_batch_client("grok"), encoding="utf-8")
     (fixtures / "muse-command.cmd").write_text(_batch_client("muse"), encoding="utf-8")
+    (fixtures / "aider-command.cmd").write_text(
+        _batch_client("aider"), encoding="utf-8"
+    )
     (fixtures / "rtk-command.cmd").write_text(_batch_rtk(), encoding="utf-8")
     (fixtures / "uv-command.cmd").write_text(_batch_uv("0.11.28"), encoding="utf-8")
     (fixtures / "fcc-command.cmd").write_text(
@@ -1780,6 +1840,15 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "grok-install"
 """,
         encoding="utf-8",
     )
+    (fixtures / "aider-installer.ps1").write_text(
+        r"""if ($env:FAIL_STEP -eq "aider-install") { exit 67 }
+$bin = Join-Path $env:USERPROFILE ".local\bin"
+New-Item -ItemType Directory -Force -Path $bin | Out-Null
+Copy-Item (Join-Path $env:FAKE_FIXTURES "aider-command.cmd") (Join-Path $bin "aider.cmd") -Force
+Add-Content -LiteralPath $env:CALL_LOG -Value "aider-install"
+""",
+        encoding="utf-8",
+    )
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
 $bin = Join-Path $env:USERPROFILE ".local\bin"
@@ -1825,6 +1894,7 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "opencode-download" -and $Uri.Contains("anomalyco/opencode")) -or
         ($env:FAIL_STEP -eq "hermes-download" -and $Uri.Contains("hermes-agent.nousresearch.com")) -or
         ($env:FAIL_STEP -eq "grok-download" -and $Uri.Contains("x.ai/cli")) -or
+        ($env:FAIL_STEP -eq "aider-download" -and $Uri.Contains("aider.chat")) -or
         ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
@@ -1844,6 +1914,9 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("x.ai/cli")) {
         $source = Join-Path $env:FAKE_FIXTURES "grok-installer.ps1"
+    }
+    elseif ($Uri.Contains("aider.chat")) {
+        $source = Join-Path $env:FAKE_FIXTURES "aider-installer.ps1"
     }
     elseif ($Uri.Contains("opencode-windows-")) {
         if ($env:FAIL_STEP -eq "opencode-archive") {
@@ -1950,6 +2023,7 @@ def test_install_ps1_fresh_install_is_verified(
         "dsh:--version"
     )
     assert calls.index("grok-install") < calls.index("grok:--version")
+    assert calls.index("aider-install") < calls.index("aider:--version")
     assert "Muse Code is not installed" in result.stdout
     assert not any(call.startswith("muse:") for call in calls)
     assert not any("hermes:setup" in call for call in calls)
@@ -2021,6 +2095,7 @@ def test_install_ps1_discovers_grok_in_custom_bin_directory(
         ("hermes", "hermes-install:True:True"),
         ("grok", "grok-install"),
         ("muse", "meta.ai"),
+        ("aider", "aider-install"),
     ],
 )
 def test_install_ps1_preserves_upstream_managed_harness_without_parsing_version(
@@ -2051,6 +2126,32 @@ def test_install_ps1_stops_when_grok_install_fails(
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
     assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+
+
+@pytest.mark.parametrize("failure", ["aider-download", "aider-install"])
+def test_install_ps1_stops_when_aider_install_fails(
+    powershell_harness: PowerShellHarness,
+    failure: str,
+) -> None:
+    result = powershell_harness.run(fail_step=failure)
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+
+
+def test_install_ps1_rejects_broken_existing_aider_without_replacing_it(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_client("aider")
+
+    result = powershell_harness.run(fail_step="aider-verify")
+
+    assert result.returncode != 0
+    calls = powershell_harness.calls()
+    assert "aider:--version" in calls
+    assert "aider-install" not in calls
+    assert not any("aider.chat" in call for call in calls)
 
 
 def test_install_ps1_preserves_exact_dsh_preview(
@@ -2359,6 +2460,7 @@ def test_install_ps1_preserves_valid_existing_tools(
     powershell_harness.add_client("cline")
     powershell_harness.add_client("hermes")
     powershell_harness.add_client("grok")
+    powershell_harness.add_client("aider")
     powershell_harness.add_uv(uv_version)
 
     result = powershell_harness.run()
@@ -2666,6 +2768,8 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
     assert "https://x.ai/cli/install.sh" in shell
     assert "https://x.ai/cli/install.ps1" in powershell
     assert "https://dev.meta.ai/install.sh" in shell
+    assert "https://aider.chat/install.sh" in shell
+    assert "https://aider.chat/install.ps1" in powershell
     assert "dev.meta.ai" not in powershell
     assert "muse-code/channels" not in powershell
 
@@ -2719,8 +2823,8 @@ Invoke-DownloadedPowerShellInstaller `
     ("answers", "expected", "expected_messages"),
     [
         (
-            ("", "", "", "", "", "", "", "", "", ""),
-            "True,True,True,True,False,True,True,True,True,False",
+            ("", "", "", "", "", "", "", "", "", "", ""),
+            "True,True,True,True,False,True,True,True,True,True,False",
             (),
         ),
         (
@@ -2736,7 +2840,9 @@ Invoke-DownloadedPowerShellInstaller `
                 "n",
                 "n",
                 "n",
+                "n",
                 "y",
+                "n",
                 "n",
                 "n",
                 "n",
@@ -2746,7 +2852,7 @@ Invoke-DownloadedPowerShellInstaller `
                 "n",
                 "y",
             ),
-            "False,True,False,False,False,False,False,False,False,True",
+            "False,True,False,False,False,False,False,False,False,False,True",
             ("Please answer Y or N.", "Select at least one coding agent."),
         ),
     ],
@@ -2774,6 +2880,7 @@ $script:InstallHermes = $true
 $script:InstallDsh = $true
 $script:InstallGrok = $true
 $script:InstallMuse = $true
+$script:InstallAider = $true
 $script:EnableRtk = $false
 function Read-Host {{
     param([string] $Prompt)
@@ -2784,7 +2891,7 @@ function Read-Host {{
 function Read-YesNo {{{read_yes_no}}}
 function Select-CodingAgents {{{select_agents}}}
 Select-CodingAgents
-Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:InstallCline),$($script:InstallHermes),$($script:InstallDsh),$($script:InstallGrok),$($script:InstallMuse),$($script:EnableRtk)"
+Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:InstallCline),$($script:InstallHermes),$($script:InstallDsh),$($script:InstallGrok),$($script:InstallMuse),$($script:InstallAider),$($script:EnableRtk)"
 """
 
     result = subprocess.run(
@@ -2815,6 +2922,7 @@ $script:InstallHermes = $false
 $script:InstallDsh = $false
 $script:InstallGrok = $false
 $script:InstallMuse = $false
+$script:InstallAider = $false
 $script:PiAvailable = $false
 $script:MuseAvailable = $false
 $script:Calls = @()
@@ -2828,6 +2936,7 @@ function Ensure-Hermes {{ $script:Calls += "hermes" }}
 function Ensure-Dsh {{ $script:Calls += "dsh" }}
 function Ensure-Grok {{ $script:Calls += "grok" }}
 function Ensure-Muse {{ $script:Calls += "muse"; $script:MuseAvailable = $true }}
+function Ensure-Aider {{ $script:Calls += "aider" }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 Write-Output "calls:$($script:Calls -join ',')"
@@ -2862,6 +2971,7 @@ $script:InstallHermes = $false
 $script:InstallDsh = $false
 $script:InstallGrok = $false
 $script:InstallMuse = $false
+$script:InstallAider = $false
 $script:PiAvailable = $false
 $script:MuseAvailable = $false
 $script:Calls = @()
@@ -2902,6 +3012,7 @@ $script:InstallHermes = $false
 $script:InstallDsh = $false
 $script:InstallGrok = $false
 $script:InstallMuse = $false
+$script:InstallAider = $false
 $script:PiAvailable = $false
 $script:MuseAvailable = $false
 function Write-Step {{ param([string] $Message) }}
@@ -2914,6 +3025,7 @@ function Ensure-Hermes {{ }}
 function Ensure-Dsh {{ }}
 function Ensure-Grok {{ }}
 function Ensure-Muse {{ }}
+function Ensure-Aider {{ }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 """

@@ -319,7 +319,7 @@ async def test_stream_maps_reasoning_content_and_details(open_router_provider):
     ):
         events = [
             event
-            async for event in open_router_provider.stream_response(make_request())
+            async for event in open_router_provider.stream_messages(make_request())
         ]
 
     event_text = "".join(events)

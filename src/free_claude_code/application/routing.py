@@ -14,9 +14,10 @@ from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest, TokenCountRequest
 from free_claude_code.core.gateway_model_ids import decode_gateway_model_id
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 
-from .reasoning import resolve_reasoning_policy
+from .reasoning import resolve_reasoning_policy, resolve_responses_reasoning_policy
 
 _ROUTE_SETTINGS = (
     ("fable", "model_fable", "reasoning_fable"),
@@ -48,6 +49,13 @@ class ResolvedModelRoute:
 @dataclass(frozen=True, slots=True)
 class RoutedMessagesRequest:
     request: MessagesRequest
+    resolved: ResolvedModelRoute
+    reasoning: ReasoningPolicy
+
+
+@dataclass(frozen=True, slots=True)
+class RoutedResponsesRequest:
+    request: OpenAIResponsesRequest
     resolved: ResolvedModelRoute
     reasoning: ReasoningPolicy
 
@@ -212,3 +220,21 @@ class ModelRouter:
             update={"model": resolved.primary.provider_model}, deep=True
         )
         return RoutedTokenCountRequest(request=routed, resolved=resolved)
+
+    def resolve_responses_request(
+        self,
+        request: OpenAIResponsesRequest,
+    ) -> RoutedResponsesRequest:
+        """Route a Responses request without converting its protocol shape."""
+
+        resolved = self.resolve(request.model)
+        routed = request.model_copy(deep=True)
+        routed.model = resolved.primary.provider_model
+        return RoutedResponsesRequest(
+            request=routed,
+            resolved=resolved,
+            reasoning=resolve_responses_reasoning_policy(
+                routed,
+                resolved.reasoning_preference,
+            ),
+        )

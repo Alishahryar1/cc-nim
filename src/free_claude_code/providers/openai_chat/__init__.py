@@ -17,7 +17,12 @@ from .reasoning import (
     ReasoningObject,
 )
 from .reasoning_details import apply_reasoning_details_replay
-from .request_policy import OpenAIChatRequestPolicy, build_openai_chat_request_body
+from .request_policy import (
+    OpenAIChatRequestPolicy,
+    apply_openai_chat_body_policy,
+    build_openai_chat_request_body,
+)
+from .stream_output import ChatStreamOutput
 from .usage import usage_int
 
 
@@ -43,6 +48,7 @@ def create_openai_chat_provider(
 __all__ = [
     "NO_REASONING",
     "OPENAI_CHAT_PROFILES",
+    "ChatStreamOutput",
     "ChatTemplateReasoning",
     "NamedEffortReasoning",
     "OpenAIAsyncCredentialProvider",
@@ -50,6 +56,7 @@ __all__ = [
     "OpenAIChatProvider",
     "OpenAIChatRequestPolicy",
     "ReasoningObject",
+    "apply_openai_chat_body_policy",
     "apply_reasoning_details_replay",
     "build_openai_chat_request_body",
     "create_openai_chat_provider",

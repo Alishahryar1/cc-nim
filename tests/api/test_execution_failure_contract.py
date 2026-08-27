@@ -1,8 +1,9 @@
 """Public commit-boundary behavior for canonical execution failures."""
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,11 @@ from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.openai_responses import (
+    OpenAIResponsesRequest,
+    openai_error_from_failure,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 from tests.api.support import create_test_app
 
@@ -38,10 +44,11 @@ class CanonicalFailureProvider:
         self._message = message
         self._retryable = retryable
         self._grouped = grouped
-        self.preflight_stream = MagicMock()
+        self.preflight_messages = MagicMock()
+        self.preflight_responses = MagicMock()
         self.stream_kwargs: list[dict[str, Any]] = []
 
-    async def stream_response(
+    async def stream_messages(
         self,
         _request: object,
         **kwargs: Any,
@@ -49,31 +56,52 @@ class CanonicalFailureProvider:
         self.stream_kwargs.append(kwargs)
         for chunk in self._chunks:
             yield chunk
-        request_id = kwargs["request_id"]
-        failure = ExecutionFailure(
+        failure = self._failure(str(kwargs["request_id"]))
+        if self._grouped:
+            raise self._grouped_failure(failure)
+        raise failure
+
+    async def stream_responses(
+        self,
+        _request: OpenAIResponsesRequest,
+        **kwargs: Any,
+    ) -> AsyncIterator[str]:
+        self.stream_kwargs.append(kwargs)
+        failure = self._failure(str(kwargs["request_id"]))
+        if not self._chunks:
+            if self._grouped:
+                raise self._grouped_failure(failure)
+            raise failure
+        for chunk in _partial_responses_stream(failure):
+            yield chunk
+
+    def _failure(self, request_id: str) -> ExecutionFailure:
+        return ExecutionFailure(
             kind=self._kind,
             status_code=self._status_code,
             message=f"{self._message}\n\nRequest ID: {request_id}",
             retryable=self._retryable,
         )
-        if self._grouped:
-            raise ExceptionGroup(
-                "provider stream and cleanup failed",
-                [
-                    RuntimeError("cleanup failed"),
-                    ExceptionGroup("provider request failed", [failure]),
-                ],
-            )
-        raise failure
+
+    @staticmethod
+    def _grouped_failure(failure: ExecutionFailure) -> ExceptionGroup:
+        return ExceptionGroup(
+            "provider stream and cleanup failed",
+            [
+                RuntimeError("cleanup failed"),
+                ExceptionGroup("provider request failed", [failure]),
+            ],
+        )
 
 
 class StalledProvider:
     """Provider double that makes no protocol-visible progress."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, responses_chunks: tuple[str, ...] = ()) -> None:
+        self._responses_chunks = responses_chunks
         self.close_calls = 0
 
-    def preflight_stream(
+    def preflight_messages(
         self,
         _request: MessagesRequest,
         *,
@@ -81,7 +109,15 @@ class StalledProvider:
     ) -> None:
         del reasoning
 
-    async def stream_response(
+    def preflight_responses(
+        self,
+        _request: OpenAIResponsesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+    ) -> None:
+        del reasoning
+
+    async def stream_messages(
         self,
         _request: MessagesRequest,
         *,
@@ -92,6 +128,24 @@ class StalledProvider:
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model, reasoning
         try:
+            await asyncio.Event().wait()
+            yield ""
+        finally:
+            self.close_calls += 1
+
+    async def stream_responses(
+        self,
+        _request: OpenAIResponsesRequest,
+        *,
+        input_tokens: int,
+        request_id: str,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        del input_tokens, request_id, response_model, reasoning
+        try:
+            for chunk in self._responses_chunks:
+                yield chunk
             await asyncio.Event().wait()
             yield ""
         finally:
@@ -143,6 +197,80 @@ def _partial_anthropic_stream(*, close_block: bool) -> list[str]:
             )
         )
     return chunks
+
+
+def _partial_responses_stream(failure: ExecutionFailure) -> list[str]:
+    response_id = "resp_failure_contract"
+    message: JsonObject = {
+        "id": "msg_failure_contract",
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+            {
+                "type": "output_text",
+                "text": _PARTIAL_CONTENT,
+                "annotations": [],
+                "logprobs": [],
+            }
+        ],
+    }
+    created = _responses_event(
+        "response.created",
+        {
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": _responses_wire_payload(
+                response_id=response_id,
+                status="in_progress",
+            ),
+        },
+    )
+    item_done = _responses_event(
+        "response.output_item.done",
+        {
+            "type": "response.output_item.done",
+            "sequence_number": 1,
+            "output_index": 0,
+            "item": message,
+        },
+    )
+    failed = _responses_event(
+        "response.failed",
+        {
+            "type": "response.failed",
+            "sequence_number": 2,
+            "response": _responses_wire_payload(
+                response_id=response_id,
+                status="failed",
+                output=[message],
+                error=cast(JsonObject, openai_error_from_failure(failure)),
+            ),
+        },
+    )
+    return [created, item_done, failed]
+
+
+def _responses_event(event_type: str, payload: JsonObject) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(payload)}\n\n"
+
+
+def _responses_wire_payload(
+    *,
+    response_id: str,
+    status: str,
+    output: list[JsonObject] | None = None,
+    error: JsonObject | None = None,
+) -> JsonObject:
+    return {
+        "id": response_id,
+        "object": "response",
+        "model": "nvidia_nim/test-model",
+        "status": status,
+        "output": output or [],
+        "error": error,
+        "usage": None,
+    }
 
 
 def _client_for(
@@ -280,7 +408,10 @@ def test_grouped_post_start_execution_failure_keeps_canonical_terminal_event(
     assert response.status_code == 200
     assert error["type"] == "rate_limit_error"
     assert error["message"] == f"upstream is busy\n\nRequest ID: {request_id}"
-    assert _terminal_trace(trace_mock)["failure_kind"] == "rate_limit"
+    if path == "/v1/messages":
+        assert _terminal_trace(trace_mock)["failure_kind"] == "rate_limit"
+    else:
+        trace_mock.assert_not_called()
 
 
 def test_grouped_stream_false_execution_failure_discards_partial_content() -> None:
@@ -540,19 +671,7 @@ def test_responses_post_start_execution_failure_retains_id_after_block_close() -
         "param": None,
         "code": None,
     }
-    assert _terminal_trace(trace_mock) == {
-        "stage": "egress",
-        "event": "free_claude_code.api.response.terminal_execution_error",
-        "source": "api",
-        "wire_api": "responses",
-        "request_id": request_id,
-        "status_code": 429,
-        "error_type": "rate_limit_error",
-        "client_should_retry": False,
-        "exc_type": "ExecutionFailure",
-        "failure_kind": "rate_limit",
-        "provider_retryable": True,
-    }
+    trace_mock.assert_not_called()
 
 
 def test_messages_stream_false_discards_partial_content_on_execution_failure() -> None:
@@ -661,10 +780,78 @@ def test_post_start_progress_timeout_is_terminal_protocol_event(path: str) -> No
         "Provider execution made no progress for 600 seconds.\n\n"
         f"Request ID: {request_id}"
     )
-    trace = _terminal_trace(trace_mock)
-    assert trace["failure_kind"] == "timeout"
-    assert trace["provider_retryable"] is False
-    assert trace["client_should_retry"] is False
+    if path == "/v1/messages":
+        trace = _terminal_trace(trace_mock)
+        assert trace["failure_kind"] == "timeout"
+        assert trace["provider_retryable"] is False
+        assert trace["client_should_retry"] is False
+    else:
+        trace_mock.assert_not_called()
+
+
+def test_responses_application_progress_timeout_closes_committed_lifecycle() -> None:
+    response_id = "resp_application_timeout"
+    provider = StalledProvider(
+        responses_chunks=(
+            _responses_event(
+                "response.created",
+                {
+                    "type": "response.created",
+                    "sequence_number": 0,
+                    "response": _responses_wire_payload(
+                        response_id=response_id,
+                        status="in_progress",
+                    ),
+                },
+            ),
+        )
+    )
+    resolver_patch, client = _client_for(
+        provider,
+        settings=Settings(provider_progress_timeout=0.02),
+    )
+
+    with (
+        resolver_patch,
+        patch("free_claude_code.api.response_streams.trace_event") as trace_mock,
+        client,
+    ):
+        response = client.post("/v1/responses", json=_responses_payload())
+
+    request_id = response.headers["request-id"]
+    events = parse_sse_text(response.text)
+    assert response.status_code == 200
+    assert [event.event for event in events] == [
+        "response.created",
+        "response.failed",
+    ]
+    assert events[-1].data["sequence_number"] == 1
+    failed = events[-1].data["response"]
+    assert failed["id"] == response_id
+    assert failed["status"] == "failed"
+    assert failed["error"] == {
+        "message": (
+            "Provider execution made no progress for 0.02 seconds.\n\n"
+            f"Request ID: {request_id}"
+        ),
+        "type": "timeout_error",
+        "param": None,
+        "code": None,
+    }
+    assert provider.close_calls == 1
+    assert _terminal_trace(trace_mock) == {
+        "stage": "egress",
+        "event": "free_claude_code.api.response.terminal_execution_error",
+        "source": "api",
+        "wire_api": "responses",
+        "request_id": request_id,
+        "status_code": 504,
+        "error_type": "timeout_error",
+        "client_should_retry": False,
+        "exc_type": "ExecutionFailure",
+        "failure_kind": "timeout",
+        "provider_retryable": False,
+    }
 
 
 def test_stream_false_progress_timeout_discards_partial_content() -> None:

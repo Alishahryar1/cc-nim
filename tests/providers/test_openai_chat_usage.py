@@ -183,7 +183,7 @@ async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens
 
     with patch.object(provider._client.chat.completions, "create", create):
         events = [
-            event async for event in provider.stream_response(request, input_tokens=7)
+            event async for event in provider.stream_messages(request, input_tokens=7)
         ]
 
     create.assert_awaited_once()
@@ -219,7 +219,7 @@ async def test_openai_chat_stream_keeps_response_model_separate_from_upstream_mo
     with patch.object(provider._client.chat.completions, "create", create):
         events = [
             event
-            async for event in provider.stream_response(
+            async for event in provider.stream_messages(
                 request,
                 response_model="anthropic/test/upstream/model",
             )
