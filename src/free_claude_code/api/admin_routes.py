@@ -28,7 +28,11 @@ from free_claude_code.core.json_types import JsonObject, JsonValue
 from .dependencies import get_services
 from .ports import ApiServices
 
+import os
+
 router = APIRouter()
+
+LOCAL_ONLY_ADMIN=os.getenv("LOCAL_ONLY_ADMIN")
 
 STATIC_DIR = Path(__file__).resolve().parent / "admin_static"
 LOCAL_PROVIDER_PATHS = {
@@ -74,6 +78,9 @@ def _origin_is_local(origin: str | None) -> bool:
 
 def require_loopback_admin(request: Request) -> None:
     """Allow admin access only from the local machine."""
+
+    if LOCAL_ONLY_ADMIN == "false":
+        return
 
     client_host = request.client.host if request.client else None
     if not _is_loopback_host(client_host):
