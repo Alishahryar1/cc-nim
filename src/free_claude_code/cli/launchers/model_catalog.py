@@ -3,6 +3,7 @@
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import Literal
 from urllib.request import Request
 
 from free_claude_code.cli.local_http import open_local_request
@@ -58,10 +59,14 @@ def catalog_wire_slug_for_ref(
     return provider_model_ref
 
 
-def fetch_proxy_models_response(proxy_root_url: str, auth_token: str) -> JsonObject:
+def fetch_proxy_models_response(
+    proxy_root_url: str,
+    auth_token: str,
+    view: Literal["messages", "responses"] = "responses",
+) -> JsonObject:
     """Fetch the authenticated FCC-local `/v1/models` response directly."""
 
-    url = f"{proxy_root_url.rstrip('/')}/v1/models?view=responses"
+    url = f"{proxy_root_url.rstrip('/')}/v1/models?view={view}"
     request = Request(
         url,
         headers={"Authorization": f"Bearer {auth_token}"},

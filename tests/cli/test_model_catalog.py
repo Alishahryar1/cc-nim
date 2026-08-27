@@ -161,6 +161,24 @@ def test_fetch_proxy_models_uses_canonical_bearer_request() -> None:
     assert request.get_header("Authorization") == "Bearer proxy-token"
 
 
+def test_fetch_proxy_models_can_request_messages_view() -> None:
+    with patch(
+        "free_claude_code.cli.launchers.model_catalog.open_local_request",
+        return_value=_ModelsResponse(b'{"data": []}'),
+    ) as open_local_request:
+        response = fetch_proxy_models_response(
+            "http://127.0.0.1:9191/",
+            "proxy-token",
+            view="messages",
+        )
+
+    assert response == {"data": []}
+    request = open_local_request.call_args.args[0]
+    assert request.full_url == "http://127.0.0.1:9191/v1/models?view=messages"
+    assert request.get_method() == "GET"
+    assert request.get_header("Authorization") == "Bearer proxy-token"
+
+
 def test_fetch_proxy_models_rejects_non_object_json() -> None:
     with (
         patch(

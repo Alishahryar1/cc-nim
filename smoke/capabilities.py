@@ -556,6 +556,21 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
     ),
     CapabilityContract(
         "cli",
+        "aider_cli_integration",
+        "aider_cli_integration",
+        "free_claude_code.cli.launchers.aider",
+        "Aider 0.86.2+, live FCC Messages catalog, and private process files",
+        "Anthropic Messages route scoped to FCC for native Aider sessions",
+        "binary, proxy, route conflict, catalog, or private-file failure exits before inference",
+        (
+            "tests/cli/test_aider_config.py",
+            "tests/cli/test_aider_launcher.py",
+            "tests/cli/test_model_catalog.py",
+        ),
+        ("test_aider_cli_prompt_e2e",),
+    ),
+    CapabilityContract(
+        "cli",
         "cline_cli_integration",
         "cline_cli_integration",
         "free_claude_code.cli.launchers.cline",
