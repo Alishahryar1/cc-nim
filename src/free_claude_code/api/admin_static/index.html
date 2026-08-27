@@ -11,19 +11,92 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">FC</div>
-          <div>
+          <div class="brand-mark">
+            <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+            </svg>
+          </div>
+          <div class="brand-text">
             <h1>Free Claude Code</h1>
-            <p>Server Control</p>
+            <p>Control Center</p>
           </div>
         </div>
+
+        <div class="server-status-pill">
+          <span class="status-indicator-dot"></span>
+          <span class="status-indicator-text">Proxy Active</span>
+        </div>
+
         <nav id="sectionNav" class="section-nav" aria-label="Admin views"></nav>
+
+        <div class="sidebar-footer">
+          <div class="sidebar-footer-card">
+            <div class="footer-badge">v5.16.0</div>
+            <p class="footer-subtext">OpenAI-compatible gateway</p>
+          </div>
+        </div>
       </aside>
 
       <main class="main">
         <header class="topbar">
-          <div>
-            <h2 id="pageTitle">Providers</h2>
+          <div class="topbar-header">
+            <div>
+              <h2 id="pageTitle">Providers</h2>
+              <p class="page-subtitle" id="pageSubtitle">Manage AI backends, credentials, and model orchestration</p>
+            </div>
+            <div class="topbar-actions">
+              <div class="search-wrapper">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input
+                  id="adminSearchInput"
+                  type="text"
+                  class="search-input"
+                  placeholder="Quick filter (⌘K)..."
+                  aria-label="Filter providers and settings"
+                  autocomplete="off"
+                />
+                <kbd class="search-shortcut">⌘K</kbd>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Stats KPI Overview Strip -->
+          <div id="quickStatsBar" class="stats-grid" aria-label="System Metrics">
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Providers</span>
+                <span class="stat-icon-badge">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                </span>
+              </div>
+              <div class="stat-value" id="statProvidersCount">--</div>
+              <div class="stat-subtext" id="statProvidersSub">Checking status...</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Models Available</span>
+                <span class="stat-icon-badge">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                </span>
+              </div>
+              <div class="stat-value" id="statModelsCount">--</div>
+              <div class="stat-subtext" id="statModelsSub">Catalog discovery</div>
+            </div>
+
+            <div class="stat-card">
+              <div class="stat-header">
+                <span class="stat-label">Configuration</span>
+                <span class="stat-icon-badge">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                </span>
+              </div>
+              <div class="stat-value" id="statConfigStatus">Ready</div>
+              <div class="stat-subtext" id="statConfigSub">Managed environment</div>
+            </div>
           </div>
         </header>
 
@@ -37,18 +110,35 @@
             >
               <div class="strip-header">
                 <div>
-                  <h3>Connected accounts</h3>
+                  <div class="strip-title-wrapper">
+                    <span class="strip-badge">Subscriptions</span>
+                    <h3>Connected accounts</h3>
+                  </div>
                   <p>Use an existing subscription without storing credentials in .env.</p>
                 </div>
               </div>
               <div id="connectedAccountGrid" class="provider-grid"></div>
             </section>
+
             <section class="provider-strip" aria-label="Provider status">
               <div class="strip-header">
-                <h3>Providers</h3>
+                <div>
+                  <div class="strip-title-wrapper">
+                    <span class="strip-badge">Backends</span>
+                    <h3>Providers</h3>
+                  </div>
+                  <p class="strip-subtext">Active and available upstream LLM service connections</p>
+                </div>
+                <div class="provider-filter-tabs" id="providerFilterTabs">
+                  <button type="button" class="filter-tab active" data-filter="all">All</button>
+                  <button type="button" class="filter-tab" data-filter="configured">Configured</button>
+                  <button type="button" class="filter-tab" data-filter="missing">Unconfigured</button>
+                  <button type="button" class="filter-tab" data-filter="local">Local</button>
+                </div>
               </div>
               <div id="providerGrid" class="provider-grid"></div>
             </section>
+
             <div
               id="providersSections"
               class="form-sections"
@@ -76,13 +166,21 @@
 
       <footer class="action-bar">
         <div class="action-meta">
-          <strong id="dirtyState">No changes</strong>
-          <span id="configPath"></span>
+          <div class="dirty-badge-wrapper">
+            <strong id="dirtyState">No changes</strong>
+          </div>
+          <span id="configPath" title="Configuration file location"></span>
         </div>
-        <div id="messageArea" class="message-area"></div>
+        <div id="messageArea" class="message-area" aria-live="polite"></div>
         <div class="action-buttons">
-          <button id="validateButton" class="secondary-button" type="button">Validate</button>
-          <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>
+          <button id="validateButton" class="secondary-button" type="button">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <span>Validate</span>
+          </button>
+          <button id="applyButton" class="primary-button" type="button" disabled>
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+            <span>Apply</span>
+          </button>
         </div>
       </footer>
     </div>

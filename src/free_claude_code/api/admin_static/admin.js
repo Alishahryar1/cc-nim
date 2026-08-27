@@ -5,6 +5,8 @@ const state = {
   modelComboboxes: new Set(),
   authPollers: new Map(),
   activeView: "providers",
+  searchQuery: "",
+  providerFilter: "all",
 };
 
 const MASKED_SECRET = "********";
@@ -14,6 +16,7 @@ const VIEW_GROUPS = [
     id: "providers",
     label: "Providers",
     title: "Providers",
+    subtitle: "Manage AI backends, credentials, and model orchestration",
     sections: ["providers", "runtime"],
     containerId: "providersSections",
   },
@@ -21,6 +24,7 @@ const VIEW_GROUPS = [
     id: "model_config",
     label: "Model Config",
     title: "Model Config",
+    subtitle: "Configure default models, reasoning effort, web tools, and fallback priorities",
     sections: ["models", "reasoning", "web_tools"],
     containerId: "modelConfigSections",
   },
@@ -28,6 +32,7 @@ const VIEW_GROUPS = [
     id: "messaging",
     label: "Messaging",
     title: "Messaging",
+    subtitle: "Manage Telegram, Discord, and Voice assistant gateways",
     sections: ["messaging", "voice"],
     containerId: "messagingSections",
   },
@@ -90,13 +95,163 @@ async function load() {
   renderNav();
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
-  byId("configPath").textContent = config.paths.managed;
+  const configPathEl = byId("configPath");
+  if (configPathEl) {
+    configPathEl.textContent = config.paths.managed;
+  }
   await refreshConnectedAccounts();
   await hydrateModelOptions();
   await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
+  updateStats();
+  initSearch();
+  initFilterTabs();
+  initGlobalShortcuts();
   showMessage("");
+}
+
+function updateStats() {
+  if (!state.config) return;
+  const providers = state.config.provider_status || [];
+  const regularProviders = providers.filter((p) => p.kind !== "connected_account");
+  const configuredProviders = regularProviders.filter(
+    (p) => !p.missing_configuration_keys || p.missing_configuration_keys.length === 0,
+  );
+  const connectedAccounts = providers.filter((p) => p.kind === "connected_account");
+
+  const statProvCount = byId("statProvidersCount");
+  const statProvSub = byId("statProvidersSub");
+  if (statProvCount) {
+    statProvCount.textContent = `${configuredProviders.length} / ${regularProviders.length}`;
+  }
+  if (statProvSub) {
+    statProvSub.textContent = connectedAccounts.length
+      ? `${connectedAccounts.length} subscription${connectedAccounts.length > 1 ? "s" : ""} connected`
+      : "Standard API backends";
+  }
+
+  const statModelsCount = byId("statModelsCount");
+  const statModelsSub = byId("statModelsSub");
+  if (statModelsCount) {
+    statModelsCount.textContent = state.modelOptions.length
+      ? `${state.modelOptions.length}`
+      : "Ready";
+  }
+  if (statModelsSub) {
+    statModelsSub.textContent = state.modelOptions.length
+      ? "Models discovered in catalog"
+      : "Refresh to discover models";
+  }
+
+  const statConfigStatus = byId("statConfigStatus");
+  const statConfigSub = byId("statConfigSub");
+  const dirtyCount = Object.keys(changedValues()).length;
+  if (statConfigStatus) {
+    statConfigStatus.textContent = dirtyCount === 0 ? "Synced" : `${dirtyCount} Pending`;
+  }
+  if (statConfigSub) {
+    statConfigSub.textContent = dirtyCount === 0 ? "No unsaved changes" : "Changes ready to apply";
+  }
+}
+
+function initSearch() {
+  const searchInput = byId("adminSearchInput");
+  if (!searchInput || searchInput.dataset.initialized === "true") return;
+  searchInput.dataset.initialized = "true";
+
+  searchInput.addEventListener("input", () => {
+    state.searchQuery = searchInput.value.trim().toLowerCase();
+    filterViewsBySearch();
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      searchInput.focus();
+      searchInput.select();
+    } else if (event.key === "Escape" && document.activeElement === searchInput) {
+      searchInput.value = "";
+      state.searchQuery = "";
+      filterViewsBySearch();
+      searchInput.blur();
+    }
+  });
+}
+
+function initFilterTabs() {
+  const container = byId("providerFilterTabs");
+  if (!container || container.dataset.initialized === "true") return;
+  container.dataset.initialized = "true";
+
+  container.querySelectorAll(".filter-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      container.querySelectorAll(".filter-tab").forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      state.providerFilter = tab.dataset.filter || "all";
+      filterViewsBySearch();
+    });
+  });
+}
+
+function initGlobalShortcuts() {
+  window.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      const applyBtn = byId("applyButton");
+      if (applyBtn && !applyBtn.disabled) apply();
+    }
+  });
+}
+
+function filterViewsBySearch() {
+  const q = state.searchQuery;
+  const filter = state.providerFilter || "all";
+  
+  // Filter provider cards
+  document.querySelectorAll("#providerGrid .provider-card").forEach((card) => {
+    const providerId = card.dataset.provider;
+    const provider = state.config?.provider_status?.find((p) => p.provider_id === providerId);
+    
+    let filterMatch = true;
+    if (filter === "configured") {
+      filterMatch = !provider?.missing_configuration_keys || provider.missing_configuration_keys.length === 0;
+    } else if (filter === "missing") {
+      filterMatch = provider?.missing_configuration_keys && provider.missing_configuration_keys.length > 0;
+    } else if (filter === "local") {
+      filterMatch = provider?.kind === "local";
+    }
+
+    let searchMatch = true;
+    if (q) {
+      const text = (card.textContent || "").toLowerCase();
+      searchMatch = text.includes(q);
+    }
+
+    card.hidden = !(filterMatch && searchMatch);
+  });
+
+  // Filter fields
+  document.querySelectorAll(".settings-section").forEach((section) => {
+    let hasVisibleField = false;
+    section.querySelectorAll(".field").forEach((field) => {
+      if (!q) {
+        field.style.display = "";
+        hasVisibleField = true;
+        return;
+      }
+      const text = (field.textContent || "").toLowerCase();
+      const match = text.includes(q);
+      field.style.display = match ? "flex" : "none";
+      if (match) hasVisibleField = true;
+    });
+
+    if (q) {
+      section.hidden = !hasVisibleField;
+    } else {
+      section.hidden = false;
+    }
+  });
 }
 
 function renderNav() {
@@ -124,6 +279,10 @@ function setActiveView(viewId, { scroll = false } = {}) {
     VIEW_GROUPS.find((view) => view.id === viewId) || VIEW_GROUPS[0];
   state.activeView = activeView.id;
   byId("pageTitle").textContent = activeView.title;
+  const subtitleEl = byId("pageSubtitle");
+  if (subtitleEl && activeView.subtitle) {
+    subtitleEl.textContent = activeView.subtitle;
+  }
 
   document.querySelectorAll(".nav-link").forEach((link) => {
     const selected = link.dataset.view === activeView.id;
@@ -427,6 +586,7 @@ async function disconnectConnectedAccount(providerId) {
   });
   updateConnectedAccountCard(connectedAccountDescriptor(providerId), status);
   await hydrateModelOptions();
+  updateStats();
 }
 
 function pollConnectedAccount(provider) {
@@ -439,7 +599,10 @@ function pollConnectedAccount(provider) {
         state.authPollers.set(provider.provider_id, window.setTimeout(poll, 1000));
       } else {
         state.authPollers.delete(provider.provider_id);
-        if (status.connected) await hydrateModelOptions();
+        if (status.connected) {
+          await hydrateModelOptions();
+          updateStats();
+        }
       }
     } catch (error) {
       state.authPollers.delete(provider.provider_id);
@@ -464,7 +627,7 @@ function connectedAccountDescriptor(providerId) {
 async function copyDeviceCode(code) {
   try {
     await navigator.clipboard.writeText(code);
-    showMessage("Device code copied.");
+    showMessage("Device code copied to clipboard.", "ok");
   } catch {
     showMessage(`Copy this device code: ${code}`);
   }
@@ -570,8 +733,14 @@ function renderField(field) {
   input.dataset.remove = "false";
   input.dataset.fieldType = field.type;
   input.disabled = field.locked;
-  input.addEventListener("input", updateDirtyState);
-  input.addEventListener("change", updateDirtyState);
+  input.addEventListener("input", () => {
+    updateDirtyState();
+    updateStats();
+  });
+  input.addEventListener("change", () => {
+    updateDirtyState();
+    updateStats();
+  });
   input.addEventListener("input", () => {
     input.dataset.remove = "false";
   });
@@ -580,6 +749,7 @@ function renderField(field) {
       if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
         input.value = "None";
         updateDirtyState();
+        updateStats();
       }
     });
   }
@@ -604,6 +774,7 @@ function renderField(field) {
       input.readOnly = removing;
       removeButton.textContent = removing ? "Undo removal" : "Remove";
       updateDirtyState();
+      updateStats();
     });
     wrapper.appendChild(removeButton);
   }
@@ -927,6 +1098,7 @@ class ModelListEditor {
     this.input.dataset.remove = "false";
     this.input.dispatchEvent(new Event("input", { bubbles: true }));
     this.renderRows();
+    updateStats();
   }
 
   renderRows() {
@@ -1020,6 +1192,7 @@ function updateDirtyState() {
   byId("dirtyState").textContent =
     count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
   byId("applyButton").disabled = count === 0;
+  updateStats();
 }
 
 async function validate(showResult = true) {
@@ -1092,6 +1265,7 @@ async function refreshLocalStatus() {
       `Unavailable: ${detail}`,
     );
   });
+  updateStats();
 }
 
 async function testProvider(providerId, button) {
@@ -1130,6 +1304,7 @@ async function testProvider(providerId, button) {
   } finally {
     button.disabled = false;
     button.textContent = original;
+    updateStats();
   }
 }
 
@@ -1170,6 +1345,7 @@ async function refreshModelOptions(button) {
   } finally {
     button.disabled = false;
     button.textContent = original;
+    updateStats();
   }
 }
 
@@ -1187,6 +1363,7 @@ function setModelOptions(models) {
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen) combobox.render(combobox.query);
   });
+  updateStats();
 }
 
 function showMessage(message, kind = "") {
