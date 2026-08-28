@@ -27,7 +27,6 @@ $DshVersion = "0.1.0-rc.8"
 $DshPackage = "@deepseek-ai/dsh@$DshVersion"
 $GrokInstallUrl = "https://x.ai/cli/install.ps1"
 $MuseInstallUrl = "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install-muse.ps1"
-$AiderInstallUrl = "https://aider.chat/install.ps1"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -267,6 +266,17 @@ function Add-PathEntry {
     if ($entries -notcontains $PathEntry) {
         $env:Path = "$PathEntry$separator$env:Path"
     }
+}
+
+function Prioritize-PathEntry {
+    param([string] $PathEntry)
+
+    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+        return
+    }
+
+    $separator = [IO.Path]::PathSeparator
+    $env:Path = "$PathEntry$separator$env:Path"
 }
 
 function Add-KnownBinDirectories {
@@ -834,12 +844,50 @@ function Ensure-Grok {
 }
 
 function Install-Aider {
-    Invoke-DownloadedPowerShellInstaller -Url $AiderInstallUrl -Name "Aider"
-    Add-KnownBinDirectories
+    $uvPath = "uv"
+    if (-not $DryRun) {
+        $uvCommand = Get-ApplicationCommand "uv"
+        if (-not $uvCommand) {
+            throw "Aider installation requires the verified uv command, but it is not available on PATH."
+        }
+        $uvPath = $uvCommand.Source
+    }
+
+    Invoke-NativeCommand -FilePath $uvPath -Arguments @(
+        "tool",
+        "install",
+        "--force",
+        "--python",
+        "python3.12",
+        "--with",
+        "pip",
+        "aider-chat@latest"
+    )
+}
+
+function Add-UvToolBinDirectory {
+    param([string] $UvPath)
+
+    $toolBin = Invoke-Utf8NativeCapture -FilePath $UvPath -Arguments @("tool", "dir", "--bin")
+    if ([string]::IsNullOrWhiteSpace($toolBin)) {
+        throw "uv returned an empty tool bin directory."
+    }
+
+    Add-PathEntry $toolBin
+    return $toolBin
 }
 
 function Ensure-Aider {
     $command = Get-ApplicationCommand "aider"
+    if ((-not $command) -and (-not $DryRun)) {
+        $uvCommand = Get-ApplicationCommand "uv"
+        if (-not $uvCommand) {
+            throw "Aider installation requires the verified uv command, but it is not available on PATH."
+        }
+        $null = Add-UvToolBinDirectory -UvPath $uvCommand.Source
+        $command = Get-ApplicationCommand "aider"
+    }
+
     if ($command) {
         Write-Host "Aider already found on PATH; verifying it."
     }
@@ -1070,6 +1118,45 @@ function Confirm-Uv {
     Write-Host "Verified uv $version."
 }
 
+function Get-UvInstallBinDirectory {
+    $forceInstallDirectory = if (-not [string]::IsNullOrWhiteSpace($env:UV_INSTALL_DIR)) {
+        $env:UV_INSTALL_DIR
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:UV_UNMANAGED_INSTALL)) {
+        $env:UV_UNMANAGED_INSTALL
+    }
+    else {
+        $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($forceInstallDirectory)) {
+        $cargoHome = if (-not [string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
+            $env:CARGO_HOME
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($HOME)) {
+            Join-Path $HOME ".cargo"
+        }
+        else {
+            $null
+        }
+        if ($cargoHome -and $forceInstallDirectory.Replace("\\", "\") -eq $cargoHome) {
+            return Join-Path $forceInstallDirectory "bin"
+        }
+        return $forceInstallDirectory
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {
+        return $env:XDG_BIN_HOME
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_DATA_HOME)) {
+        return Join-Path $env:XDG_DATA_HOME "..\bin"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        return Join-Path $env:USERPROFILE ".local\bin"
+    }
+
+    throw "Could not determine where the standalone uv installer places uv."
+}
+
 function Ensure-Uv {
     if ($DryRun) {
         if (Get-ApplicationCommand "uv") {
@@ -1098,7 +1185,7 @@ function Ensure-Uv {
     }
 
     Invoke-DownloadedPowerShellInstaller -Url $UvInstallUrl -Name "uv"
-    Add-KnownBinDirectories
+    Prioritize-PathEntry (Get-UvInstallBinDirectory)
     Confirm-Uv
 }
 
@@ -1206,12 +1293,7 @@ function Configure-AndConfirmFreeClaudeCode {
         throw "uv is not available for PATH configuration."
     }
     Invoke-NativeCommand -FilePath $uvCommand.Source -Arguments @("tool", "update-shell")
-    $toolBin = Invoke-Utf8NativeCapture -FilePath $uvCommand.Source -Arguments @("tool", "dir", "--bin")
-    if ([string]::IsNullOrWhiteSpace($toolBin)) {
-        throw "uv returned an empty tool bin directory."
-    }
-
-    Add-PathEntry $toolBin
+    $toolBin = Add-UvToolBinDirectory -UvPath $uvCommand.Source
     $toolBinPath = ([IO.Path]::GetFullPath($toolBin)).TrimEnd(
         [IO.Path]::DirectorySeparatorChar,
         [IO.Path]::AltDirectorySeparatorChar
@@ -1339,11 +1421,11 @@ if (Test-InteractiveInstaller) {
     Select-CodingAgents
 }
 
-Ensure-SelectedCodingAgents
-Configure-RtkForSelectedAgents
-
 Write-Step "Ensuring uv $MinUvVersion or newer is installed"
 Ensure-Uv
+
+Ensure-SelectedCodingAgents
+Configure-RtkForSelectedAgents
 
 Write-Step "Installing or updating Free Claude Code"
 Install-FreeClaudeCode

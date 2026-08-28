@@ -13,7 +13,6 @@ DSH_VERSION="0.1.0-rc.8"
 DSH_PACKAGE="@deepseek-ai/dsh@$DSH_VERSION"
 GROK_INSTALL_URL="https://x.ai/cli/install.sh"
 MUSE_INSTALL_URL="https://dev.meta.ai/install.sh"
-AIDER_INSTALL_URL="https://aider.chat/install.sh"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
@@ -268,6 +267,13 @@ add_path_entry() {
     esac
 }
 
+prioritize_path_entry() {
+    [ -n "$1" ] || return 0
+    PATH="$1:$PATH"
+    export PATH
+    hash -r 2>/dev/null || true
+}
+
 add_known_bin_directories() {
     if [ -n "${XDG_BIN_HOME:-}" ]; then
         add_path_entry "$XDG_BIN_HOME"
@@ -286,6 +292,21 @@ add_known_bin_directories() {
         add_path_entry "$HOME/.grok/bin"
     fi
 
+    export PATH
+    hash -r 2>/dev/null || true
+}
+
+add_uv_tool_bin_directory() {
+    print_command uv tool dir --bin
+    if tool_bin=$(uv tool dir --bin); then
+        :
+    else
+        status=$?
+        fail "Could not determine the uv tool bin directory (exit code $status)."
+    fi
+    [ -n "$tool_bin" ] || fail "uv returned an empty tool bin directory."
+
+    add_path_entry "$tool_bin"
     export PATH
     hash -r 2>/dev/null || true
 }
@@ -889,11 +910,14 @@ ensure_muse() {
 }
 
 install_aider_cli() {
-    download_and_run "$AIDER_INSTALL_URL" bash "Aider"
-    add_known_bin_directories
+    run uv tool install --force --python python3.12 --with pip aider-chat@latest
 }
 
 ensure_aider() {
+    if ! command -v aider >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
+        add_uv_tool_bin_directory
+    fi
+
     if command -v aider >/dev/null 2>&1; then
         printf 'Aider already found on PATH; verifying it.\n'
     else
@@ -1024,6 +1048,48 @@ verify_uv() {
     printf 'Verified uv %s.\n' "$version"
 }
 
+uv_installer_home_directory() {
+    if [ -n "${HOME:-}" ]; then
+        printf '%s\n' "$HOME"
+        return 0
+    fi
+
+    if [ -n "${USER:-}" ]; then
+        user_name=$USER
+    else
+        user_name=$(id -un) || fail "Could not determine the current user for uv installation."
+    fi
+    home_directory=$(getent passwd "$user_name" | cut -d: -f6)
+    [ -n "$home_directory" ] || fail "Could not determine the home directory for uv installation."
+    printf '%s\n' "$home_directory"
+}
+
+uv_install_bin_directory() {
+    force_install_directory=""
+    if [ -n "${UV_INSTALL_DIR:-}" ]; then
+        force_install_directory=$UV_INSTALL_DIR
+    elif [ -n "${UV_UNMANAGED_INSTALL:-}" ]; then
+        force_install_directory=$UV_UNMANAGED_INSTALL
+    fi
+
+    if [ -n "$force_install_directory" ]; then
+        inferred_home=$(uv_installer_home_directory)
+        cargo_home=${CARGO_HOME:-$inferred_home/.cargo}
+        if [ "$force_install_directory" = "$cargo_home" ]; then
+            printf '%s/bin\n' "$force_install_directory"
+        else
+            printf '%s\n' "$force_install_directory"
+        fi
+    elif [ -n "${XDG_BIN_HOME:-}" ]; then
+        printf '%s\n' "$XDG_BIN_HOME"
+    elif [ -n "${XDG_DATA_HOME:-}" ]; then
+        printf '%s/../bin\n' "$XDG_DATA_HOME"
+    else
+        inferred_home=$(uv_installer_home_directory)
+        printf '%s/.local/bin\n' "$inferred_home"
+    fi
+}
+
 ensure_uv() {
     if [ "$dry_run" -eq 1 ]; then
         if command -v uv >/dev/null 2>&1; then
@@ -1049,7 +1115,8 @@ ensure_uv() {
     fi
 
     download_and_run "$UV_INSTALL_URL" sh "uv"
-    add_known_bin_directories
+    uv_bin=$(uv_install_bin_directory) || return $?
+    prioritize_path_entry "$uv_bin"
     verify_uv
 }
 
@@ -1146,18 +1213,7 @@ configure_and_verify_free_claude_code() {
         return 0
     fi
 
-    print_command uv tool dir --bin
-    if tool_bin=$(uv tool dir --bin); then
-        :
-    else
-        status=$?
-        fail "Could not determine the uv tool bin directory (exit code $status)."
-    fi
-    [ -n "$tool_bin" ] || fail "uv returned an empty tool bin directory."
-
-    add_path_entry "$tool_bin"
-    export PATH
-    hash -r 2>/dev/null || true
+    add_uv_tool_bin_directory
 
     for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-aider; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
@@ -1282,7 +1338,7 @@ fi
 
 step "Checking installation prerequisites"
 require_command curl
-if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_grok" -eq 1 ] || [ "$install_muse" -eq 1 ] || [ "$install_aider" -eq 1 ]; then
+if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_grok" -eq 1 ] || [ "$install_muse" -eq 1 ]; then
     require_command bash
 fi
 require_command sh
@@ -1296,11 +1352,11 @@ if [ "$enable_rtk" -eq 1 ] && ! command -v rtk >/dev/null 2>&1; then
     fi
 fi
 
-ensure_selected_coding_agents
-configure_rtk_for_selected_agents
-
 step "Ensuring uv $MIN_UV_VERSION or newer is installed"
 ensure_uv
+
+ensure_selected_coding_agents
+configure_rtk_for_selected_agents
 
 step "Installing or updating Free Claude Code"
 install_free_claude_code
