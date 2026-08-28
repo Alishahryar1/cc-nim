@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -261,12 +262,23 @@ def test_muse_installer_rejects_malformed_or_foreign_owner_record(
 
 @pytest.mark.parametrize("powershell", POWERSHELLS)
 def test_muse_installer_normalizes_managed_path_once_and_preserves_order(
-    powershell: str,
+    tmp_path: Path, powershell: str
 ) -> None:
+    managed = tmp_path / "Tools" / "Muse" / "bin"
+    first = tmp_path / "One"
+    second = tmp_path / "Two"
+    path_value = os.pathsep.join(
+        (
+            str(first),
+            str(managed).swapcase() + os.sep,
+            str(second),
+            str(managed).upper(),
+        )
+    )
     result = _run_installer_functions(
         powershell,
-        """$managed = 'C:\\Tools\\Muse\\bin'
-$path = 'C:\\One;c:\\tools\\muse\\bin\\;C:\\Two;C:\\TOOLS\\MUSE\\BIN'
+        f"""$managed = {_ps_literal(managed)}
+$path = {_ps_literal(path_value)}
 Write-Output (Add-MusePathValue -PathValue $path -ManagedBin $managed)
 Write-Output (Remove-MusePathValue -PathValue $path -ManagedBin $managed)
 """,
@@ -274,8 +286,8 @@ Write-Output (Remove-MusePathValue -PathValue $path -ManagedBin $managed)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        r"C:\Tools\Muse\bin;C:\One;C:\Two",
-        r"C:\One;C:\Two",
+        os.pathsep.join((str(managed), str(first), str(second))),
+        os.pathsep.join((str(first), str(second))),
     ]
 
 
@@ -347,12 +359,18 @@ def _run_installer_lifecycle(
     record = _owner_record(payload, release_version=release_version)
     record_json = json.dumps(record, separators=(",", ":"))
     script_path = _repo_root() / "scripts" / "install-muse.ps1"
+    process_path = os.pathsep.join(
+        (str(tmp_path / "process-one"), str(tmp_path / "process-two"))
+    )
+    user_path = os.pathsep.join(
+        (str(tmp_path / "user-one"), str(tmp_path / "user-two"))
+    )
     script = f"""$ErrorActionPreference = 'Stop'
 $env:LOCALAPPDATA = {_ps_literal(local_app_data)}
-$env:Path = 'C:\\ProcessOne;C:\\ProcessTwo'
+$env:Path = {_ps_literal(process_path)}
 . {_ps_literal(script_path)}
 $DryRun = ${str(dry_run).lower()}
-$script:TestUserPath = 'C:\\UserOne;C:\\UserTwo'
+$script:TestUserPath = {_ps_literal(user_path)}
 function Get-MuseNativeArchitecture {{ return 'X64' }}
 function Resolve-MuseExternalCommand {{
     if ({_ps_literal(external_path)} -eq '') {{ return $null }}
@@ -461,8 +479,8 @@ def test_muse_installer_publishes_verified_binary_record_and_path(
         payload
     )
     state = json.loads(result.stdout.splitlines()[-1])
-    assert state["UserPath"].split(";")[0] == str(root / "bin")
-    assert state["ProcessPath"].split(";")[0] == str(root / "bin")
+    assert state["UserPath"].split(os.pathsep)[0] == str(root / "bin")
+    assert state["ProcessPath"].split(os.pathsep)[0] == str(root / "bin")
     assert call_log.read_text(encoding="utf-8").splitlines() == [
         "metadata",
         "download",
@@ -694,7 +712,14 @@ def _run_uninstaller_lifecycle(
     local_app_data = tmp_path / "local-app-data"
     root, _, _ = _managed_paths(local_app_data)
     managed_bin = root / "bin"
-    path_value = user_path or f"C:\\One;{managed_bin};C:\\Two;{managed_bin}\\"
+    path_value = user_path or os.pathsep.join(
+        (
+            str(tmp_path / "one"),
+            str(managed_bin),
+            str(tmp_path / "two"),
+            str(managed_bin) + os.sep,
+        )
+    )
     script_path = _repo_root() / "scripts" / "uninstall-muse.ps1"
     script = f"""$ErrorActionPreference = 'Stop'
 $env:LOCALAPPDATA = {_ps_literal(local_app_data)}
@@ -759,9 +784,10 @@ def test_muse_uninstaller_removes_only_managed_assets_and_exact_path_entries(
     assert not root.exists()
     assert muse_state.read_text(encoding="utf-8") == '{"native":true}'
     state = json.loads(result.stdout.splitlines()[-1])
+    expected_path = os.pathsep.join((str(tmp_path / "one"), str(tmp_path / "two")))
     assert state == {
-        "UserPath": r"C:\One;C:\Two",
-        "ProcessPath": r"C:\One;C:\Two",
+        "UserPath": expected_path,
+        "ProcessPath": expected_path,
     }
 
 
