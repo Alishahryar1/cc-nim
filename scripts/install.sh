@@ -1049,7 +1049,12 @@ verify_uv() {
 
 uv_install_bin_directory() {
     if [ -n "${UV_INSTALL_DIR:-}" ]; then
-        printf '%s\n' "$UV_INSTALL_DIR"
+        cargo_home=${CARGO_HOME:-${HOME:-}/.cargo}
+        if [ "$UV_INSTALL_DIR" = "$cargo_home" ]; then
+            printf '%s/bin\n' "$UV_INSTALL_DIR"
+        else
+            printf '%s\n' "$UV_INSTALL_DIR"
+        fi
     elif [ -n "${XDG_BIN_HOME:-}" ]; then
         printf '%s\n' "$XDG_BIN_HOME"
     elif [ -n "${XDG_DATA_HOME:-}" ]; then

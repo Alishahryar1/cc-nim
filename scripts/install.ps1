@@ -1114,6 +1114,18 @@ function Confirm-Uv {
 
 function Get-UvInstallBinDirectory {
     if (-not [string]::IsNullOrWhiteSpace($env:UV_INSTALL_DIR)) {
+        $cargoHome = if (-not [string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
+            $env:CARGO_HOME
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($HOME)) {
+            Join-Path $HOME ".cargo"
+        }
+        else {
+            $null
+        }
+        if ($cargoHome -and $env:UV_INSTALL_DIR.Replace("\\", "\") -eq $cargoHome) {
+            return Join-Path $env:UV_INSTALL_DIR "bin"
+        }
         return $env:UV_INSTALL_DIR
     }
     if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {

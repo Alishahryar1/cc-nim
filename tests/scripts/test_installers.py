@@ -466,6 +466,9 @@ echo "uv-install" >> "$CALL_LOG"
 [ "$FAIL_STEP" = "uv-install" ] && exit 23
 if [ -n "${UV_INSTALL_DIR:-}" ]; then
     uv_bin=$UV_INSTALL_DIR
+    if [ "$UV_INSTALL_DIR" = "${CARGO_HOME:-$HOME/.cargo}" ]; then
+        uv_bin=$UV_INSTALL_DIR/bin
+    fi
 elif [ -n "${XDG_BIN_HOME:-}" ]; then
     uv_bin=$XDG_BIN_HOME
 elif [ -n "${XDG_DATA_HOME:-}" ]; then
@@ -1269,6 +1272,24 @@ def test_install_sh_prioritizes_replacement_uv_over_obsolete_cargo_uv(
     assert "uv-install" in posix_harness.calls()
 
 
+def test_install_sh_prioritizes_cargo_home_uv_install_layout(
+    posix_harness: PosixHarness,
+) -> None:
+    home = Path(posix_harness.env["HOME"])
+    cargo_home = home / ".cargo"
+    cargo_bin = cargo_home / "bin"
+    posix_harness.env["CARGO_HOME"] = str(cargo_home)
+    posix_harness.env["UV_INSTALL_DIR"] = str(cargo_home)
+    posix_harness.env["PATH"] = f"{posix_harness.env['PATH']}:{cargo_bin}"
+    posix_harness.add_uv("0.5.9")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified uv 0.11.28." in result.stdout
+    assert "uv-install" in posix_harness.calls()
+
+
 @pytest.mark.parametrize("version", ("0.11.16-alpha.1", "0.12.0-rc.1"))
 def test_install_sh_replaces_prerelease_uv(
     posix_harness: PosixHarness,
@@ -1935,7 +1956,12 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "muse-install"
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
 $bin = if ($env:UV_INSTALL_DIR) {
-    $env:UV_INSTALL_DIR
+    if ($env:UV_INSTALL_DIR -eq $(if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" })) {
+        Join-Path $env:UV_INSTALL_DIR "bin"
+    }
+    else {
+        $env:UV_INSTALL_DIR
+    }
 }
 elseif ($env:XDG_BIN_HOME) {
     $env:XDG_BIN_HOME
@@ -2730,6 +2756,25 @@ def test_install_ps1_prioritizes_replacement_uv_from_custom_install_directory(
 ) -> None:
     custom_install_dir = powershell_harness.root / "custom-uv-bin"
     powershell_harness.env["UV_INSTALL_DIR"] = str(custom_install_dir)
+    powershell_harness.add_uv("0.5.9")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified uv 0.11.28." in result.stdout
+    assert "uv-install" in powershell_harness.calls()
+
+
+def test_install_ps1_prioritizes_cargo_home_uv_install_layout(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    cargo_home = Path(powershell_harness.env["USERPROFILE"]) / ".cargo"
+    cargo_bin = cargo_home / "bin"
+    powershell_harness.env["CARGO_HOME"] = str(cargo_home)
+    powershell_harness.env["UV_INSTALL_DIR"] = str(cargo_home)
+    powershell_harness.env["PATH"] = (
+        f"{powershell_harness.env['PATH']}{os.pathsep}{cargo_bin}"
+    )
     powershell_harness.add_uv("0.5.9")
 
     result = powershell_harness.run()
