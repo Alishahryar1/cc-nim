@@ -13,7 +13,6 @@ DSH_VERSION="0.1.0-rc.8"
 DSH_PACKAGE="@deepseek-ai/dsh@$DSH_VERSION"
 GROK_INSTALL_URL="https://x.ai/cli/install.sh"
 MUSE_INSTALL_URL="https://dev.meta.ai/install.sh"
-AIDER_INSTALL_URL="https://aider.chat/install.sh"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
@@ -889,8 +888,10 @@ ensure_muse() {
 }
 
 install_aider_cli() {
-    download_and_run "$AIDER_INSTALL_URL" bash "Aider"
-    add_known_bin_directories
+    run uv tool install --force --python python3.12 --with pip aider-chat@latest
+    if [ "$dry_run" -eq 0 ]; then
+        add_known_bin_directories
+    fi
 }
 
 ensure_aider() {
@@ -1282,7 +1283,7 @@ fi
 
 step "Checking installation prerequisites"
 require_command curl
-if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_grok" -eq 1 ] || [ "$install_muse" -eq 1 ] || [ "$install_aider" -eq 1 ]; then
+if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_grok" -eq 1 ] || [ "$install_muse" -eq 1 ]; then
     require_command bash
 fi
 require_command sh
@@ -1296,11 +1297,11 @@ if [ "$enable_rtk" -eq 1 ] && ! command -v rtk >/dev/null 2>&1; then
     fi
 fi
 
-ensure_selected_coding_agents
-configure_rtk_for_selected_agents
-
 step "Ensuring uv $MIN_UV_VERSION or newer is installed"
 ensure_uv
+
+ensure_selected_coding_agents
+configure_rtk_for_selected_agents
 
 step "Installing or updating Free Claude Code"
 install_free_claude_code

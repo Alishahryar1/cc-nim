@@ -33,6 +33,11 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _assert_uv_ready_without_fcc_install(calls: list[str]) -> None:
+    assert "uv:--version" in calls
+    assert not any("--refresh-package free-claude-code" in call for call in calls)
+
+
 def _write_executable(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -136,6 +141,17 @@ if [ "${{1:-}}" = "--version" ]; then
     exit 0
 fi
 if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
+    case " $* " in
+        *" aider-chat@latest "*)
+            if [ "$FAIL_STEP" = "aider-install" ]; then
+                exit 29
+            fi
+            mkdir -p "$HOME/.local/bin"
+            cp "$FAKE_FIXTURES/aider-command.sh" "$HOME/.local/bin/aider"
+            chmod +x "$HOME/.local/bin/aider"
+            exit 0
+            ;;
+    esac
     if [ "$FAIL_STEP" = "fcc-install" ]; then
         exit 33
     fi
@@ -340,7 +356,7 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*x.ai*:grok-download|*dev.meta.ai*:muse-download|*aider.chat*:aider-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*x.ai*:grok-download|*dev.meta.ai*:muse-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
@@ -352,7 +368,6 @@ case "$url" in
     *hermes-agent.nousresearch.com*) source="$FAKE_FIXTURES/hermes-installer.sh" ;;
     *x.ai*) source="$FAKE_FIXTURES/grok-installer.sh" ;;
     *dev.meta.ai*) source="$FAKE_FIXTURES/muse-installer.sh" ;;
-    *aider.chat*) source="$FAKE_FIXTURES/aider-installer.sh" ;;
     *rtk-ai*)
         if [ "$FAIL_STEP" = "rtk-install" ]; then
             printf 'invalid archive\n' > "$output"
@@ -441,16 +456,6 @@ echo "muse-install" >> "$CALL_LOG"
 mkdir -p "$HOME/.local/bin"
 cp "$FAKE_FIXTURES/muse-command.sh" "$HOME/.local/bin/muse"
 chmod +x "$HOME/.local/bin/muse"
-""",
-    )
-    _write_executable(
-        fixtures / "aider-installer.sh",
-        """#!/bin/sh
-echo "aider-install" >> "$CALL_LOG"
-[ "$FAIL_STEP" = "aider-install" ] && exit 29
-mkdir -p "$HOME/.local/bin"
-cp "$FAKE_FIXTURES/aider-command.sh" "$HOME/.local/bin/aider"
-chmod +x "$HOME/.local/bin/aider"
 """,
     )
     _write_executable(
@@ -569,8 +574,12 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     )
     assert calls.index("grok-install") < calls.index("grok:--version")
     assert calls.index("muse-install") < calls.index("muse:--version")
-    assert calls.index("aider-install") < calls.index("aider:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
+    aider_install = (
+        "uv:tool install --force --python python3.12 --with pip aider-chat@latest"
+    )
+    assert calls.index("uv:--version") < calls.index("claude-install")
+    assert calls.index(aider_install) < calls.index("aider:--version")
     assert any(
         call.startswith(
             "uv:tool install --force --refresh-package free-claude-code "
@@ -634,7 +643,7 @@ def test_install_sh_stops_when_selected_hermes_install_fails(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any("astral.sh" in call for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
 def test_install_sh_rejects_unsupported_hermes_platform_before_download(
@@ -660,7 +669,10 @@ def test_install_sh_rejects_unsupported_hermes_platform_before_download(
         ("hermes", "hermes-install:--non-interactive --skip-setup"),
         ("grok", "grok-install"),
         ("muse", "muse-install"),
-        ("aider", "aider-install"),
+        (
+            "aider",
+            "uv:tool install --force --python python3.12 --with pip aider-chat@latest",
+        ),
     ],
 )
 def test_install_sh_preserves_upstream_managed_harness_without_parsing_version(
@@ -692,7 +704,7 @@ def test_install_sh_stops_when_grok_install_fails(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
 @pytest.mark.parametrize("failure", ["muse-download", "muse-install"])
@@ -706,21 +718,25 @@ def test_install_sh_stops_when_muse_install_fails(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
-@pytest.mark.parametrize("failure", ["aider-download", "aider-install"])
 def test_install_sh_stops_when_aider_install_fails(
     posix_harness: PosixHarness,
-    failure: str,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\n", fail_step=failure
+        "n\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\n", fail_step="aider-install"
     )
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+    calls = posix_harness.calls()
+    aider_install = (
+        "uv:tool install --force --python python3.12 --with pip aider-chat@latest"
+    )
+    assert calls.index("uv:--version") < calls.index(aider_install)
+    assert not any("aider.chat/install" in call for call in calls)
+    assert not any("--refresh-package free-claude-code" in call for call in calls)
 
 
 def test_install_sh_accepts_aider_as_the_only_selected_agent(
@@ -730,8 +746,12 @@ def test_install_sh_accepts_aider_as_the_only_selected_agent(
 
     assert result.returncode == 0, result.stdout
     calls = posix_harness.calls()
-    assert "download:https://aider.chat/install.sh" in calls
-    assert calls.index("aider-install") < calls.index("aider:--version")
+    aider_install = (
+        "uv:tool install --force --python python3.12 --with pip aider-chat@latest"
+    )
+    assert calls.index("uv:--version") < calls.index(aider_install)
+    assert calls.index(aider_install) < calls.index("aider:--version")
+    assert not any("aider.chat/install" in call for call in calls)
     assert "Run Aider with: fcc-aider" in result.stdout
     assert "Select at least one coding agent." not in result.stdout
 
@@ -746,7 +766,7 @@ def test_install_sh_rejects_broken_existing_aider_without_replacing_it(
     assert result.returncode != 0
     calls = posix_harness.calls()
     assert "aider:--version" in calls
-    assert "aider-install" not in calls
+    assert not any("aider-chat@latest" in call for call in calls)
     assert not any("aider.chat" in call for call in calls)
 
 
@@ -793,7 +813,7 @@ def test_install_sh_rejects_exact_dsh_on_unsupported_node(
 
     assert result.returncode != 0
     assert "requires Node.js ^22.19.0 or >=24.0.0" in result.stderr
-    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
 @pytest.mark.parametrize("node_version", ["22.18.0", "23.9.0", "not-a-version"])
@@ -810,7 +830,7 @@ def test_install_sh_rejects_incompatible_node_for_selected_dsh(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
 def test_install_sh_noninteractive_skips_dsh_without_node(
@@ -837,7 +857,7 @@ def test_install_sh_stops_when_selected_dsh_install_fails(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
 def test_install_sh_installs_and_configures_rtk_for_selected_agents(
@@ -864,8 +884,8 @@ def test_install_sh_installs_and_configures_rtk_for_selected_agents(
         "rtk:init --global --agent pi:telemetry=1",
         "rtk:init --global --opencode:telemetry=1",
     ]
-    assert calls.index("rtk:init --global --opencode:telemetry=1") < calls.index(
-        "uv-install"
+    assert calls.index("uv:--version") < calls.index(
+        "rtk:init --global --opencode:telemetry=1"
     )
     assert (Path(posix_harness.env["HOME"]) / ".claude").is_dir()
 
@@ -947,7 +967,7 @@ def test_install_sh_rejects_conflicting_rtk_command(
     assert result.returncode != 0
     assert "not a compatible Rust Token Killer installation" in result.stderr
     assert not any("rtk-ai/rtk" in call for call in posix_harness.calls())
-    assert not any("astral.sh" in call for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
 @pytest.mark.parametrize(
@@ -968,7 +988,7 @@ def test_install_sh_stops_when_rtk_setup_fails(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any("astral.sh" in call for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
 def test_install_sh_reprompts_then_installs_only_selected_agent(
@@ -999,7 +1019,7 @@ def test_install_sh_rejects_uninstalled_only_selection(
 
     assert result.returncode != 0
     assert "No selected coding agent was installed." in result.stdout
-    assert not any("astral.sh" in call for call in posix_harness.calls())
+    _assert_uv_ready_without_fcc_install(posix_harness.calls())
 
 
 def test_install_sh_creates_native_macos_app_and_desktop_link(
@@ -1269,12 +1289,12 @@ def test_install_sh_stops_without_success_on_each_failure(
         "codex-verify": "pi.dev",
         "pi-download": "pi-install",
         "pi-install": "pi:--version",
-        "pi-verify": "astral.sh",
+        "pi-verify": "opencode:--version",
         "opencode-download": "opencode-install",
         "opencode-install": "opencode:--version",
-        "opencode-verify": "astral.sh",
+        "opencode-verify": "npm:install -g cline",
         "cline-install": "cline:--version",
-        "cline-verify": "astral.sh",
+        "cline-verify": "hermes-agent.nousresearch.com",
         "uv-download": "uv-install",
         "uv-install": "uv:--version",
         "uv-verify": "uv:tool install",
@@ -1305,7 +1325,9 @@ def test_install_sh_rejects_broken_existing_client_without_replacing_it(
     result = posix_harness.run(fail_step="claude-verify")
 
     assert result.returncode != 0
-    assert not any(call.startswith("download:") for call in posix_harness.calls())
+    calls = posix_harness.calls()
+    _assert_uv_ready_without_fcc_install(calls)
+    assert not any("claude.ai" in call for call in calls)
 
 
 def test_install_sh_rejects_unparseable_existing_uv(
@@ -1373,7 +1395,9 @@ def test_install_sh_rechecks_for_fcc_process_before_tool_replacement(
 
     assert result.returncode != 0
     assert "fcc-server (PID 4242)" in result.stderr
-    assert not any(call.startswith("uv:tool install") for call in posix_harness.calls())
+    assert not any(
+        "--refresh-package free-claude-code" in call for call in posix_harness.calls()
+    )
 
 
 def test_install_sh_ignores_similarly_named_process(
@@ -1621,6 +1645,7 @@ if "%FAIL_STEP%"=="uv-verify" exit /b 52
 echo uv {version}
 exit /b 0
 :install
+if "%5"=="python3.12" goto install_aider
 if "%FAIL_STEP%"=="fcc-install" exit /b 53
 if not exist "%FAKE_TOOL_BIN%" mkdir "%FAKE_TOOL_BIN%"
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-server.cmd" >nul
@@ -1635,6 +1660,11 @@ copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-grok.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-muse.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-aider.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
+exit /b 0
+:install_aider
+if "%FAIL_STEP%"=="aider-install" exit /b 57
+if not exist "%USERPROFILE%\.local\bin" mkdir "%USERPROFILE%\.local\bin"
+copy /y "%FAKE_FIXTURES%\aider-command.cmd" "%USERPROFILE%\.local\bin\aider.cmd" >nul
 exit /b 0
 :update_shell
 if "%FAIL_STEP%"=="path-update" exit /b 54
@@ -1854,15 +1884,6 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "muse-install"
 """,
         encoding="utf-8",
     )
-    (fixtures / "aider-installer.ps1").write_text(
-        r"""if ($env:FAIL_STEP -eq "aider-install") { exit 67 }
-$bin = Join-Path $env:USERPROFILE ".local\bin"
-New-Item -ItemType Directory -Force -Path $bin | Out-Null
-Copy-Item (Join-Path $env:FAKE_FIXTURES "aider-command.cmd") (Join-Path $bin "aider.cmd") -Force
-Add-Content -LiteralPath $env:CALL_LOG -Value "aider-install"
-""",
-        encoding="utf-8",
-    )
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
 $bin = Join-Path $env:USERPROFILE ".local\bin"
@@ -1909,7 +1930,6 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "hermes-download" -and $Uri.Contains("hermes-agent.nousresearch.com")) -or
         ($env:FAIL_STEP -eq "grok-download" -and $Uri.Contains("x.ai/cli")) -or
         ($env:FAIL_STEP -eq "muse-download" -and $Uri.Contains("scripts/install-muse.ps1")) -or
-        ($env:FAIL_STEP -eq "aider-download" -and $Uri.Contains("aider.chat")) -or
         ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
@@ -1932,9 +1952,6 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("scripts/install-muse.ps1")) {
         $source = Join-Path $env:FAKE_FIXTURES "muse-installer.ps1"
-    }
-    elseif ($Uri.Contains("aider.chat")) {
-        $source = Join-Path $env:FAKE_FIXTURES "aider-installer.ps1"
     }
     elseif ($Uri.Contains("opencode-windows-")) {
         if ($env:FAIL_STEP -eq "opencode-archive") {
@@ -2042,9 +2059,13 @@ def test_install_ps1_fresh_install_is_verified(
     )
     assert calls.index("grok-install") < calls.index("grok:--version")
     assert calls.index("muse-install") < calls.index("muse:--version")
-    assert calls.index("aider-install") < calls.index("aider:--version")
     assert not any("hermes:setup" in call for call in calls)
     assert calls.index("uv-install") < calls.index("uv:--version")
+    aider_install = (
+        "uv:tool install --force --python python3.12 --with pip aider-chat@latest"
+    )
+    assert calls.index("uv:--version") < calls.index("claude-install")
+    assert calls.index(aider_install) < calls.index("aider:--version")
     assert any(
         call.startswith(
             "uv:tool install --force --refresh-package free-claude-code "
@@ -2111,7 +2132,10 @@ def test_install_ps1_discovers_grok_in_custom_bin_directory(
         ("cline", "npm:install -g cline"),
         ("hermes", "hermes-install:True:True"),
         ("grok", "grok-install"),
-        ("aider", "aider-install"),
+        (
+            "aider",
+            "uv:tool install --force --python python3.12 --with pip aider-chat@latest",
+        ),
     ],
 )
 def test_install_ps1_preserves_upstream_managed_harness_without_parsing_version(
@@ -2158,7 +2182,7 @@ def test_install_ps1_stops_when_muse_install_fails(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+    _assert_uv_ready_without_fcc_install(powershell_harness.calls())
 
 
 @pytest.mark.parametrize("failure", ["grok-download", "grok-install"])
@@ -2170,19 +2194,23 @@ def test_install_ps1_stops_when_grok_install_fails(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+    _assert_uv_ready_without_fcc_install(powershell_harness.calls())
 
 
-@pytest.mark.parametrize("failure", ["aider-download", "aider-install"])
 def test_install_ps1_stops_when_aider_install_fails(
     powershell_harness: PowerShellHarness,
-    failure: str,
 ) -> None:
-    result = powershell_harness.run(fail_step=failure)
+    result = powershell_harness.run(fail_step="aider-install")
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+    calls = powershell_harness.calls()
+    aider_install = (
+        "uv:tool install --force --python python3.12 --with pip aider-chat@latest"
+    )
+    assert calls.index("uv:--version") < calls.index(aider_install)
+    assert not any("aider.chat/install" in call for call in calls)
+    assert not any("--refresh-package free-claude-code" in call for call in calls)
 
 
 def test_install_ps1_rejects_broken_existing_aider_without_replacing_it(
@@ -2195,7 +2223,7 @@ def test_install_ps1_rejects_broken_existing_aider_without_replacing_it(
     assert result.returncode != 0
     calls = powershell_harness.calls()
     assert "aider:--version" in calls
-    assert "aider-install" not in calls
+    assert not any("aider-chat@latest" in call for call in calls)
     assert not any("aider.chat" in call for call in calls)
 
 
@@ -2243,7 +2271,7 @@ def test_install_ps1_rejects_exact_dsh_on_unsupported_node(
     assert "requires Node.js ^22.19.0 or >=24.0.0" in (
         f"{result.stdout}\n{result.stderr}"
     )
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+    _assert_uv_ready_without_fcc_install(powershell_harness.calls())
 
 
 @pytest.mark.parametrize("node_version", ["22.18.0", "23.9.0", "not-a-version"])
@@ -2264,7 +2292,7 @@ def test_install_ps1_rejects_incompatible_node_for_selected_dsh(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+    _assert_uv_ready_without_fcc_install(powershell_harness.calls())
 
 
 def test_install_ps1_noninteractive_skips_dsh_without_node(
@@ -2289,7 +2317,7 @@ def test_install_ps1_stops_when_selected_dsh_install_fails(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+    _assert_uv_ready_without_fcc_install(powershell_harness.calls())
 
 
 def test_install_ps1_rejects_unsupported_hermes_architecture_before_download(
@@ -2381,7 +2409,7 @@ def test_install_ps1_rejects_conflicting_rtk_command(
     assert result.returncode != 0
     assert "not a compatible Rust Token Killer installation" in result.stderr
     assert not any("rtk-ai/rtk" in call for call in powershell_harness.calls())
-    assert not any("astral.sh" in call for call in powershell_harness.calls())
+    _assert_uv_ready_without_fcc_install(powershell_harness.calls())
 
 
 def test_install_ps1_rtk_dry_run_prints_install_and_agent_setup(
@@ -2685,12 +2713,12 @@ def test_install_ps1_stops_without_success_on_each_failure(
         "codex-verify": "pi.dev",
         "pi-download": "pi-install",
         "pi-install": "pi:--version",
-        "pi-verify": "astral.sh",
-        "opencode-download": "uv-install",
-        "opencode-archive": "uv-install",
-        "opencode-verify": "astral.sh",
+        "pi-verify": "opencode:--version",
+        "opencode-download": "opencode:--version",
+        "opencode-archive": "opencode:--version",
+        "opencode-verify": "npm:install -g cline",
         "cline-install": "cline:--version",
-        "cline-verify": "astral.sh",
+        "cline-verify": "hermes-agent.nousresearch.com",
         "uv-download": "uv-install",
         "uv-install": "uv:--version",
         "uv-verify": "uv:tool install",
@@ -2721,7 +2749,9 @@ def test_install_ps1_rejects_broken_existing_client_without_replacing_it(
     result = powershell_harness.run(fail_step="claude-verify")
 
     assert result.returncode != 0
-    assert not any(call.startswith("download:") for call in powershell_harness.calls())
+    calls = powershell_harness.calls()
+    _assert_uv_ready_without_fcc_install(calls)
+    assert not any("claude.ai" in call for call in calls)
 
 
 def test_install_ps1_rejects_unparseable_existing_uv(
@@ -2781,7 +2811,8 @@ def test_install_ps1_rechecks_for_fcc_process_before_tool_replacement(
     assert result.returncode != 0
     assert "fcc-server (PID 4242)" in result.stderr
     assert not any(
-        call.startswith("uv:tool install") for call in powershell_harness.calls()
+        "--refresh-package free-claude-code" in call
+        for call in powershell_harness.calls()
     )
 
 
@@ -2821,8 +2852,6 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
     assert "https://x.ai/cli/install.sh" in shell
     assert "https://x.ai/cli/install.ps1" in powershell
     assert "https://dev.meta.ai/install.sh" in shell
-    assert "https://aider.chat/install.sh" in shell
-    assert "https://aider.chat/install.ps1" in powershell
     assert (
         "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/"
         "main/scripts/install-muse.ps1"

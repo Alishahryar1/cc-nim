@@ -27,7 +27,6 @@ $DshVersion = "0.1.0-rc.8"
 $DshPackage = "@deepseek-ai/dsh@$DshVersion"
 $GrokInstallUrl = "https://x.ai/cli/install.ps1"
 $MuseInstallUrl = "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install-muse.ps1"
-$AiderInstallUrl = "https://aider.chat/install.ps1"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -834,8 +833,28 @@ function Ensure-Grok {
 }
 
 function Install-Aider {
-    Invoke-DownloadedPowerShellInstaller -Url $AiderInstallUrl -Name "Aider"
-    Add-KnownBinDirectories
+    $uvPath = "uv"
+    if (-not $DryRun) {
+        $uvCommand = Get-ApplicationCommand "uv"
+        if (-not $uvCommand) {
+            throw "Aider installation requires the verified uv command, but it is not available on PATH."
+        }
+        $uvPath = $uvCommand.Source
+    }
+
+    Invoke-NativeCommand -FilePath $uvPath -Arguments @(
+        "tool",
+        "install",
+        "--force",
+        "--python",
+        "python3.12",
+        "--with",
+        "pip",
+        "aider-chat@latest"
+    )
+    if (-not $DryRun) {
+        Add-KnownBinDirectories
+    }
 }
 
 function Ensure-Aider {
@@ -1339,11 +1358,11 @@ if (Test-InteractiveInstaller) {
     Select-CodingAgents
 }
 
-Ensure-SelectedCodingAgents
-Configure-RtkForSelectedAgents
-
 Write-Step "Ensuring uv $MinUvVersion or newer is installed"
 Ensure-Uv
+
+Ensure-SelectedCodingAgents
+Configure-RtkForSelectedAgents
 
 Write-Step "Installing or updating Free Claude Code"
 Install-FreeClaudeCode
