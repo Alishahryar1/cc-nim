@@ -155,6 +155,7 @@ def test_build_responses_chat_request_preserves_rich_supported_semantics() -> No
                 ],
             },
             {"role": "tool", "tool_call_id": "call_1", "content": "FCC"},
+            {"role": "assistant", "content": " "},
             {"role": "user", "content": "Continue"},
         ],
         "tools": [
@@ -304,6 +305,310 @@ def test_build_responses_chat_request_quarantines_one_malformed_call_pair() -> N
     ]
 
 
+@pytest.mark.parametrize(
+    "image",
+    (
+        {"type": "input_image", "file_id": "file_1"},
+        {"type": "input_image", "image_url": {"detail": "low"}},
+        {"type": "input_image", "image_url": ""},
+    ),
+)
+def test_build_responses_chat_request_rejects_unportable_direct_image(
+    image: dict[str, object],
+) -> None:
+    with pytest.raises(ResponsesConversionError, match="input_image"):
+        build_responses_chat_request(
+            _request(input=[image]),
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+        )
+
+
+def test_build_responses_chat_request_preserves_chat_shaped_image_detail() -> None:
+    translated = build_responses_chat_request(
+        _request(
+            input=[
+                {
+                    "type": "input_image",
+                    "image_url": {
+                        "url": "https://images.example.test/direct.png",
+                        "detail": "low",
+                    },
+                    "detail": "high",
+                }
+            ]
+        ),
+        reasoning_replay=ReasoningReplayMode.DISABLED,
+    )
+
+    assert translated.body["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "https://images.example.test/direct.png",
+                        "detail": "high",
+                    },
+                }
+            ],
+        }
+    ]
+
+
+def test_build_responses_chat_request_relocates_rich_function_output() -> None:
+    image_url = "data:image/png;base64,AA=="
+    translated = build_responses_chat_request(
+        _request(
+            input=[
+                {
+                    "type": "function_call",
+                    "call_id": "call_image",
+                    "name": "read_image",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_image",
+                    "output": [
+                        {"type": "input_text", "text": "before"},
+                        {"type": "input_image", "image_url": image_url},
+                        {"type": "input_file", "file_id": "file_1"},
+                        {"type": "input_text", "text": "after"},
+                    ],
+                },
+            ]
+        ),
+        reasoning_replay=ReasoningReplayMode.DISABLED,
+    )
+
+    messages = translated.body["messages"]
+    assert isinstance(messages, list)
+    assert [message["role"] for message in messages] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert messages[1] == {
+        "role": "tool",
+        "tool_call_id": "call_image",
+        "content": "[Image-bearing tool output follows in user content.]",
+    }
+    assert messages[3]["content"] == [
+        {
+            "type": "text",
+            "text": 'Image-bearing output for tool call "call_image":',
+        },
+        {"type": "text", "text": "before"},
+        {"type": "image_url", "image_url": {"url": image_url}},
+        {
+            "type": "text",
+            "text": '{"type":"input_file","file_id":"file_1"}',
+        },
+        {"type": "text", "text": "after"},
+    ]
+    assert image_url not in messages[1]["content"]
+
+
+def test_build_responses_chat_request_closes_parallel_tools_before_rich_outputs() -> (
+    None
+):
+    translated = build_responses_chat_request(
+        _request(
+            input=[
+                {
+                    "type": "function_call",
+                    "call_id": "call_a",
+                    "name": "read_a",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_b",
+                    "name": "read_b",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_a",
+                    "output": [
+                        {
+                            "type": "input_image",
+                            "image_url": "https://images.example.test/a.png",
+                        }
+                    ],
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_b",
+                    "output": [
+                        {
+                            "type": "input_image",
+                            "image_url": "https://images.example.test/b.png",
+                        }
+                    ],
+                },
+            ]
+        ),
+        reasoning_replay=ReasoningReplayMode.DISABLED,
+    )
+
+    messages = translated.body["messages"]
+    assert isinstance(messages, list)
+    assert [message["role"] for message in messages] == [
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert [message["tool_call_id"] for message in messages[1:3]] == [
+        "call_a",
+        "call_b",
+    ]
+    assert messages[4]["content"] == [
+        {
+            "type": "text",
+            "text": 'Image-bearing output for tool call "call_a":',
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://images.example.test/a.png"},
+        },
+        {
+            "type": "text",
+            "text": 'Image-bearing output for tool call "call_b":',
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://images.example.test/b.png"},
+        },
+    ]
+
+
+def test_build_responses_chat_request_flushes_rich_output_before_later_input() -> None:
+    translated = build_responses_chat_request(
+        _request(
+            input=[
+                {
+                    "type": "function_call",
+                    "call_id": "call_image",
+                    "name": "read_image",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_image",
+                    "output": [
+                        {
+                            "type": "input_image",
+                            "image_url": "https://images.example.test/a.png",
+                        }
+                    ],
+                },
+                {"role": "user", "content": "Describe the image."},
+            ]
+        ),
+        reasoning_replay=ReasoningReplayMode.DISABLED,
+    )
+
+    messages = translated.body["messages"]
+    assert isinstance(messages, list)
+    assert messages[-2]["content"][0]["text"].startswith(
+        "Image-bearing output for tool call"
+    )
+    assert messages[-1] == {"role": "user", "content": "Describe the image."}
+
+
+def test_build_responses_chat_request_relocates_computer_screenshot() -> None:
+    translated = build_responses_chat_request(
+        _request(
+            input=[
+                {
+                    "type": "computer_call_output",
+                    "call_id": "computer_1",
+                    "output": {
+                        "type": "computer_screenshot",
+                        "image_url": "https://images.example.test/screen.png",
+                    },
+                    "acknowledged_safety_checks": [{"id": "check_1"}],
+                }
+            ]
+        ),
+        reasoning_replay=ReasoningReplayMode.DISABLED,
+    )
+
+    assert translated.body["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": 'Computer screenshot for call "computer_1":',
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://images.example.test/screen.png"},
+                },
+            ],
+        }
+    ]
+
+
+def test_build_responses_chat_request_keeps_reasoning_before_computer_output() -> None:
+    translated = build_responses_chat_request(
+        _request(
+            input=[
+                {
+                    "type": "reasoning",
+                    "content": [{"type": "reasoning_text", "text": "Think"}],
+                },
+                {
+                    "type": "computer_call_output",
+                    "call_id": "computer_1",
+                    "output": {
+                        "type": "computer_screenshot",
+                        "image_url": "https://images.example.test/screen.png",
+                    },
+                },
+            ]
+        ),
+        reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
+    )
+
+    messages = translated.body["messages"]
+    assert isinstance(messages, list)
+    assert [message["role"] for message in messages] == ["assistant", "user"]
+    assert messages[0]["reasoning_content"] == "Think"
+
+
+@pytest.mark.parametrize(
+    "output",
+    (
+        {"type": "computer_screenshot", "file_id": "file_1"},
+        {"type": "computer_screenshot", "image_url": ""},
+        {"type": "not_a_screenshot", "image_url": "https://x/image.png"},
+    ),
+)
+def test_build_responses_chat_request_rejects_unportable_computer_screenshot(
+    output: dict[str, object],
+) -> None:
+    with pytest.raises(ResponsesConversionError, match="computer_call_output"):
+        build_responses_chat_request(
+            _request(
+                input=[
+                    {
+                        "type": "computer_call_output",
+                        "call_id": "computer_1",
+                        "output": output,
+                    }
+                ]
+            ),
+            reasoning_replay=ReasoningReplayMode.DISABLED,
+        )
+
+
 def test_build_responses_chat_request_skips_unsupported_optional_items_and_choice() -> (
     None
 ):
@@ -333,8 +638,8 @@ def test_build_responses_chat_request_rejects_no_usable_input() -> None:
         )
 
 
-def test_build_responses_chat_request_rejects_message_with_only_skipped_parts() -> None:
-    with pytest.raises(ResponsesConversionError, match="usable input"):
+def test_build_responses_chat_request_rejects_message_with_only_file_id_image() -> None:
+    with pytest.raises(ResponsesConversionError, match="input_image"):
         build_responses_chat_request(
             _request(
                 input=[

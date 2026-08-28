@@ -49,6 +49,59 @@ def test_native_request_preserves_extensions_and_forces_stateless_streaming() ->
     assert request.previous_response_id == "resp_previous"
 
 
+def test_native_request_preserves_complete_multimodal_input_tree() -> None:
+    input_tree = [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,AA==",
+                    "detail": "high",
+                    "future_image_option": True,
+                },
+                {"type": "input_image", "file_id": "file_image"},
+                {"type": "input_file", "file_id": "file_document"},
+            ],
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_image",
+            "output": [
+                {"type": "input_text", "text": "result"},
+                {
+                    "type": "input_image",
+                    "image_url": "https://images.example.test/result.png",
+                },
+                {"type": "input_file", "file_id": "file_result"},
+                {"type": "future_output", "value": 7},
+            ],
+        },
+        {
+            "type": "computer_call_output",
+            "call_id": "computer_1",
+            "output": {
+                "type": "computer_screenshot",
+                "file_id": "file_screen",
+                "future_screenshot_option": "kept",
+            },
+            "acknowledged_safety_checks": [{"id": "check_1"}],
+        },
+    ]
+    request = OpenAIResponsesRequest.model_validate(
+        {"model": "gateway-model", "input": input_tree}
+    )
+
+    body = build_native_responses_request(
+        request,
+        model="upstream-model",
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"] == input_tree
+
+
 def test_native_request_preserves_reasoning_when_fcc_did_not_override_it() -> None:
     request = OpenAIResponsesRequest.model_validate(
         {

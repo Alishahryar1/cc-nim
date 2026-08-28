@@ -230,6 +230,24 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
     ),
     CapabilityContract(
         "streaming_conversion",
+        "vision_content",
+        "vision_protocol_matrix",
+        "free_claude_code.core.anthropic and free_claude_code.core.openai_responses",
+        "direct images and image-bearing tool outputs",
+        "native visual parts in each supported protocol cell",
+        "invalid or unresolvable translated images fail before upstream I/O",
+        (
+            "tests/contracts/test_protocol_matrix.py",
+            "tests/core/anthropic/test_image_sources.py",
+            "tests/core/openai_responses/test_chat_request.py",
+        ),
+        (
+            "test_nvidia_nim_vision_tool_result_e2e",
+            "test_nvidia_nim_vision_function_output_e2e",
+        ),
+    ),
+    CapabilityContract(
+        "streaming_conversion",
         "heuristic_tools",
         "heuristic_tool_parser",
         "free_claude_code.core.anthropic.tools",

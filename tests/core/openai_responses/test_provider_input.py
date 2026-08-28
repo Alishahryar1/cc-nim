@@ -108,6 +108,137 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
     }
 
 
+def test_responses_provider_request_canonicalizes_direct_anthropic_image() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "data:IMAGE/PNG;BASE64,aGVs\r\nbG8=",
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,aGVsbG8=",
+                }
+            ],
+        }
+    ]
+
+
+def test_responses_provider_request_preserves_rich_tool_output_order() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_image",
+                            "content": [
+                                {"type": "text", "text": "before"},
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "url",
+                                        "url": "https://images.example.test/tool.png",
+                                    },
+                                },
+                                {"type": "document", "title": "reference"},
+                                {"type": "text", "text": "after"},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    assert body["input"] == [
+        {
+            "type": "function_call_output",
+            "call_id": "call_image",
+            "output": [
+                {"type": "input_text", "text": "before"},
+                {
+                    "type": "input_image",
+                    "image_url": "https://images.example.test/tool.png",
+                },
+                {
+                    "type": "input_text",
+                    "text": '{"type": "document", "title": "reference"}',
+                },
+                {"type": "input_text", "text": "after"},
+            ],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        {"type": "base64", "media_type": "image/png", "data": "SECRET_BAD"},
+        {"type": "file", "file_id": "file_1"},
+    ),
+)
+def test_responses_provider_request_rejects_unportable_tool_image(source) -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_image",
+                            "content": [{"type": "image", "source": source}],
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ResponsesConversionError) as exc_info:
+        build_responses_provider_request(
+            request,
+            reasoning=ReasoningPolicy.provider_default(),
+        )
+
+    assert "SECRET_BAD" not in str(exc_info.value)
+
+
 def test_build_responses_provider_request_accepts_claude_client_controls() -> None:
     request = MessagesRequest.model_validate(
         {
