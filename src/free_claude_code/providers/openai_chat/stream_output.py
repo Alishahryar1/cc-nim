@@ -685,7 +685,13 @@ class ResponsesChatStreamOutput(ChatStreamOutput):
 
 
 def _responses_usage(usage: ChatStreamUsage) -> dict[str, object]:
-    cached_tokens = max(0, min(usage.cached_tokens, usage.input_tokens))
+    cached_tokens = usage.cached_tokens
+    if (
+        not isinstance(cached_tokens, int)
+        or isinstance(cached_tokens, bool)
+        or not 0 <= cached_tokens <= usage.input_tokens
+    ):
+        cached_tokens = 0
     reasoning_tokens = max(0, min(usage.reasoning_tokens, usage.output_tokens))
     input_token_details = {"cached_tokens": cached_tokens}
     cache_write_tokens = usage.cache_write_tokens

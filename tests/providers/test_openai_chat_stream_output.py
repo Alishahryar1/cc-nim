@@ -216,6 +216,28 @@ def test_responses_chat_output_omits_untrustworthy_cache_write_without_losing_re
     }
 
 
+def test_responses_chat_output_ignores_overflowing_read_without_losing_write() -> None:
+    usage = _finished_responses_usage(
+        ChatStreamUsage(
+            input_tokens=20,
+            output_tokens=8,
+            cached_tokens=21,
+            cache_write_tokens=5,
+        )
+    )
+
+    assert usage == {
+        "input_tokens": 20,
+        "input_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 5,
+        },
+        "output_tokens": 8,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 28,
+    }
+
+
 def test_responses_chat_output_finishes_committed_failure_once() -> None:
     output = ResponsesChatStreamOutput(
         OpenAIResponsesRequest.model_validate(
