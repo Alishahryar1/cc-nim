@@ -411,9 +411,9 @@ Admin requests are partial updates: omitted keys stay unchanged, `null` removes
 an optional assignment, and required/defaulted values reject `null` or blank
 input. False and zero remain real values. Masked or blank secret submissions
 mean unchanged; an explicit remove action is available only for optional
-secrets. Preview and Apply validate the same prospective Settings snapshot, and
-Apply atomically writes only configured values plus preserved unknown managed
-assignments. Process-owned fields are visible but locked.
+secrets. Apply validates the prospective Settings snapshot before atomically
+writing only configured values plus preserved unknown managed assignments.
+Process-owned fields are visible but locked.
 
 [config/admin/status.py](src/free_claude_code/config/admin/status.py) owns
 provider configuration readiness and exposes ordered Admin field keys for each
