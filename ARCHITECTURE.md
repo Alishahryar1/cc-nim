@@ -1471,7 +1471,7 @@ own the installed `fcc-dsh` launcher for DeepSeek Harness 0.1.0-rc.8:
   sandbox.
 
 [cli/launchers/grok.py](src/free_claude_code/cli/launchers/grok.py) owns the
-installed `fcc-grok` launcher for stable Grok Build 1.0.5 or newer:
+installed `fcc-grok` launcher for Grok Build 1.0.5 or newer:
 
 - Attached TUI, headless, and `agent stdio` sessions require a reachable FCC
   server, a canonical proxy token, and a non-empty direct Responses catalog.
