@@ -90,7 +90,7 @@ terminal open.
 2. Open the Admin UI URL from the server log.
 3. Paste the key into `NVIDIA_NIM_API_KEY`.
 4. Leave `MODEL` on the default `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, or search the model dropdown and select another model.
-5. Click **Validate**, then **Apply**.
+5. Click **Apply**.
 
 To protect the local proxy with a bearer token, enable **Proxy Authentication**
 in Admin.
@@ -178,7 +178,7 @@ fcc-aider
    **Providers → Connected accounts** instead.
 3. Search the `MODEL` dropdown and select a model. If the provider cannot list
    models, enter `<provider-id>/<exact-provider-model-id>` manually.
-4. Click **Validate**, then **Apply**.
+4. Click **Apply**.
 
 Optional: add an ordered **Fallback Models** list under **Model Config**. It
 applies to every connected client. A failed request may reach and consume usage
@@ -479,7 +479,7 @@ Restart Claude Code or the IDE after saving the file.
 
 ## Optional Integrations
 
-Configure integrations from **Admin UI → Messaging**, then click **Validate** and **Apply**.
+Configure integrations from **Admin UI → Messaging**, then click **Apply**.
 
 <details>
 <summary><strong>Discord bot</strong></summary>

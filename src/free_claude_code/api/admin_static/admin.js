@@ -93,7 +93,6 @@ async function load() {
   byId("configPath").textContent = config.paths.managed;
   await refreshConnectedAccounts();
   await hydrateModelOptions();
-  await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
   showMessage("");
@@ -1022,32 +1021,13 @@ function updateDirtyState() {
   byId("applyButton").disabled = count === 0;
 }
 
-async function validate(showResult = true) {
-  const result = await api("/admin/api/config/validate", {
-    method: "POST",
-    body: JSON.stringify({ values: changedValues() }),
-  });
-  if (showResult) {
-    showValidationResult(result);
-  }
-  return result;
-}
-
-function showValidationResult(result) {
-  if (result.valid) {
-    showMessage("Config shape is valid", "ok");
-  } else {
-    showMessage(result.errors.join("; "), "error");
-  }
-}
-
 async function apply() {
   const result = await api("/admin/api/config/apply", {
     method: "POST",
     body: JSON.stringify({ values: changedValues() }),
   });
   if (!result.applied) {
-    showValidationResult(result);
+    showMessage(result.errors.join("; "), "error");
     return;
   }
   const restart = result.restart || {};
@@ -1195,7 +1175,6 @@ function showMessage(message, kind = "") {
   area.className = `message-area ${kind}`.trim();
 }
 
-byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {

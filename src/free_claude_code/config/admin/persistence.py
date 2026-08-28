@@ -105,12 +105,6 @@ def target_values_with_updates(
     return values
 
 
-def validate_updates(updates: Mapping[str, ConfigInputValue]) -> JsonObject:
-    """Validate partial Admin updates and return a masked sparse preview."""
-
-    return prepare_admin_update(updates).validation_response()
-
-
 def changed_pending_fields(
     updates: Mapping[str, ConfigInputValue],
     *,

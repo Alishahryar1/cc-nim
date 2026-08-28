@@ -16,7 +16,6 @@ from free_claude_code.application.connected_accounts import (
 )
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
-from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response, load_value_state
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.provider_catalog import (
@@ -109,12 +108,6 @@ async def admin_asset(filename: str, request: Request):
 async def get_admin_config(request: Request):
     require_loopback_admin(request)
     return load_config_response()
-
-
-@router.post("/admin/api/config/validate")
-async def validate_admin_config(payload: AdminConfigPayload, request: Request):
-    require_loopback_admin(request)
-    return validate_updates(_filtered_values(payload.values))
 
 
 @router.post("/admin/api/config/apply")

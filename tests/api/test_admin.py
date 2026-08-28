@@ -129,11 +129,11 @@ def test_admin_http_errors_are_never_cached(
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_admin_validation_errors_are_never_cached(monkeypatch, tmp_path):
+def test_admin_apply_payload_validation_errors_are_never_cached(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
 
     response = _local_client(create_test_app()).post(
-        "/admin/api/config/validate",
+        "/admin/api/config/apply",
         content="{",
         headers={"Content-Type": "application/json"},
     )
@@ -802,41 +802,43 @@ def test_admin_apply_masked_or_blank_secret_is_unchanged(
     assert "OPENROUTER_API_KEY=original-secret" in env_file.read_text(encoding="utf-8")
 
 
-def test_admin_validate_rejects_bad_model_shape(monkeypatch, tmp_path):
+def test_admin_apply_rejects_bad_model_shape(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     app = create_test_app()
 
     response = _local_client(app).post(
-        "/admin/api/config/validate",
+        "/admin/api/config/apply",
         json={"values": {"MODEL": "missing-provider-prefix"}},
     )
 
     assert response.status_code == 200
     body = response.json()
+    assert body["applied"] is False
     assert body["valid"] is False
     assert any("provider type" in error for error in body["errors"])
 
 
-def test_admin_validate_rejects_duplicate_model_fallbacks(monkeypatch, tmp_path):
+def test_admin_apply_rejects_duplicate_model_fallbacks(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     app = create_test_app()
     duplicate = "groq/vendor/model,groq/vendor/model"
 
     response = _local_client(app).post(
-        "/admin/api/config/validate",
+        "/admin/api/config/apply",
         json={"values": {"MODEL_FALLBACKS": duplicate}},
     )
 
     assert response.status_code == 200
     body = response.json()
+    assert body["applied"] is False
     assert body["valid"] is False
     assert any("duplicate" in error.lower() for error in body["errors"])
 
 
 @pytest.mark.parametrize("proxy_key", _catalog_proxy_env_keys())
-def test_admin_validate_rejects_invalid_catalog_provider_proxy(
+def test_admin_apply_rejects_invalid_catalog_provider_proxy(
     monkeypatch,
     tmp_path,
     proxy_key,
@@ -846,12 +848,13 @@ def test_admin_validate_rejects_invalid_catalog_provider_proxy(
     invalid_proxy = "not-a-proxy://user:leaked-secret@proxy.example:8080"
 
     response = _local_client(create_test_app()).post(
-        "/admin/api/config/validate",
+        "/admin/api/config/apply",
         json={"values": {proxy_key: invalid_proxy}},
     )
 
     assert response.status_code == 200
     body = response.json()
+    assert body["applied"] is False
     assert body["valid"] is False
     assert body["errors"] == [
         (
@@ -873,16 +876,17 @@ def test_admin_validate_rejects_invalid_catalog_provider_proxy(
         "  http://127.0.0.1:8080  ",
     ),
 )
-def test_admin_validate_accepts_httpx_provider_proxy(monkeypatch, tmp_path, proxy):
+def test_admin_apply_accepts_httpx_provider_proxy(monkeypatch, tmp_path, proxy):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
 
     response = _local_client(create_test_app()).post(
-        "/admin/api/config/validate",
+        "/admin/api/config/apply",
         json={"values": {"OPENAI_PROXY": proxy}},
     )
 
     assert response.status_code == 200
+    assert response.json()["applied"] is True
     assert response.json()["valid"] is True
 
 
@@ -896,17 +900,18 @@ def test_admin_validate_accepts_httpx_provider_proxy(monkeypatch, tmp_path, prox
         "http://proxy.example:notaport",
     ),
 )
-def test_admin_validate_rejects_unusable_provider_proxy(monkeypatch, tmp_path, proxy):
+def test_admin_apply_rejects_unusable_provider_proxy(monkeypatch, tmp_path, proxy):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
 
     response = _local_client(create_test_app()).post(
-        "/admin/api/config/validate",
+        "/admin/api/config/apply",
         json={"values": {"OPENAI_PROXY": proxy}},
     )
 
     assert response.status_code == 200
     body = response.json()
+    assert body["applied"] is False
     assert body["valid"] is False
     assert len(body["errors"]) == 1
     assert body["errors"][0].startswith("OPENAI_PROXY: must be a proxy URL")
@@ -983,7 +988,7 @@ def test_admin_apply_validates_retained_proxy_and_allows_removal(
 
 
 @pytest.mark.parametrize("submitted", (MASKED_SECRET, "", "   "))
-def test_admin_validate_preserves_valid_stored_proxy_secret(
+def test_admin_apply_preserves_valid_stored_proxy_secret(
     monkeypatch,
     tmp_path,
     submitted,
@@ -998,12 +1003,13 @@ def test_admin_validate_preserves_valid_stored_proxy_secret(
     )
 
     response = _local_client(create_test_app()).post(
-        "/admin/api/config/validate",
+        "/admin/api/config/apply",
         json={"values": {"OPENAI_PROXY": submitted}},
     )
 
     assert response.status_code == 200
     body = response.json()
+    assert body["applied"] is True
     assert body["valid"] is True
     assert "OPENAI_PROXY=********" in body["env_preview"]
     assert "password" not in response.text
