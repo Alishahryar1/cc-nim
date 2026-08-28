@@ -911,12 +911,13 @@ ensure_muse() {
 
 install_aider_cli() {
     run uv tool install --force --python python3.12 --with pip aider-chat@latest
-    if [ "$dry_run" -eq 0 ]; then
-        add_uv_tool_bin_directory
-    fi
 }
 
 ensure_aider() {
+    if ! command -v aider >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
+        add_uv_tool_bin_directory
+    fi
+
     if command -v aider >/dev/null 2>&1; then
         printf 'Aider already found on PATH; verifying it.\n'
     else
@@ -1048,7 +1049,9 @@ verify_uv() {
 }
 
 uv_install_bin_directory() {
-    if [ -n "${UV_INSTALL_DIR:-}" ]; then
+    if [ -n "${UV_UNMANAGED_INSTALL:-}" ]; then
+        printf '%s\n' "$UV_UNMANAGED_INSTALL"
+    elif [ -n "${UV_INSTALL_DIR:-}" ]; then
         cargo_home=${CARGO_HOME:-${HOME:-}/.cargo}
         if [ "$UV_INSTALL_DIR" = "$cargo_home" ]; then
             printf '%s/bin\n' "$UV_INSTALL_DIR"

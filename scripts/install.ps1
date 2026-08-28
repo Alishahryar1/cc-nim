@@ -863,9 +863,6 @@ function Install-Aider {
         "pip",
         "aider-chat@latest"
     )
-    if (-not $DryRun) {
-        $null = Add-UvToolBinDirectory -UvPath $uvPath
-    }
 }
 
 function Add-UvToolBinDirectory {
@@ -882,6 +879,15 @@ function Add-UvToolBinDirectory {
 
 function Ensure-Aider {
     $command = Get-ApplicationCommand "aider"
+    if ((-not $command) -and (-not $DryRun)) {
+        $uvCommand = Get-ApplicationCommand "uv"
+        if (-not $uvCommand) {
+            throw "Aider installation requires the verified uv command, but it is not available on PATH."
+        }
+        $null = Add-UvToolBinDirectory -UvPath $uvCommand.Source
+        $command = Get-ApplicationCommand "aider"
+    }
+
     if ($command) {
         Write-Host "Aider already found on PATH; verifying it."
     }
@@ -1113,6 +1119,9 @@ function Confirm-Uv {
 }
 
 function Get-UvInstallBinDirectory {
+    if (-not [string]::IsNullOrWhiteSpace($env:UV_UNMANAGED_INSTALL)) {
+        return $env:UV_UNMANAGED_INSTALL
+    }
     if (-not [string]::IsNullOrWhiteSpace($env:UV_INSTALL_DIR)) {
         $cargoHome = if (-not [string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
             $env:CARGO_HOME

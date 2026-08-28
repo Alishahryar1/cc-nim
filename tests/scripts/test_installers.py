@@ -464,7 +464,9 @@ chmod +x "$HOME/.local/bin/muse"
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
 [ "$FAIL_STEP" = "uv-install" ] && exit 23
-if [ -n "${UV_INSTALL_DIR:-}" ]; then
+if [ -n "${UV_UNMANAGED_INSTALL:-}" ]; then
+    uv_bin=$UV_UNMANAGED_INSTALL
+elif [ -n "${UV_INSTALL_DIR:-}" ]; then
     uv_bin=$UV_INSTALL_DIR
     if [ "$UV_INSTALL_DIR" = "${CARGO_HOME:-$HOME/.cargo}" ]; then
         uv_bin=$UV_INSTALL_DIR/bin
@@ -782,6 +784,34 @@ def test_install_sh_discovers_aider_in_custom_uv_tool_bin(
     calls = posix_harness.calls()
     assert "uv:tool dir --bin" in calls
     assert "aider:--version" in calls
+
+
+@pytest.mark.parametrize("fail_step", ("", "aider-verify"), ids=("valid", "broken"))
+def test_install_sh_checks_existing_aider_in_custom_uv_tool_bin_before_installing(
+    posix_harness: PosixHarness,
+    fail_step: str,
+) -> None:
+    custom_tool_bin = posix_harness.root / "custom-tool-bin"
+    existing_aider = custom_tool_bin / "aider"
+    posix_harness.env["UV_TOOL_BIN_DIR"] = str(custom_tool_bin)
+    _write_executable(
+        existing_aider,
+        _posix_command("aider", version_output="existing aider 1.0.0"),
+    )
+    original = existing_aider.read_bytes()
+
+    result = posix_harness.run_interactive(
+        "n\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\n", fail_step=fail_step
+    )
+
+    if fail_step:
+        assert result.returncode != 0
+    else:
+        assert result.returncode == 0, result.stderr
+    calls = posix_harness.calls()
+    assert calls.index("uv:tool dir --bin") < calls.index("aider:--version")
+    assert not any("aider-chat@latest" in call for call in calls)
+    assert existing_aider.read_bytes() == original
 
 
 def test_install_sh_rejects_broken_existing_aider_without_replacing_it(
@@ -1281,6 +1311,20 @@ def test_install_sh_prioritizes_cargo_home_uv_install_layout(
     posix_harness.env["CARGO_HOME"] = str(cargo_home)
     posix_harness.env["UV_INSTALL_DIR"] = str(cargo_home)
     posix_harness.env["PATH"] = f"{posix_harness.env['PATH']}:{cargo_bin}"
+    posix_harness.add_uv("0.5.9")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified uv 0.11.28." in result.stdout
+    assert "uv-install" in posix_harness.calls()
+
+
+def test_install_sh_prioritizes_replacement_uv_from_unmanaged_install_directory(
+    posix_harness: PosixHarness,
+) -> None:
+    unmanaged_bin = posix_harness.root / "unmanaged-uv-bin"
+    posix_harness.env["UV_UNMANAGED_INSTALL"] = str(unmanaged_bin)
     posix_harness.add_uv("0.5.9")
 
     result = posix_harness.run()
@@ -1955,7 +1999,10 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "muse-install"
     )
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
-$bin = if ($env:UV_INSTALL_DIR) {
+$bin = if ($env:UV_UNMANAGED_INSTALL) {
+    $env:UV_UNMANAGED_INSTALL
+}
+elseif ($env:UV_INSTALL_DIR) {
     if ($env:UV_INSTALL_DIR -eq $(if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" })) {
         Join-Path $env:UV_INSTALL_DIR "bin"
     }
@@ -2311,6 +2358,33 @@ def test_install_ps1_discovers_aider_in_custom_uv_tool_bin(
     calls = powershell_harness.calls()
     assert "uv:tool dir --bin" in calls
     assert "aider:--version" in calls
+
+
+@pytest.mark.parametrize("fail_step", ("", "aider-verify"), ids=("valid", "broken"))
+def test_install_ps1_checks_existing_aider_in_custom_uv_tool_bin_before_installing(
+    powershell_harness: PowerShellHarness,
+    fail_step: str,
+) -> None:
+    custom_tool_bin = powershell_harness.root / "custom-tool-bin"
+    existing_aider = custom_tool_bin / "aider.cmd"
+    custom_tool_bin.mkdir()
+    powershell_harness.env["UV_TOOL_BIN_DIR"] = str(custom_tool_bin)
+    existing_aider.write_text(
+        _batch_client("aider", version_output="existing aider 1.0.0"),
+        encoding="utf-8",
+    )
+    original = existing_aider.read_bytes()
+
+    result = powershell_harness.run(fail_step=fail_step)
+
+    if fail_step:
+        assert result.returncode != 0
+    else:
+        assert result.returncode == 0, result.stderr
+    calls = powershell_harness.calls()
+    assert calls.index("uv:tool dir --bin") < calls.index("aider:--version")
+    assert not any("aider-chat@latest" in call for call in calls)
+    assert existing_aider.read_bytes() == original
 
 
 def test_install_ps1_rejects_broken_existing_aider_without_replacing_it(
@@ -2775,6 +2849,20 @@ def test_install_ps1_prioritizes_cargo_home_uv_install_layout(
     powershell_harness.env["PATH"] = (
         f"{powershell_harness.env['PATH']}{os.pathsep}{cargo_bin}"
     )
+    powershell_harness.add_uv("0.5.9")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified uv 0.11.28." in result.stdout
+    assert "uv-install" in powershell_harness.calls()
+
+
+def test_install_ps1_prioritizes_replacement_uv_from_unmanaged_install_directory(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    unmanaged_bin = powershell_harness.root / "unmanaged-uv-bin"
+    powershell_harness.env["UV_UNMANAGED_INSTALL"] = str(unmanaged_bin)
     powershell_harness.add_uv("0.5.9")
 
     result = powershell_harness.run()
