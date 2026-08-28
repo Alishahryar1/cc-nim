@@ -161,9 +161,6 @@ Aider:
 fcc-aider
 ```
 
-`fcc-aider` exposes FCC models as `anthropic/<provider>/<model>`. Use ordinary
-`aider` when you want Aider's native providers instead.
-
 <a id="model-picker"></a>
 
 <div align="center">
