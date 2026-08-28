@@ -719,8 +719,26 @@ class OpenAIChatProvider(BaseProvider):
         return {}
 
     def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
-        """Return provider-specific Anthropic usage fields for final SSE usage."""
-        return {}
+        """Split standard cached prompt tokens for final Anthropic usage."""
+        prompt_tokens = usage_int(usage_info, "prompt_tokens")
+        cached_tokens = nested_usage_int(
+            usage_info,
+            "prompt_tokens_details",
+            "cached_tokens",
+        )
+        if (
+            prompt_tokens is None
+            or prompt_tokens < 0
+            or cached_tokens is None
+            or cached_tokens < 0
+            or cached_tokens > prompt_tokens
+        ):
+            return {}
+
+        return {
+            "input_tokens": prompt_tokens - cached_tokens,
+            "cache_read_input_tokens": cached_tokens,
+        }
 
     async def _create_stream(
         self,
