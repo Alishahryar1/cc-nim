@@ -12,6 +12,7 @@ import httpx2
 from loguru import logger
 from openai import AsyncOpenAI, DefaultAsyncHttpx2Client
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import (
     ContentBlockToolUse,
@@ -37,6 +38,7 @@ from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesRequest,
     ResponsesChatRequest,
+    ResponsesConversionError,
     build_responses_chat_request,
 )
 from free_claude_code.core.openai_tool_names import (
@@ -648,11 +650,16 @@ class OpenAIChatProvider(BaseProvider):
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> ResponsesChatRequest:
         """Build a Chat body directly from Responses ingress."""
-        translated = build_responses_chat_request(
-            request,
-            reasoning_replay=self._profile.request_policy.reasoning_replay,
-            structured_reasoning_details=self._profile.structured_reasoning_details,
-        )
+        try:
+            translated = build_responses_chat_request(
+                request,
+                reasoning_replay=self._profile.request_policy.reasoning_replay,
+                structured_reasoning_details=(
+                    self._profile.structured_reasoning_details
+                ),
+            )
+        except ResponsesConversionError as exc:
+            raise InvalidRequestError(str(exc)) from exc
         body = translated.body
         apply_openai_chat_body_policy(body, self._profile.request_policy)
         self._profile.apply_reasoning_to_body(body, reasoning)

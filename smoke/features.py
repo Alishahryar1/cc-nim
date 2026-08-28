@@ -222,6 +222,23 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "selected providers missing credentials are failing missing_env",
     ),
     FeatureCoverage(
+        "vision_protocol_matrix",
+        "Direct and tool-result images remain visual across protocol translation",
+        (
+            "tests/contracts/test_protocol_matrix.py",
+            "tests/core/anthropic/test_image_sources.py",
+            "tests/core/openai_responses/test_chat_request.py",
+        ),
+        (),
+        (
+            "test_nvidia_nim_vision_tool_result_e2e",
+            "test_nvidia_nim_vision_function_output_e2e",
+        ),
+        ("nvidia_nim_vision",),
+        ("NVIDIA_NIM_API_KEY", "FCC_SMOKE_MODEL_NVIDIA_NIM_VISION"),
+        "skip unless the dedicated vision target and explicit model are configured",
+    ),
+    FeatureCoverage(
         "per_model_mapping",
         "Fable, Opus, Sonnet, Haiku, and fallback mappings route explicitly",
         ("tests/application/test_routing.py", "tests/config/test_config.py"),

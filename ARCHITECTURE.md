@@ -1117,12 +1117,18 @@ is then coalesced into one turn so strict chat templates receive neither
 and rejects unrepresentable blocks instead of dropping them. Provider policies
 do not reinterpret this role mapping.
 
-User image conversion is a pure protocol operation. Core maps Anthropic base64
-and URL image sources to ordered OpenAI `image_url` content parts without
-fetching remote content. Provider adapters do not gate that conversion behind a
-provider-wide vision flag; the selected upstream model owns image capability,
-while any deliberate provider-specific attachment removal remains explicit
-compatibility policy.
+Image conversion is a pure protocol operation. Core validates and normalizes
+supported Anthropic base64/data-URL and remote URL image sources without
+fetching remote content, then maps them to ordered OpenAI image parts. The same
+rules apply to direct user images and images nested in `tool_result` content.
+Because a Chat Completions `tool` message cannot carry multimodal content, the
+Chat translation closes every parallel tool call first and moves each rich tool
+result, with an explicit call-ID label, into the immediately following ordered
+multimodal user content. Text-only tool results keep the ordinary tool-message
+shape. Provider adapters do not gate image conversion behind a provider-wide
+vision flag; the selected upstream model owns image capability, while any
+deliberate provider-specific attachment removal remains explicit compatibility
+policy.
 
 Shared stream behavior lives under
 [src/free_claude_code/core/anthropic/streaming/](src/free_claude_code/core/anthropic/streaming/). The shared layer owns the
@@ -1221,15 +1227,21 @@ Messages-to-Chat, Messages-to-Responses, and Responses-to-Chat. Native
 Responses-to-Responses is an identity relay, not a fourth translation. FCC does
 not maintain a universal canonical inference schema between these boundaries.
 
-The direct Responses-to-Chat cell preserves text, images, function/custom tool
-identity, call IDs, reasoning replay data, supported request options, and usage,
-then writes one coherent Responses lifecycle from Chat stream semantics. The
-Messages-to-Responses cell preserves the corresponding Anthropic semantics and
-writes Anthropic SSE from Responses events. Native Responses forwarding keeps
-nested request extensions and upstream response/item/call IDs, event order,
-reasoning payloads, and exact usage; it rewrites only FCC-owned routing fields
-such as the public model and enforces stateless streaming. Unsupported
-cross-protocol semantics fail in the owning translator before upstream I/O.
+The direct Responses-to-Chat cell preserves text, direct images,
+function/custom tool identity, call IDs, reasoning replay data, supported
+request options, and usage, then writes one coherent Responses lifecycle from
+Chat stream semantics. Image-bearing `function_call_output` content and
+`computer_call_output` screenshots use the same Chat tool-round rule: required
+tool messages are emitted first, followed by labeled multimodal user content in
+source order. The Messages-to-Responses cell preserves direct and nested
+tool-result images while writing Anthropic SSE from Responses events. Native
+Responses forwarding keeps nested request extensions—including file-ID image
+references—and upstream response/item/call IDs, event order, reasoning
+payloads, and exact usage; it rewrites only FCC-owned routing fields such as the
+public model and enforces stateless streaming. Cross-protocol image references
+that only contain an upstream file ID cannot be represented without fetching
+or storage, so the owning translator rejects them before upstream I/O instead
+of silently dropping the image.
 
 Application-resolved reasoning controls remain on the immutable source request.
 Provider adapters consume the resolved `ReasoningPolicy`; each cross-protocol

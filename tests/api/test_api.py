@@ -3,10 +3,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from free_claude_code.providers.openai_chat import (
+    NO_REASONING,
+    OpenAIChatProfile,
+    OpenAIChatProvider,
+    OpenAIChatRequestPolicy,
+)
 from tests.api.support import create_test_app
+from tests.providers.support import immediate_admission, make_provider_config
 
 app = create_test_app()
 
@@ -170,6 +178,54 @@ def test_create_message_ingress_error_has_request_id_without_terminal_header(
     assert response.status_code == 400
     assert "x-should-retry" not in response.headers
     assert response.json()["request_id"] == response.headers["request-id"]
+
+
+def test_create_message_rejects_unportable_image_as_invalid_request() -> None:
+    with patch(
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI",
+        return_value=MagicMock(),
+    ):
+        provider = OpenAIChatProvider(
+            make_provider_config(
+                api_key="test-key",
+                base_url="https://provider.invalid/v1",
+            ),
+            profile=OpenAIChatProfile(
+                OpenAIChatRequestPolicy(
+                    provider_name="TEST_CHAT",
+                    reasoning_replay=ReasoningReplayMode.DISABLED,
+                ),
+                NO_REASONING,
+            ),
+            admission=immediate_admission(provider_name="TEST_CHAT"),
+        )
+    test_app = create_test_app()
+    with (
+        patch("free_claude_code.api.routes.resolve_provider", return_value=provider),
+        TestClient(test_app) as test_client,
+    ):
+        response = test_client.post(
+            "/v1/messages",
+            json={
+                "model": "nvidia_nim/test-model",
+                "max_tokens": 32,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {"type": "file", "file_id": "file_1"},
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "invalid_request_error"
+    assert "file" in response.json()["error"]["message"]
 
 
 def test_create_message_schema_validation_has_request_id_without_terminal_header(

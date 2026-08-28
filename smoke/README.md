@@ -72,6 +72,7 @@ Heavy/side-effectful targets are opt-in:
 | Target | Product scenarios | Required environment |
 | --- | --- | --- |
 | `nvidia_nim_cli` | Claude Code CLI feature matrix across NIM models | `NVIDIA_NIM_API_KEY`, Claude CLI |
+| `nvidia_nim_vision` | Claude-style image tool result reaches a NIM vision model as pixels | `NVIDIA_NIM_API_KEY`, `FCC_SMOKE_MODEL_NVIDIA_NIM_VISION` |
 | `openrouter_free_cli` | Claude Code CLI feature matrix across OpenRouter free models | `OPENROUTER_API_KEY`, Claude CLI |
 | `telegram` | getMe, send, edit, delete, optional manual inbound | token and chat/user ID |
 | `discord` | channel access, send, edit, delete, optional manual inbound | token and channel ID |
@@ -127,6 +128,24 @@ $env:FCC_SMOKE_TARGETS = "messaging,config,extensibility"
 uv run pytest smoke/product -n 0 -s --tb=short
 ```
 
+NVIDIA NIM vision regression (PowerShell):
+
+```powershell
+$env:FCC_LIVE_SMOKE = "1"
+$env:FCC_SMOKE_TARGETS = "nvidia_nim_vision"
+$env:FCC_SMOKE_MODEL_NVIDIA_NIM_VISION = "meta/llama-3.2-11b-vision-instruct"
+uv run pytest smoke/product/test_nvidia_nim_vision_product_live.py -n 0 -s --tb=short
+```
+
+NVIDIA NIM vision regression (POSIX):
+
+```bash
+FCC_LIVE_SMOKE=1 \
+FCC_SMOKE_TARGETS=nvidia_nim_vision \
+FCC_SMOKE_MODEL_NVIDIA_NIM_VISION=meta/llama-3.2-11b-vision-instruct \
+uv run pytest smoke/product/test_nvidia_nim_vision_product_live.py -n 0 -s --tb=short
+```
+
 ## Environment
 
 - Runtime settings use the isolated managed `~/.fcc/.env`; `FCC_ENV_FILE` is
@@ -139,6 +158,8 @@ uv run pytest smoke/product -n 0 -s --tb=short
   Use the uppercase provider ID, such as `FCC_SMOKE_MODEL_KILO`; the complete
   variable inventory is in [.env.example](../.env.example). Values may include
   the provider prefix or just the model name for that provider.
+- `FCC_SMOKE_MODEL_NVIDIA_NIM_VISION`: required explicit NIM vision model for
+  the opt-in `nvidia_nim_vision` target; it never falls back to the text model.
 - `FCC_SMOKE_MODEL_MISTRAL_REASONING`: optional override for the dedicated
   Mistral native reasoning smoke, default `mistral/mistral-medium-3-5`.
 - `FCC_SMOKE_NIM_MODELS`: optional comma-separated NVIDIA NIM CLI matrix models

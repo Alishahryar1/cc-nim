@@ -113,6 +113,10 @@ def test_nvidia_nim_cli_is_opt_in_smoke_target() -> None:
     assert "openrouter_free_cli" in OPT_IN_TARGETS
     assert "openrouter_free_cli" in ALL_TARGETS
     assert "openrouter_free_cli" in TARGET_REQUIRED_ENV
+    assert "nvidia_nim_vision" not in DEFAULT_TARGETS
+    assert "nvidia_nim_vision" in OPT_IN_TARGETS
+    assert "nvidia_nim_vision" in ALL_TARGETS
+    assert "nvidia_nim_vision" in TARGET_REQUIRED_ENV
 
 
 def test_ollama_provider_configuration_uses_base_url() -> None:
@@ -1048,6 +1052,25 @@ def test_smoke_config_returns_nvidia_nim_cli_provider_models(monkeypatch) -> Non
     assert models[0].provider == "nvidia_nim"
     assert models[0].full_model == f"nvidia_nim/{NVIDIA_NIM_CLI_DEFAULT_MODELS[0]}"
     assert models[0].source == "nvidia_nim_cli_default"
+
+
+def test_smoke_config_requires_explicit_nvidia_nim_vision_model(monkeypatch) -> None:
+    config = _smoke_config()
+    monkeypatch.delenv("FCC_SMOKE_MODEL_NVIDIA_NIM_VISION", raising=False)
+
+    assert config.nvidia_nim_vision_model() is None
+
+    monkeypatch.setenv(
+        "FCC_SMOKE_MODEL_NVIDIA_NIM_VISION",
+        "meta/llama-3.2-11b-vision-instruct",
+    )
+    model = config.nvidia_nim_vision_model()
+
+    assert model == ProviderModel(
+        provider="nvidia_nim",
+        full_model="nvidia_nim/meta/llama-3.2-11b-vision-instruct",
+        source="FCC_SMOKE_MODEL_NVIDIA_NIM_VISION",
+    )
 
 
 def test_openrouter_free_cli_default_models_are_normalized() -> None:

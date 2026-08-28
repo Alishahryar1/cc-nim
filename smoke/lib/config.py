@@ -33,7 +33,9 @@ DEFAULT_TARGETS = frozenset(
     }
 )
 SIDE_EFFECT_TARGETS = frozenset({"discord", "telegram", "voice"})
-OPT_IN_TARGETS = frozenset({"nvidia_nim_cli", "openrouter_free_cli"})
+OPT_IN_TARGETS = frozenset(
+    {"nvidia_nim_cli", "nvidia_nim_vision", "openrouter_free_cli"}
+)
 ALL_TARGETS = DEFAULT_TARGETS | SIDE_EFFECT_TARGETS | OPT_IN_TARGETS
 TARGET_ALIASES = {
     "contract": "api",
@@ -131,6 +133,10 @@ TARGET_REQUIRED_ENV: dict[str, tuple[str, ...]] = {
     "nvidia_nim_cli": (
         "NVIDIA_NIM_API_KEY",
         "FCC_SMOKE_CLAUDE_BIN or claude on PATH",
+    ),
+    "nvidia_nim_vision": (
+        "NVIDIA_NIM_API_KEY",
+        "FCC_SMOKE_MODEL_NVIDIA_NIM_VISION",
     ),
     "openrouter_free_cli": (
         "OPENROUTER_API_KEY",
@@ -242,6 +248,18 @@ class SmokeConfig:
             ProviderModel(provider="nvidia_nim", full_model=full_model, source=source)
             for full_model, source in nvidia_nim_cli_model_refs().items()
         ]
+
+    def nvidia_nim_vision_model(self) -> ProviderModel | None:
+        """Return only an explicitly selected NVIDIA NIM vision model."""
+        override_env = "FCC_SMOKE_MODEL_NVIDIA_NIM_VISION"
+        override = os.getenv(override_env)
+        if override is None:
+            return None
+        return ProviderModel(
+            provider="nvidia_nim",
+            full_model=_normalize_provider_model("nvidia_nim", override),
+            source=override_env,
+        )
 
     def openrouter_free_cli_models(self) -> list[ProviderModel]:
         """Return OpenRouter free models for Claude Code CLI characterization."""
