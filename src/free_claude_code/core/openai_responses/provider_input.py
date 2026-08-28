@@ -18,6 +18,7 @@ from free_claude_code.core.anthropic.tool_results import (
     ToolResultText,
     decompose_tool_result_content,
 )
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.reasoning import ReasoningPolicy
 
@@ -278,7 +279,7 @@ def _user_items(content: Any) -> list[dict[str, Any]]:
             except AnthropicImageSourceError as exc:
                 raise ResponsesConversionError(str(exc)) from exc
             if decomposed.has_images:
-                output: str | list[dict[str, Any]] = []
+                output: str | list[JsonObject] = []
                 for part in decomposed.parts:
                     if isinstance(part, ToolResultText):
                         output.append({"type": "input_text", "text": part.text})

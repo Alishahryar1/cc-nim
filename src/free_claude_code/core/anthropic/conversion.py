@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_chat import (
     IMAGE_TOOL_RESULT_MARKER,
     close_chat_tool_result_turns,
@@ -216,7 +217,7 @@ def _openai_system_text(
     return "\n\n".join(text_parts)
 
 
-def _openai_user_image_part(block: Any) -> dict[str, Any]:
+def _openai_user_image_part(block: Any) -> JsonObject:
     """Convert one Anthropic user image block without performing I/O."""
     try:
         url = portable_anthropic_image_url(get_block_attr(block, "source", {}))
@@ -228,8 +229,8 @@ def _openai_user_image_part(block: Any) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class _OpenAIChatToolResult:
-    tool_message: dict[str, Any]
-    rich_user_message: dict[str, Any] | None = None
+    tool_message: JsonObject
+    rich_user_message: JsonObject | None = None
 
 
 def _openai_chat_tool_result(block: Any) -> _OpenAIChatToolResult:
@@ -250,7 +251,7 @@ def _openai_chat_tool_result(block: Any) -> _OpenAIChatToolResult:
             }
         )
 
-    rich_parts: list[dict[str, Any]] = [
+    rich_parts: list[JsonObject] = [
         {"type": "text", "text": image_tool_result_label(str(tool_id))}
     ]
     for part in decomposed.parts:
