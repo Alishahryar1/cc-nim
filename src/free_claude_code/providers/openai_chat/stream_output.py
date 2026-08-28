@@ -47,6 +47,7 @@ class ChatStreamUsage:
     input_tokens: int
     output_tokens: int
     cached_tokens: int = 0
+    cache_write_tokens: int | None = None
     reasoning_tokens: int = 0
     anthropic_fields: Mapping[str, int] = field(default_factory=dict)
 
@@ -684,11 +685,25 @@ class ResponsesChatStreamOutput(ChatStreamOutput):
 
 
 def _responses_usage(usage: ChatStreamUsage) -> dict[str, object]:
-    cached_tokens = max(0, min(usage.cached_tokens, usage.input_tokens))
+    cached_tokens = usage.cached_tokens
+    if (
+        not isinstance(cached_tokens, int)
+        or isinstance(cached_tokens, bool)
+        or not 0 <= cached_tokens <= usage.input_tokens
+    ):
+        cached_tokens = 0
     reasoning_tokens = max(0, min(usage.reasoning_tokens, usage.output_tokens))
+    input_token_details = {"cached_tokens": cached_tokens}
+    cache_write_tokens = usage.cache_write_tokens
+    if (
+        isinstance(cache_write_tokens, int)
+        and not isinstance(cache_write_tokens, bool)
+        and 0 <= cache_write_tokens <= usage.input_tokens - cached_tokens
+    ):
+        input_token_details["cache_write_tokens"] = cache_write_tokens
     return {
         "input_tokens": usage.input_tokens,
-        "input_tokens_details": {"cached_tokens": cached_tokens},
+        "input_tokens_details": input_token_details,
         "output_tokens": usage.output_tokens,
         "output_tokens_details": {"reasoning_tokens": reasoning_tokens},
         "total_tokens": usage.input_tokens + usage.output_tokens,

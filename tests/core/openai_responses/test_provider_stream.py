@@ -12,6 +12,26 @@ from free_claude_code.core.openai_responses.provider_stream import (
 from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 
 
+def _terminal_usage(usage: dict[str, object]) -> dict[str, object]:
+    stream = ResponsesProviderStream(
+        message_id="msg_test",
+        model="openai/gpt-test",
+        input_tokens=12,
+    )
+    output = stream.start()
+    output.extend(
+        stream.feed(
+            "response.completed",
+            {"response": {"usage": usage}},
+        )
+    )
+    return next(
+        event.data["usage"]
+        for event in parse_sse_text("".join(output))
+        if event.event == "message_delta"
+    )
+
+
 def test_responses_provider_stream_preserves_reasoning_tools_usage_and_ids() -> None:
     stream = ResponsesProviderStream(
         message_id="msg_test",
@@ -95,7 +115,10 @@ def test_responses_provider_stream_preserves_reasoning_tools_usage_and_ids() -> 
                     "usage": {
                         "input_tokens": 20,
                         "output_tokens": 8,
-                        "input_tokens_details": {"cached_tokens": 15},
+                        "input_tokens_details": {
+                            "cached_tokens": 15,
+                            "cache_write_tokens": 3,
+                        },
                     }
                 }
             },
@@ -125,10 +148,101 @@ def test_responses_provider_stream_preserves_reasoning_tools_usage_and_ids() -> 
     assert argument_deltas == ['{"q":', '"x"}']
     message_delta = next(event for event in events if event.event == "message_delta")
     assert message_delta.data["usage"] == {
-        "input_tokens": 5,
+        "input_tokens": 2,
         "output_tokens": 8,
         "cache_read_input_tokens": 15,
+        "cache_creation_input_tokens": 3,
     }
+
+
+@pytest.mark.parametrize(
+    ("details", "expected"),
+    [
+        (
+            {"cached_tokens": 10, "cache_write_tokens": 5},
+            {
+                "input_tokens": 15,
+                "output_tokens": 8,
+                "cache_read_input_tokens": 10,
+                "cache_creation_input_tokens": 5,
+            },
+        ),
+        (
+            {"cached_tokens": 10},
+            {
+                "input_tokens": 20,
+                "output_tokens": 8,
+                "cache_read_input_tokens": 10,
+            },
+        ),
+        (
+            {"cache_write_tokens": 5},
+            {
+                "input_tokens": 25,
+                "output_tokens": 8,
+                "cache_creation_input_tokens": 5,
+            },
+        ),
+        (
+            {"cached_tokens": 0, "cache_write_tokens": 0},
+            {
+                "input_tokens": 30,
+                "output_tokens": 8,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+        ),
+        (
+            {"cached_tokens": 10, "cache_write_tokens": -1},
+            {
+                "input_tokens": 20,
+                "output_tokens": 8,
+                "cache_read_input_tokens": 10,
+            },
+        ),
+        (
+            {"cached_tokens": 10, "cache_write_tokens": 21},
+            {
+                "input_tokens": 20,
+                "output_tokens": 8,
+                "cache_read_input_tokens": 10,
+            },
+        ),
+        (
+            {"cached_tokens": -1, "cache_write_tokens": 5},
+            {
+                "input_tokens": 25,
+                "output_tokens": 8,
+                "cache_creation_input_tokens": 5,
+            },
+        ),
+        ({}, {"input_tokens": 30, "output_tokens": 8}),
+    ],
+    ids=[
+        "read-and-creation",
+        "read-only",
+        "creation-only",
+        "explicit-zeroes",
+        "invalid-creation",
+        "creation-over-remaining-total",
+        "invalid-read-preserves-creation",
+        "no-cache-details",
+    ],
+)
+def test_responses_provider_stream_preserves_trustworthy_cache_partitions(
+    details: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    assert (
+        _terminal_usage(
+            {
+                "input_tokens": 30,
+                "output_tokens": 8,
+                "input_tokens_details": details,
+            }
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize(

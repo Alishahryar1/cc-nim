@@ -140,7 +140,15 @@ def test_native_relay_preserves_payload_and_rewrites_only_response_model() -> No
             "model": "upstream-model",
             "status": "completed",
             "output": [item["item"]],
-            "usage": {"input_tokens": 11, "output_tokens": 4, "total_tokens": 15},
+            "usage": {
+                "input_tokens": 11,
+                "input_tokens_details": {
+                    "cached_tokens": 6,
+                    "cache_write_tokens": 2,
+                },
+                "output_tokens": 4,
+                "total_tokens": 15,
+            },
         },
     }
 
