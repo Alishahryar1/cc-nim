@@ -26,6 +26,7 @@ $HermesInstallUrl = "https://hermes-agent.nousresearch.com/install.ps1"
 $DshVersion = "0.1.0-rc.8"
 $DshPackage = "@deepseek-ai/dsh@$DshVersion"
 $GrokInstallUrl = "https://x.ai/cli/install.ps1"
+$MuseInstallUrl = "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install-muse.ps1"
 $AiderInstallUrl = "https://aider.chat/install.ps1"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
@@ -279,6 +280,7 @@ function Add-KnownBinDirectories {
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         Add-PathEntry (Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin")
         Add-PathEntry (Join-Path $env:LOCALAPPDATA "pi-node\current")
+        Add-PathEntry (Join-Path $env:LOCALAPPDATA "Programs\Muse Code\bin")
     }
     if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
         Add-PathEntry (Join-Path $env:APPDATA "npm")
@@ -850,13 +852,8 @@ function Ensure-Aider {
 
 function Ensure-Muse {
     $script:MuseAvailable = $false
-    $command = Get-ApplicationCommand "muse"
-    if (-not $command) {
-        Write-Host "Muse Code is not installed. Meta does not currently publish an official Windows installer; fcc-muse will be ready when Muse Code is on PATH."
-        return
-    }
-
-    Write-Host "Muse Code already found on PATH; verifying it."
+    Invoke-DownloadedPowerShellInstaller -Url $MuseInstallUrl -Name "Muse Code"
+    Add-KnownBinDirectories
     Confirm-Application -CommandName "muse" -DisplayName "Muse Code"
     $script:MuseAvailable = $true
 }
@@ -1029,7 +1026,7 @@ function Ensure-SelectedCodingAgents {
     }
 
     if ($script:InstallMuse) {
-        Write-Step "Checking for Muse Code"
+        Write-Step "Ensuring Muse Code is installed"
         Ensure-Muse
     }
 

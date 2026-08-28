@@ -1840,6 +1840,20 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "grok-install"
 """,
         encoding="utf-8",
     )
+    (fixtures / "muse-installer.ps1").write_text(
+        r"""if ($env:FAIL_STEP -eq "muse-install") { exit 68 }
+$existing = Get-Command "muse" -CommandType Application -ErrorAction SilentlyContinue
+if ($existing) {
+    Add-Content -LiteralPath $env:CALL_LOG -Value "muse-install:external"
+    return
+}
+$bin = Join-Path $env:LOCALAPPDATA "Programs\Muse Code\bin"
+New-Item -ItemType Directory -Force -Path $bin | Out-Null
+Copy-Item (Join-Path $env:FAKE_FIXTURES "muse-command.cmd") (Join-Path $bin "muse.cmd") -Force
+Add-Content -LiteralPath $env:CALL_LOG -Value "muse-install"
+""",
+        encoding="utf-8",
+    )
     (fixtures / "aider-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "aider-install") { exit 67 }
 $bin = Join-Path $env:USERPROFILE ".local\bin"
@@ -1894,6 +1908,7 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "opencode-download" -and $Uri.Contains("anomalyco/opencode")) -or
         ($env:FAIL_STEP -eq "hermes-download" -and $Uri.Contains("hermes-agent.nousresearch.com")) -or
         ($env:FAIL_STEP -eq "grok-download" -and $Uri.Contains("x.ai/cli")) -or
+        ($env:FAIL_STEP -eq "muse-download" -and $Uri.Contains("scripts/install-muse.ps1")) -or
         ($env:FAIL_STEP -eq "aider-download" -and $Uri.Contains("aider.chat")) -or
         ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
@@ -1914,6 +1929,9 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("x.ai/cli")) {
         $source = Join-Path $env:FAKE_FIXTURES "grok-installer.ps1"
+    }
+    elseif ($Uri.Contains("scripts/install-muse.ps1")) {
+        $source = Join-Path $env:FAKE_FIXTURES "muse-installer.ps1"
     }
     elseif ($Uri.Contains("aider.chat")) {
         $source = Join-Path $env:FAKE_FIXTURES "aider-installer.ps1"
@@ -2023,9 +2041,8 @@ def test_install_ps1_fresh_install_is_verified(
         "dsh:--version"
     )
     assert calls.index("grok-install") < calls.index("grok:--version")
+    assert calls.index("muse-install") < calls.index("muse:--version")
     assert calls.index("aider-install") < calls.index("aider:--version")
-    assert "Muse Code is not installed" in result.stdout
-    assert not any(call.startswith("muse:") for call in calls)
     assert not any("hermes:setup" in call for call in calls)
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
@@ -2094,7 +2111,6 @@ def test_install_ps1_discovers_grok_in_custom_bin_directory(
         ("cline", "npm:install -g cline"),
         ("hermes", "hermes-install:True:True"),
         ("grok", "grok-install"),
-        ("muse", "meta.ai"),
         ("aider", "aider-install"),
     ],
 )
@@ -2114,6 +2130,35 @@ def test_install_ps1_preserves_upstream_managed_harness_without_parsing_version(
     calls = powershell_harness.calls()
     assert f"{client}:--version" in calls
     assert not any(install_call in call for call in calls)
+
+
+def test_install_ps1_delegates_compatible_external_muse_without_adopting_it(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_client("muse")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    calls = powershell_harness.calls()
+    assert "muse-install:external" in calls
+    assert calls.index("muse-install:external") < calls.index("muse:--version")
+    managed_root = (
+        Path(powershell_harness.env["LOCALAPPDATA"]) / "Programs" / "Muse Code"
+    )
+    assert not managed_root.exists()
+
+
+@pytest.mark.parametrize("failure", ["muse-download", "muse-install"])
+def test_install_ps1_stops_when_muse_install_fails(
+    powershell_harness: PowerShellHarness,
+    failure: str,
+) -> None:
+    result = powershell_harness.run(fail_step=failure)
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
 
 
 @pytest.mark.parametrize("failure", ["grok-download", "grok-install"])
@@ -2460,13 +2505,21 @@ def test_install_ps1_preserves_valid_existing_tools(
     powershell_harness.add_client("cline")
     powershell_harness.add_client("hermes")
     powershell_harness.add_client("grok")
+    powershell_harness.add_client("muse")
     powershell_harness.add_client("aider")
     powershell_harness.add_uv(uv_version)
 
     result = powershell_harness.run()
 
     assert result.returncode == 0, result.stderr
-    assert not any(call.startswith("download:") for call in powershell_harness.calls())
+    download_calls = [
+        call for call in powershell_harness.calls() if call.startswith("download:")
+    ]
+    assert download_calls == [
+        "download:https://raw.githubusercontent.com/Alishahryar1/"
+        "free-claude-code/main/scripts/install-muse.ps1"
+    ]
+    assert "muse-install:external" in powershell_harness.calls()
     assert "leaving it unchanged" in result.stdout
 
 
@@ -2770,8 +2823,10 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
     assert "https://dev.meta.ai/install.sh" in shell
     assert "https://aider.chat/install.sh" in shell
     assert "https://aider.chat/install.ps1" in powershell
-    assert "dev.meta.ai" not in powershell
-    assert "muse-code/channels" not in powershell
+    assert (
+        "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/"
+        "main/scripts/install-muse.ps1"
+    ) in powershell
 
 
 def test_install_ps1_uses_x64_python_for_windows_arm_compatibility() -> None:

@@ -269,7 +269,12 @@ and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove those exact desktop
 artifacts, the FCC uv tool, and the managed `~/.fcc/` tree from
 [config/paths.py](src/free_claude_code/config/paths.py); they do not remove
 uv, Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok
-Build, Muse Code, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
+Build, Muse Code, or uv-managed Python runtimes. On native Windows,
+[scripts/install-muse.ps1](scripts/install-muse.ps1) owns only FCC's fixed Muse
+executable, ownership record, and exact user-PATH entry; its independent
+[scripts/uninstall-muse.ps1](scripts/uninstall-muse.ps1) removes only those
+managed assets and is never called by FCC's general uninstaller.
+[scripts/ci.sh](scripts/ci.sh) and
 [scripts/ci.ps1](scripts/ci.ps1) mirror [.github/workflows/tests.yml](.github/workflows/tests.yml)
 for local pre-push verification.
 
@@ -1508,9 +1513,10 @@ installed `fcc-muse` launcher for Muse Code 0.2.1 or newer:
   `x-should-retry: false`. FCC still owns provider retries and ordered model
   fallback inside each repeated request; the launcher does not mutate Muse's
   persistent retry settings.
-- Meta's official installer currently supports macOS, Linux, and WSL. The
-  PowerShell installer verifies an existing compatible Muse binary but does not
-  invent a Windows installation or update path.
+- Meta's official installer supports macOS, Linux, and WSL. On native Windows,
+  FCC's standalone Muse installer selects and verifies Meta's published Windows
+  artifact, then owns its fixed local executable and PATH lifecycle without
+  adopting external Muse installations.
 
 [cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
 Discord and Telegram messaging. Managed task invocations extend the same proxy
