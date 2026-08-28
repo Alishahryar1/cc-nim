@@ -130,6 +130,7 @@ exit 71
 def _posix_uv_command(version: str) -> str:
     return f"""#!/bin/sh
 echo "uv:$*" >> "$CALL_LOG"
+tool_bin=${{UV_TOOL_BIN_DIR:-$FAKE_TOOL_BIN}}
 if [ "${{1:-}}" = "--version" ]; then
     if [ "${{FCC_RUNNING_PHASE:-}}" = "late" ]; then
         : > "$FCC_PROCESS_MARKER"
@@ -146,31 +147,31 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
             if [ "$FAIL_STEP" = "aider-install" ]; then
                 exit 29
             fi
-            mkdir -p "$HOME/.local/bin"
-            cp "$FAKE_FIXTURES/aider-command.sh" "$HOME/.local/bin/aider"
-            chmod +x "$HOME/.local/bin/aider"
+            mkdir -p "$tool_bin"
+            cp "$FAKE_FIXTURES/aider-command.sh" "$tool_bin/aider"
+            chmod +x "$tool_bin/aider"
             exit 0
             ;;
     esac
     if [ "$FAIL_STEP" = "fcc-install" ]; then
         exit 33
     fi
-    mkdir -p "$FAKE_TOOL_BIN"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-server"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-desktop"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-claude"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-pi"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-opencode"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-cline"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-hermes"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-dsh"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-grok"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-muse"
-    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-aider"
+    mkdir -p "$tool_bin"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-server"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-desktop"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-claude"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-pi"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-opencode"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-cline"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-hermes"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-dsh"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-grok"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-muse"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-aider"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
-        cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-codex"
+        cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-codex"
     fi
-    chmod +x "$FAKE_TOOL_BIN"/fcc-*
+    chmod +x "$tool_bin"/fcc-*
     exit 0
 fi
 if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "update-shell" ]; then
@@ -180,7 +181,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "update-shell" ]; then
     exit 0
 fi
 if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "dir" ] && [ "${{3:-}}" = "--bin" ]; then
-    printf '%s\n' "$FAKE_TOOL_BIN"
+    printf '%s\n' "$tool_bin"
     exit 0
 fi
 exit 35
@@ -463,9 +464,18 @@ chmod +x "$HOME/.local/bin/muse"
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
 [ "$FAIL_STEP" = "uv-install" ] && exit 23
-mkdir -p "$HOME/.local/bin"
-cp "$FAKE_FIXTURES/uv-command.sh" "$HOME/.local/bin/uv"
-chmod +x "$HOME/.local/bin/uv"
+if [ -n "${UV_INSTALL_DIR:-}" ]; then
+    uv_bin=$UV_INSTALL_DIR
+elif [ -n "${XDG_BIN_HOME:-}" ]; then
+    uv_bin=$XDG_BIN_HOME
+elif [ -n "${XDG_DATA_HOME:-}" ]; then
+    uv_bin=$XDG_DATA_HOME/../bin
+else
+    uv_bin=$HOME/.local/bin
+fi
+mkdir -p "$uv_bin"
+cp "$FAKE_FIXTURES/uv-command.sh" "$uv_bin/uv"
+chmod +x "$uv_bin/uv"
 """,
     )
     _write_executable(fixtures / "claude-command.sh", _posix_command("claude"))
@@ -754,6 +764,21 @@ def test_install_sh_accepts_aider_as_the_only_selected_agent(
     assert not any("aider.chat/install" in call for call in calls)
     assert "Run Aider with: fcc-aider" in result.stdout
     assert "Select at least one coding agent." not in result.stdout
+
+
+def test_install_sh_discovers_aider_in_custom_uv_tool_bin(
+    posix_harness: PosixHarness,
+) -> None:
+    custom_tool_bin = posix_harness.root / "custom-tool-bin"
+    posix_harness.env["UV_TOOL_BIN_DIR"] = str(custom_tool_bin)
+
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\n")
+
+    assert result.returncode == 0, result.stderr
+    assert (custom_tool_bin / "aider").is_file()
+    calls = posix_harness.calls()
+    assert "uv:tool dir --bin" in calls
+    assert "aider:--version" in calls
 
 
 def test_install_sh_rejects_broken_existing_aider_without_replacing_it(
@@ -1227,6 +1252,23 @@ def test_install_sh_replaces_obsolete_uv(posix_harness: PosixHarness) -> None:
     assert "uv-install" in posix_harness.calls()
 
 
+def test_install_sh_prioritizes_replacement_uv_over_obsolete_cargo_uv(
+    posix_harness: PosixHarness,
+) -> None:
+    home = Path(posix_harness.env["HOME"])
+    cargo_bin = home / ".cargo" / "bin"
+    local_bin = home / ".local" / "bin"
+    _write_executable(cargo_bin / "uv", _posix_uv_command("0.5.9"))
+    local_bin.mkdir(parents=True)
+    posix_harness.env["PATH"] = f"{cargo_bin}:{local_bin}:{posix_harness.env['PATH']}"
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified uv 0.11.28." in result.stdout
+    assert "uv-install" in posix_harness.calls()
+
+
 @pytest.mark.parametrize("version", ("0.11.16-alpha.1", "0.12.0-rc.1"))
 def test_install_sh_replaces_prerelease_uv(
     posix_harness: PosixHarness,
@@ -1280,6 +1322,11 @@ def test_install_sh_stops_without_success_on_each_failure(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
+    calls = posix_harness.calls()
+    if failure == "path-update":
+        failure_index = calls.index("uv:tool update-shell")
+        assert "uv:tool dir --bin" not in calls[failure_index + 1 :]
+
     forbidden = {
         "claude-download": "claude-install",
         "claude-install": "claude:--version",
@@ -1299,11 +1346,10 @@ def test_install_sh_stops_without_success_on_each_failure(
         "uv-install": "uv:--version",
         "uv-verify": "uv:tool install",
         "fcc-install": "uv:tool update-shell",
-        "path-update": "uv:tool dir --bin",
         "fcc-missing": "fcc-server:--version",
     }.get(failure)
     if forbidden is not None:
-        assert not any(forbidden in call for call in posix_harness.calls())
+        assert not any(forbidden in call for call in calls)
 
 
 def test_install_sh_dry_run_never_executes_commands(
@@ -1633,6 +1679,8 @@ exit /b 0
 
 def _batch_uv(version: str) -> str:
     return rf"""@echo off
+set "UV_BIN_DIR=%FAKE_TOOL_BIN%"
+if defined UV_TOOL_BIN_DIR set "UV_BIN_DIR=%UV_TOOL_BIN_DIR%"
 echo uv:%*>>"%CALL_LOG%"
 if "%1"=="--version" goto version
 if "%1"=="tool" if "%2"=="install" goto install
@@ -1647,30 +1695,30 @@ exit /b 0
 :install
 if "%5"=="python3.12" goto install_aider
 if "%FAIL_STEP%"=="fcc-install" exit /b 53
-if not exist "%FAKE_TOOL_BIN%" mkdir "%FAKE_TOOL_BIN%"
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-server.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-desktop.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-claude.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-pi.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-opencode.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-cline.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-hermes.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-dsh.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-grok.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-muse.cmd" >nul
-copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-aider.cmd" >nul
-if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
+if not exist "%UV_BIN_DIR%" mkdir "%UV_BIN_DIR%"
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-server.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-desktop.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-claude.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-pi.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-opencode.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-cline.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-hermes.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-dsh.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-grok.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-muse.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-aider.cmd" >nul
+if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-codex.cmd" >nul
 exit /b 0
 :install_aider
 if "%FAIL_STEP%"=="aider-install" exit /b 57
-if not exist "%USERPROFILE%\.local\bin" mkdir "%USERPROFILE%\.local\bin"
-copy /y "%FAKE_FIXTURES%\aider-command.cmd" "%USERPROFILE%\.local\bin\aider.cmd" >nul
+if not exist "%UV_BIN_DIR%" mkdir "%UV_BIN_DIR%"
+copy /y "%FAKE_FIXTURES%\aider-command.cmd" "%UV_BIN_DIR%\aider.cmd" >nul
 exit /b 0
 :update_shell
 if "%FAIL_STEP%"=="path-update" exit /b 54
 exit /b 0
 :tool_bin
-echo %FAKE_TOOL_BIN%
+echo %UV_BIN_DIR%
 exit /b 0
 """
 
@@ -1886,7 +1934,18 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "muse-install"
     )
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
-$bin = Join-Path $env:USERPROFILE ".local\bin"
+$bin = if ($env:UV_INSTALL_DIR) {
+    $env:UV_INSTALL_DIR
+}
+elseif ($env:XDG_BIN_HOME) {
+    $env:XDG_BIN_HOME
+}
+elseif ($env:XDG_DATA_HOME) {
+    Join-Path $env:XDG_DATA_HOME "..\bin"
+}
+else {
+    Join-Path $env:USERPROFILE ".local\bin"
+}
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 Copy-Item (Join-Path $env:FAKE_FIXTURES "uv-command.cmd") (Join-Path $bin "uv.cmd") -Force
 Add-Content -LiteralPath $env:CALL_LOG -Value "uv-install"
@@ -2211,6 +2270,21 @@ def test_install_ps1_stops_when_aider_install_fails(
     assert calls.index("uv:--version") < calls.index(aider_install)
     assert not any("aider.chat/install" in call for call in calls)
     assert not any("--refresh-package free-claude-code" in call for call in calls)
+
+
+def test_install_ps1_discovers_aider_in_custom_uv_tool_bin(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    custom_tool_bin = powershell_harness.root / "custom-tool-bin"
+    powershell_harness.env["UV_TOOL_BIN_DIR"] = str(custom_tool_bin)
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert (custom_tool_bin / "aider.cmd").is_file()
+    calls = powershell_harness.calls()
+    assert "uv:tool dir --bin" in calls
+    assert "aider:--version" in calls
 
 
 def test_install_ps1_rejects_broken_existing_aider_without_replacing_it(
@@ -2651,6 +2725,20 @@ def test_install_ps1_replaces_obsolete_uv(
     assert "uv-install" in powershell_harness.calls()
 
 
+def test_install_ps1_prioritizes_replacement_uv_from_custom_install_directory(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    custom_install_dir = powershell_harness.root / "custom-uv-bin"
+    powershell_harness.env["UV_INSTALL_DIR"] = str(custom_install_dir)
+    powershell_harness.add_uv("0.5.9")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Verified uv 0.11.28." in result.stdout
+    assert "uv-install" in powershell_harness.calls()
+
+
 @pytest.mark.parametrize("version", ("0.11.16-alpha.1", "0.12.0-rc.1"))
 def test_install_ps1_replaces_prerelease_uv(
     powershell_harness: PowerShellHarness,
@@ -2704,6 +2792,11 @@ def test_install_ps1_stops_without_success_on_each_failure(
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
+    calls = powershell_harness.calls()
+    if failure == "path-update":
+        failure_index = calls.index("uv:tool update-shell")
+        assert "uv:tool dir --bin" not in calls[failure_index + 1 :]
+
     forbidden = {
         "claude-download": "claude-install",
         "claude-install": "claude:--version",
@@ -2723,11 +2816,10 @@ def test_install_ps1_stops_without_success_on_each_failure(
         "uv-install": "uv:--version",
         "uv-verify": "uv:tool install",
         "fcc-install": "uv:tool update-shell",
-        "path-update": "uv:tool dir --bin",
         "fcc-missing": "fcc-server:--version",
     }.get(failure)
     if forbidden is not None:
-        assert not any(forbidden in call for call in powershell_harness.calls())
+        assert not any(forbidden in call for call in calls)
 
 
 def test_install_ps1_dry_run_never_executes_commands(

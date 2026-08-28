@@ -268,6 +268,17 @@ function Add-PathEntry {
     }
 }
 
+function Prioritize-PathEntry {
+    param([string] $PathEntry)
+
+    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+        return
+    }
+
+    $separator = [IO.Path]::PathSeparator
+    $env:Path = "$PathEntry$separator$env:Path"
+}
+
 function Add-KnownBinDirectories {
     if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
         Add-PathEntry (Join-Path $env:USERPROFILE ".local\bin")
@@ -853,8 +864,20 @@ function Install-Aider {
         "aider-chat@latest"
     )
     if (-not $DryRun) {
-        Add-KnownBinDirectories
+        $null = Add-UvToolBinDirectory -UvPath $uvPath
     }
+}
+
+function Add-UvToolBinDirectory {
+    param([string] $UvPath)
+
+    $toolBin = Invoke-Utf8NativeCapture -FilePath $UvPath -Arguments @("tool", "dir", "--bin")
+    if ([string]::IsNullOrWhiteSpace($toolBin)) {
+        throw "uv returned an empty tool bin directory."
+    }
+
+    Add-PathEntry $toolBin
+    return $toolBin
 }
 
 function Ensure-Aider {
@@ -1089,6 +1112,23 @@ function Confirm-Uv {
     Write-Host "Verified uv $version."
 }
 
+function Get-UvInstallBinDirectory {
+    if (-not [string]::IsNullOrWhiteSpace($env:UV_INSTALL_DIR)) {
+        return $env:UV_INSTALL_DIR
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {
+        return $env:XDG_BIN_HOME
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_DATA_HOME)) {
+        return Join-Path $env:XDG_DATA_HOME "..\bin"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        return Join-Path $env:USERPROFILE ".local\bin"
+    }
+
+    throw "Could not determine where the standalone uv installer places uv."
+}
+
 function Ensure-Uv {
     if ($DryRun) {
         if (Get-ApplicationCommand "uv") {
@@ -1117,7 +1157,7 @@ function Ensure-Uv {
     }
 
     Invoke-DownloadedPowerShellInstaller -Url $UvInstallUrl -Name "uv"
-    Add-KnownBinDirectories
+    Prioritize-PathEntry (Get-UvInstallBinDirectory)
     Confirm-Uv
 }
 
@@ -1225,12 +1265,7 @@ function Configure-AndConfirmFreeClaudeCode {
         throw "uv is not available for PATH configuration."
     }
     Invoke-NativeCommand -FilePath $uvCommand.Source -Arguments @("tool", "update-shell")
-    $toolBin = Invoke-Utf8NativeCapture -FilePath $uvCommand.Source -Arguments @("tool", "dir", "--bin")
-    if ([string]::IsNullOrWhiteSpace($toolBin)) {
-        throw "uv returned an empty tool bin directory."
-    }
-
-    Add-PathEntry $toolBin
+    $toolBin = Add-UvToolBinDirectory -UvPath $uvCommand.Source
     $toolBinPath = ([IO.Path]::GetFullPath($toolBin)).TrimEnd(
         [IO.Path]::DirectorySeparatorChar,
         [IO.Path]::AltDirectorySeparatorChar

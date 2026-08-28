@@ -267,6 +267,13 @@ add_path_entry() {
     esac
 }
 
+prioritize_path_entry() {
+    [ -n "$1" ] || return 0
+    PATH="$1:$PATH"
+    export PATH
+    hash -r 2>/dev/null || true
+}
+
 add_known_bin_directories() {
     if [ -n "${XDG_BIN_HOME:-}" ]; then
         add_path_entry "$XDG_BIN_HOME"
@@ -285,6 +292,21 @@ add_known_bin_directories() {
         add_path_entry "$HOME/.grok/bin"
     fi
 
+    export PATH
+    hash -r 2>/dev/null || true
+}
+
+add_uv_tool_bin_directory() {
+    print_command uv tool dir --bin
+    if tool_bin=$(uv tool dir --bin); then
+        :
+    else
+        status=$?
+        fail "Could not determine the uv tool bin directory (exit code $status)."
+    fi
+    [ -n "$tool_bin" ] || fail "uv returned an empty tool bin directory."
+
+    add_path_entry "$tool_bin"
     export PATH
     hash -r 2>/dev/null || true
 }
@@ -890,7 +912,7 @@ ensure_muse() {
 install_aider_cli() {
     run uv tool install --force --python python3.12 --with pip aider-chat@latest
     if [ "$dry_run" -eq 0 ]; then
-        add_known_bin_directories
+        add_uv_tool_bin_directory
     fi
 }
 
@@ -1025,6 +1047,20 @@ verify_uv() {
     printf 'Verified uv %s.\n' "$version"
 }
 
+uv_install_bin_directory() {
+    if [ -n "${UV_INSTALL_DIR:-}" ]; then
+        printf '%s\n' "$UV_INSTALL_DIR"
+    elif [ -n "${XDG_BIN_HOME:-}" ]; then
+        printf '%s\n' "$XDG_BIN_HOME"
+    elif [ -n "${XDG_DATA_HOME:-}" ]; then
+        printf '%s/../bin\n' "$XDG_DATA_HOME"
+    elif [ -n "${HOME:-}" ]; then
+        printf '%s/.local/bin\n' "$HOME"
+    else
+        fail "Could not determine where the standalone uv installer places uv."
+    fi
+}
+
 ensure_uv() {
     if [ "$dry_run" -eq 1 ]; then
         if command -v uv >/dev/null 2>&1; then
@@ -1050,7 +1086,7 @@ ensure_uv() {
     fi
 
     download_and_run "$UV_INSTALL_URL" sh "uv"
-    add_known_bin_directories
+    prioritize_path_entry "$(uv_install_bin_directory)"
     verify_uv
 }
 
@@ -1147,18 +1183,7 @@ configure_and_verify_free_claude_code() {
         return 0
     fi
 
-    print_command uv tool dir --bin
-    if tool_bin=$(uv tool dir --bin); then
-        :
-    else
-        status=$?
-        fail "Could not determine the uv tool bin directory (exit code $status)."
-    fi
-    [ -n "$tool_bin" ] || fail "uv returned an empty tool bin directory."
-
-    add_path_entry "$tool_bin"
-    export PATH
-    hash -r 2>/dev/null || true
+    add_uv_tool_bin_directory
 
     for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-aider; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
