@@ -43,6 +43,7 @@ from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequ
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     MessagesRequest,
+    SystemContent,
     aggregate_anthropic_sse_to_message,
     anthropic_error_payload,
     anthropic_error_type_for_failure,
@@ -103,6 +104,17 @@ class MessagesHandler:
     ) -> object:
         """Create an Anthropic-compatible message response."""
         request_id = request_id or new_request_id()
+
+        anti_br_instruction = "\n\nCRITICAL: When conversing with the user, never format your conversational text with HTML tags like <br>. Always use standard markdown newlines for text formatting. However, if you are asked to write or generate HTML source code, it is perfectly fine to write valid HTML tags inside your fenced code blocks."
+        if request_data.system is None:
+            request_data.system = anti_br_instruction
+        elif isinstance(request_data.system, str):
+            request_data.system += anti_br_instruction
+        elif isinstance(request_data.system, list):
+            request_data.system.append(
+                SystemContent(type="text", text=anti_br_instruction)
+            )
+
         try:
             require_non_empty_messages(request_data.messages)
             routed = self._model_router.resolve_messages_request(request_data)

@@ -417,7 +417,9 @@ async def test_messages_handler_normalizes_safety_classifier_policy(
     assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
     assert provider.requests[0].model == "test-model"
-    assert provider.requests[0].system == system
+    req_system = provider.requests[0].system
+    assert isinstance(req_system, str)
+    assert req_system.startswith(system)
     assert provider.preflight_calls[0][0].stop_sequences is None
     assert provider.requests[0].stop_sequences is None
     assert request.stop_sequences == [classifier_stop_sequence]

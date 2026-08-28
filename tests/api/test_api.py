@@ -261,7 +261,7 @@ def test_create_message_preserves_system_role_messages(client: TestClient):
         "user",
     ]
     assert routed_request.messages[1].content == "system prompt"
-    assert routed_request.system is None
+    assert routed_request.system.startswith("\n\nCRITICAL:")
 
 
 def test_model_mapping(client: TestClient):
