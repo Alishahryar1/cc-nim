@@ -585,6 +585,22 @@ Run `fcc-server --version` to check the installed version without starting FCC.
 
 Re-run the matching command from [Install Or Update](#install).
 
+### Muse Code on native Windows
+
+Rerunning FCC's Windows installer with Muse Code selected installs or updates FCC's managed Muse executable. To install or update only Muse Code:
+
+```powershell
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install-muse.ps1")))
+```
+
+To remove only that managed Muse executable while preserving Muse data and other installations:
+
+```powershell
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall-muse.ps1")))
+```
+
+FCC's ordinary uninstaller below continues to leave Muse Code installed.
+
 ### Uninstall
 
 Stop every running FCC command before uninstalling.
