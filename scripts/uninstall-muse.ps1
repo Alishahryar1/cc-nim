@@ -225,12 +225,18 @@ function Invoke-MuseUninstaller {
 
     if (Test-Path -LiteralPath $paths.Bin -PathType Container) {
         $residue = @(Get-ChildItem -LiteralPath $paths.Bin -Force -File | Where-Object {
-            $_.Name -like ".muse-*.staging.exe" -or
-            $_.Name -like ".muse-*.backup.exe"
+            $_.Name -cmatch '^\.muse-[0-9a-f]{32}\.(?:staging|backup)\.exe$'
         })
         foreach ($file in $residue) {
             Remove-Item -LiteralPath $file.FullName -Force
         }
+    }
+
+    $recordResidue = @(Get-ChildItem -LiteralPath $paths.Root -Force -File | Where-Object {
+        $_.Name -cmatch '^\.fcc-muse-install\.json\.[0-9a-f]{32}\.(?:tmp|backup)$'
+    })
+    foreach ($file in $recordResidue) {
+        Remove-Item -LiteralPath $file.FullName -Force
     }
 
     if (Test-Path -LiteralPath $paths.Executable -PathType Leaf) {

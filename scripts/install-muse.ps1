@@ -805,6 +805,13 @@ function Invoke-MuseInstaller {
         return
     }
 
+    if (
+        (Test-Path -LiteralPath $paths.Root) -and
+        (-not (Test-Path -LiteralPath $paths.Root -PathType Container))
+    ) {
+        throw "The managed Muse Code install path exists but is not owned by FCC: '$($paths.Root)'. Move or remove it, then rerun the installer."
+    }
+
     $record = Read-MuseOwnershipRecord -RecordPath $paths.Record
     if ($null -eq $record) {
         if (

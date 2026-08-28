@@ -351,8 +351,13 @@ def _run_installer_lifecycle(
     external_compatible: bool = True,
     publish_failure: bool = False,
     dry_run: bool = False,
+    install_root_is_file: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     local_app_data = tmp_path / "local-app-data"
+    if install_root_is_file:
+        root, _, _ = _managed_paths(local_app_data)
+        root.parent.mkdir(parents=True)
+        root.write_bytes(b"unowned file")
     source_artifact = tmp_path / "official-muse.exe"
     source_artifact.write_bytes(payload)
     call_log = tmp_path / "calls.log"
@@ -458,6 +463,25 @@ def test_muse_installer_rejects_conflicting_external_command_before_fetch(
     assert r"C:\Unrelated\muse.exe" in result.stderr
     assert "conflict" in result.stderr.lower()
     assert not local_app_data.exists()
+    assert not call_log.exists()
+
+
+@pytest.mark.parametrize("powershell", POWERSHELLS)
+def test_muse_installer_rejects_file_at_managed_root_before_fetch(
+    tmp_path: Path, powershell: str
+) -> None:
+    result, local_app_data, call_log = _run_installer_lifecycle(
+        tmp_path,
+        powershell,
+        install_root_is_file=True,
+    )
+    root, executable, record_path = _managed_paths(local_app_data)
+
+    assert result.returncode != 0
+    assert "not owned by FCC" in result.stderr
+    assert root.read_bytes() == b"unowned file"
+    assert not executable.exists()
+    assert not record_path.exists()
     assert not call_log.exists()
 
 
@@ -759,10 +783,18 @@ def _create_managed_install(
         json.dumps(record or _owner_record(payload)),
         encoding="utf-8",
     )
-    (executable.parent / ".muse-old.staging.exe").write_bytes(b"staging")
-    (executable.parent / ".muse-old.backup.exe").write_bytes(b"backup")
+    residue_id = "0123456789abcdef0123456789abcdef"
+    (executable.parent / f".muse-{residue_id}.staging.exe").write_bytes(b"staging")
+    (executable.parent / f".muse-{residue_id}.backup.exe").write_bytes(b"backup")
+    (root / f".fcc-muse-install.json.{residue_id}.tmp").write_bytes(b"temporary")
+    (root / f".fcc-muse-install.json.{residue_id}.backup").write_bytes(b"backup")
     if unknown_file:
+        near_match_id = "fedcba9876543210fedcba9876543210"
         (root / "keep.txt").write_text("not installer owned", encoding="utf-8")
+        (executable.parent / ".muse-user-notes.staging.exe").write_bytes(b"keep")
+        (executable.parent / f".MUSE-{near_match_id}.backup.exe").write_bytes(b"keep")
+        (root / ".fcc-muse-install.json.user.tmp").write_bytes(b"keep")
+        (root / f".FCC-MUSE-INSTALL.JSON.{near_match_id}.backup").write_bytes(b"keep")
     return root, executable, record_path
 
 
@@ -807,6 +839,14 @@ def test_muse_uninstaller_preserves_unknown_files_and_nonempty_root(
     assert not executable.exists()
     assert not record_path.exists()
     assert (root / "keep.txt").read_text(encoding="utf-8") == "not installer owned"
+    assert (root / "bin" / ".muse-user-notes.staging.exe").read_bytes() == b"keep"
+    assert (
+        root / "bin" / ".MUSE-fedcba9876543210fedcba9876543210.backup.exe"
+    ).read_bytes() == b"keep"
+    assert (root / ".fcc-muse-install.json.user.tmp").read_bytes() == b"keep"
+    assert (
+        root / ".FCC-MUSE-INSTALL.JSON.fedcba9876543210fedcba9876543210.backup"
+    ).read_bytes() == b"keep"
     assert "unknown files" in result.stdout.lower()
 
 
@@ -875,7 +915,7 @@ def test_muse_uninstaller_dry_run_is_non_mutating(
     assert "Dry run" in result.stdout
     assert executable.exists()
     assert record_path.exists()
-    assert (managed_bin / ".muse-old.staging.exe").exists()
+    assert (managed_bin / ".muse-0123456789abcdef0123456789abcdef.staging.exe").exists()
     state = json.loads(result.stdout.splitlines()[-1])
     assert str(managed_bin) in state["UserPath"]
     assert str(managed_bin) in state["ProcessPath"]
