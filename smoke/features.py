@@ -195,7 +195,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         ("test_probe_and_models_routes",),
         ("test_grok_cli_headless_e2e",),
         ("clients",),
-        ("stable Grok Build 1.0.5+",),
+        ("Grok Build 1.0.5+",),
         "skip only when Grok Build is absent; the local fake upstream must pass",
     ),
     FeatureCoverage(
