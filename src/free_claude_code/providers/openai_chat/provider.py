@@ -718,14 +718,18 @@ class OpenAIChatProvider(BaseProvider):
         """Return provider-specific per-tool argument aliases for this request."""
         return {}
 
-    def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
-        """Split standard cached prompt tokens for final Anthropic usage."""
-        prompt_tokens = usage_int(usage_info, "prompt_tokens")
-        cached_tokens = nested_usage_int(
+    def _cached_input_tokens(self, usage_info: object) -> int | None:
+        """Return the provider's cached-input count from final Chat usage."""
+        return nested_usage_int(
             usage_info,
             "prompt_tokens_details",
             "cached_tokens",
         )
+
+    def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
+        """Split standard cached prompt tokens for final Anthropic usage."""
+        prompt_tokens = usage_int(usage_info, "prompt_tokens")
+        cached_tokens = self._cached_input_tokens(usage_info)
         if (
             prompt_tokens is None
             or prompt_tokens < 0
@@ -1098,14 +1102,8 @@ class _OpenAIChatStreamRunner:
         usage = ChatStreamUsage(
             input_tokens=completion.input_tokens,
             output_tokens=completion.output_tokens,
-            cached_tokens=(
-                nested_usage_int(
-                    assembler.usage_info,
-                    "prompt_tokens_details",
-                    "cached_tokens",
-                )
-                or 0
-            ),
+            cached_tokens=self._provider._cached_input_tokens(assembler.usage_info)
+            or 0,
             reasoning_tokens=(
                 nested_usage_int(
                     assembler.usage_info,
