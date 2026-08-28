@@ -339,6 +339,13 @@ esac
 """,
     )
     _write_executable(
+        bin_dir / "getent",
+        """#!/bin/sh
+[ "${1:-}" = "passwd" ] || exit 61
+printf 'fcc-test:x:1000:1000::%s:/bin/sh\n' "$FAKE_INFERRED_HOME"
+""",
+    )
+    _write_executable(
         bin_dir / "curl",
         """#!/bin/sh
 url=""
@@ -464,19 +471,31 @@ chmod +x "$HOME/.local/bin/muse"
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
 [ "$FAIL_STEP" = "uv-install" ] && exit 23
-if [ -n "${UV_UNMANAGED_INSTALL:-}" ]; then
-    uv_bin=$UV_UNMANAGED_INSTALL
-elif [ -n "${UV_INSTALL_DIR:-}" ]; then
-    uv_bin=$UV_INSTALL_DIR
-    if [ "$UV_INSTALL_DIR" = "${CARGO_HOME:-$HOME/.cargo}" ]; then
-        uv_bin=$UV_INSTALL_DIR/bin
+inferred_home=${HOME:-}
+if [ -z "$inferred_home" ]; then
+    if [ -n "${USER:-}" ]; then
+        inferred_home=$(getent passwd "$USER" | cut -d: -f6)
+    else
+        inferred_home=$(getent passwd "$(id -un)" | cut -d: -f6)
+    fi
+fi
+force_install_dir=""
+if [ -n "${UV_INSTALL_DIR:-}" ]; then
+    force_install_dir=$UV_INSTALL_DIR
+elif [ -n "${UV_UNMANAGED_INSTALL:-}" ]; then
+    force_install_dir=$UV_UNMANAGED_INSTALL
+fi
+if [ -n "$force_install_dir" ]; then
+    uv_bin=$force_install_dir
+    if [ "$force_install_dir" = "${CARGO_HOME:-$inferred_home/.cargo}" ]; then
+        uv_bin=$force_install_dir/bin
     fi
 elif [ -n "${XDG_BIN_HOME:-}" ]; then
     uv_bin=$XDG_BIN_HOME
 elif [ -n "${XDG_DATA_HOME:-}" ]; then
     uv_bin=$XDG_DATA_HOME/../bin
 else
-    uv_bin=$HOME/.local/bin
+    uv_bin=$inferred_home/.local/bin
 fi
 mkdir -p "$uv_bin"
 cp "$FAKE_FIXTURES/uv-command.sh" "$uv_bin/uv"
@@ -555,16 +574,23 @@ printf '%s  %s\n' "$checksum" "$1"
             "CALL_LOG": str(log),
             "FAKE_FIXTURES": str(fixtures),
             "FAKE_TOOL_BIN": str(tool_bin),
+            "FAKE_INFERRED_HOME": str(home),
             "FCC_PROCESS_MARKER": str(tmp_path / "fcc-process-ready"),
             "FCC_RUNNING_COMMAND": "",
             "FCC_RUNNING_PHASE": "early",
             "FAKE_UNAME": "Linux",
             "FAKE_NPM_PREFIX": str(npm_prefix),
+            "USER": "fcc-test",
             "CLAUDE_CONFIG_DIR": "",
             "FAIL_STEP": "",
         }
     )
     env.pop("XDG_BIN_HOME", None)
+    env.pop("XDG_DATA_HOME", None)
+    env.pop("UV_INSTALL_DIR", None)
+    env.pop("UV_UNMANAGED_INSTALL", None)
+    env.pop("UV_TOOL_BIN_DIR", None)
+    env.pop("CARGO_HOME", None)
     env.pop("GROK_BIN_DIR", None)
     return PosixHarness(tmp_path, bin_dir, fixtures, tool_bin, log, env)
 
@@ -1302,14 +1328,16 @@ def test_install_sh_prioritizes_replacement_uv_over_obsolete_cargo_uv(
     assert "uv-install" in posix_harness.calls()
 
 
-def test_install_sh_prioritizes_cargo_home_uv_install_layout(
+@pytest.mark.parametrize("install_variable", ("UV_INSTALL_DIR", "UV_UNMANAGED_INSTALL"))
+def test_install_sh_prioritizes_forced_cargo_home_uv_install_layout(
     posix_harness: PosixHarness,
+    install_variable: str,
 ) -> None:
     home = Path(posix_harness.env["HOME"])
     cargo_home = home / ".cargo"
     cargo_bin = cargo_home / "bin"
     posix_harness.env["CARGO_HOME"] = str(cargo_home)
-    posix_harness.env["UV_INSTALL_DIR"] = str(cargo_home)
+    posix_harness.env[install_variable] = str(cargo_home)
     posix_harness.env["PATH"] = f"{posix_harness.env['PATH']}:{cargo_bin}"
     posix_harness.add_uv("0.5.9")
 
@@ -1318,6 +1346,22 @@ def test_install_sh_prioritizes_cargo_home_uv_install_layout(
     assert result.returncode == 0, result.stderr
     assert "Verified uv 0.11.28." in result.stdout
     assert "uv-install" in posix_harness.calls()
+
+
+def test_install_sh_uv_install_dir_takes_precedence_over_unmanaged_install(
+    posix_harness: PosixHarness,
+) -> None:
+    install_bin = posix_harness.root / "uv-install-bin"
+    unmanaged_bin = posix_harness.root / "unmanaged-uv-bin"
+    posix_harness.env["UV_INSTALL_DIR"] = str(install_bin)
+    posix_harness.env["UV_UNMANAGED_INSTALL"] = str(unmanaged_bin)
+    posix_harness.add_uv("0.5.9")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert (install_bin / "uv").is_file()
+    assert not (unmanaged_bin / "uv").exists()
 
 
 def test_install_sh_prioritizes_replacement_uv_from_unmanaged_install_directory(
@@ -1332,6 +1376,24 @@ def test_install_sh_prioritizes_replacement_uv_from_unmanaged_install_directory(
     assert result.returncode == 0, result.stderr
     assert "Verified uv 0.11.28." in result.stdout
     assert "uv-install" in posix_harness.calls()
+
+
+@pytest.mark.parametrize("cargo_layout", (False, True), ids=("default", "cargo-home"))
+def test_install_sh_infers_home_for_replacement_uv(
+    posix_harness: PosixHarness,
+    cargo_layout: bool,
+) -> None:
+    inferred_home = Path(posix_harness.env["FAKE_INFERRED_HOME"])
+    posix_harness.env.pop("HOME")
+    if cargo_layout:
+        posix_harness.env["UV_INSTALL_DIR"] = str(inferred_home / ".cargo")
+
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\n")
+
+    assert result.returncode == 0, result.stderr
+    relative_uv = Path(".cargo/bin/uv") if cargo_layout else Path(".local/bin/uv")
+    assert (inferred_home / relative_uv).is_file()
+    assert "Verified uv 0.11.28." in result.stdout
 
 
 @pytest.mark.parametrize("version", ("0.11.16-alpha.1", "0.12.0-rc.1"))
@@ -1999,15 +2061,21 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "muse-install"
     )
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
-$bin = if ($env:UV_UNMANAGED_INSTALL) {
+$forceInstallDir = if ($env:UV_INSTALL_DIR) {
+    $env:UV_INSTALL_DIR
+}
+elseif ($env:UV_UNMANAGED_INSTALL) {
     $env:UV_UNMANAGED_INSTALL
 }
-elseif ($env:UV_INSTALL_DIR) {
-    if ($env:UV_INSTALL_DIR -eq $(if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" })) {
-        Join-Path $env:UV_INSTALL_DIR "bin"
+else {
+    $null
+}
+$bin = if ($forceInstallDir) {
+    if ($forceInstallDir -eq $(if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" })) {
+        Join-Path $forceInstallDir "bin"
     }
     else {
-        $env:UV_INSTALL_DIR
+        $forceInstallDir
     }
 }
 elseif ($env:XDG_BIN_HOME) {
@@ -2164,6 +2232,12 @@ $installer = [scriptblock]::Create($installerSource)
             "FAIL_STEP": "",
         }
     )
+    env.pop("XDG_BIN_HOME", None)
+    env.pop("XDG_DATA_HOME", None)
+    env.pop("UV_INSTALL_DIR", None)
+    env.pop("UV_UNMANAGED_INSTALL", None)
+    env.pop("UV_TOOL_BIN_DIR", None)
+    env.pop("CARGO_HOME", None)
     env.pop("GROK_BIN_DIR", None)
     return PowerShellHarness(
         tmp_path, bin_dir, fixtures, tool_bin, log, env, powershell, wrapper
@@ -2839,13 +2913,15 @@ def test_install_ps1_prioritizes_replacement_uv_from_custom_install_directory(
     assert "uv-install" in powershell_harness.calls()
 
 
-def test_install_ps1_prioritizes_cargo_home_uv_install_layout(
+@pytest.mark.parametrize("install_variable", ("UV_INSTALL_DIR", "UV_UNMANAGED_INSTALL"))
+def test_install_ps1_prioritizes_forced_cargo_home_uv_install_layout(
     powershell_harness: PowerShellHarness,
+    install_variable: str,
 ) -> None:
     cargo_home = Path(powershell_harness.env["USERPROFILE"]) / ".cargo"
     cargo_bin = cargo_home / "bin"
     powershell_harness.env["CARGO_HOME"] = str(cargo_home)
-    powershell_harness.env["UV_INSTALL_DIR"] = str(cargo_home)
+    powershell_harness.env[install_variable] = str(cargo_home)
     powershell_harness.env["PATH"] = (
         f"{powershell_harness.env['PATH']}{os.pathsep}{cargo_bin}"
     )
@@ -2856,6 +2932,22 @@ def test_install_ps1_prioritizes_cargo_home_uv_install_layout(
     assert result.returncode == 0, result.stderr
     assert "Verified uv 0.11.28." in result.stdout
     assert "uv-install" in powershell_harness.calls()
+
+
+def test_install_ps1_uv_install_dir_takes_precedence_over_unmanaged_install(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    install_bin = powershell_harness.root / "uv-install-bin"
+    unmanaged_bin = powershell_harness.root / "unmanaged-uv-bin"
+    powershell_harness.env["UV_INSTALL_DIR"] = str(install_bin)
+    powershell_harness.env["UV_UNMANAGED_INSTALL"] = str(unmanaged_bin)
+    powershell_harness.add_uv("0.5.9")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert (install_bin / "uv.cmd").is_file()
+    assert not (unmanaged_bin / "uv.cmd").exists()
 
 
 def test_install_ps1_prioritizes_replacement_uv_from_unmanaged_install_directory(

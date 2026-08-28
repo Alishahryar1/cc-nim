@@ -1048,24 +1048,45 @@ verify_uv() {
     printf 'Verified uv %s.\n' "$version"
 }
 
+uv_installer_home_directory() {
+    if [ -n "${HOME:-}" ]; then
+        printf '%s\n' "$HOME"
+        return 0
+    fi
+
+    if [ -n "${USER:-}" ]; then
+        user_name=$USER
+    else
+        user_name=$(id -un) || fail "Could not determine the current user for uv installation."
+    fi
+    home_directory=$(getent passwd "$user_name" | cut -d: -f6)
+    [ -n "$home_directory" ] || fail "Could not determine the home directory for uv installation."
+    printf '%s\n' "$home_directory"
+}
+
 uv_install_bin_directory() {
-    if [ -n "${UV_UNMANAGED_INSTALL:-}" ]; then
-        printf '%s\n' "$UV_UNMANAGED_INSTALL"
-    elif [ -n "${UV_INSTALL_DIR:-}" ]; then
-        cargo_home=${CARGO_HOME:-${HOME:-}/.cargo}
-        if [ "$UV_INSTALL_DIR" = "$cargo_home" ]; then
-            printf '%s/bin\n' "$UV_INSTALL_DIR"
+    force_install_directory=""
+    if [ -n "${UV_INSTALL_DIR:-}" ]; then
+        force_install_directory=$UV_INSTALL_DIR
+    elif [ -n "${UV_UNMANAGED_INSTALL:-}" ]; then
+        force_install_directory=$UV_UNMANAGED_INSTALL
+    fi
+
+    if [ -n "$force_install_directory" ]; then
+        inferred_home=$(uv_installer_home_directory)
+        cargo_home=${CARGO_HOME:-$inferred_home/.cargo}
+        if [ "$force_install_directory" = "$cargo_home" ]; then
+            printf '%s/bin\n' "$force_install_directory"
         else
-            printf '%s\n' "$UV_INSTALL_DIR"
+            printf '%s\n' "$force_install_directory"
         fi
     elif [ -n "${XDG_BIN_HOME:-}" ]; then
         printf '%s\n' "$XDG_BIN_HOME"
     elif [ -n "${XDG_DATA_HOME:-}" ]; then
         printf '%s/../bin\n' "$XDG_DATA_HOME"
-    elif [ -n "${HOME:-}" ]; then
-        printf '%s/.local/bin\n' "$HOME"
     else
-        fail "Could not determine where the standalone uv installer places uv."
+        inferred_home=$(uv_installer_home_directory)
+        printf '%s/.local/bin\n' "$inferred_home"
     fi
 }
 
@@ -1094,7 +1115,8 @@ ensure_uv() {
     fi
 
     download_and_run "$UV_INSTALL_URL" sh "uv"
-    prioritize_path_entry "$(uv_install_bin_directory)"
+    uv_bin=$(uv_install_bin_directory) || return $?
+    prioritize_path_entry "$uv_bin"
     verify_uv
 }
 

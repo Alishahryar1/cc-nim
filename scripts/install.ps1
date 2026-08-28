@@ -1119,10 +1119,17 @@ function Confirm-Uv {
 }
 
 function Get-UvInstallBinDirectory {
-    if (-not [string]::IsNullOrWhiteSpace($env:UV_UNMANAGED_INSTALL)) {
-        return $env:UV_UNMANAGED_INSTALL
+    $forceInstallDirectory = if (-not [string]::IsNullOrWhiteSpace($env:UV_INSTALL_DIR)) {
+        $env:UV_INSTALL_DIR
     }
-    if (-not [string]::IsNullOrWhiteSpace($env:UV_INSTALL_DIR)) {
+    elseif (-not [string]::IsNullOrWhiteSpace($env:UV_UNMANAGED_INSTALL)) {
+        $env:UV_UNMANAGED_INSTALL
+    }
+    else {
+        $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($forceInstallDirectory)) {
         $cargoHome = if (-not [string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
             $env:CARGO_HOME
         }
@@ -1132,10 +1139,10 @@ function Get-UvInstallBinDirectory {
         else {
             $null
         }
-        if ($cargoHome -and $env:UV_INSTALL_DIR.Replace("\\", "\") -eq $cargoHome) {
-            return Join-Path $env:UV_INSTALL_DIR "bin"
+        if ($cargoHome -and $forceInstallDirectory.Replace("\\", "\") -eq $cargoHome) {
+            return Join-Path $forceInstallDirectory "bin"
         }
-        return $env:UV_INSTALL_DIR
+        return $forceInstallDirectory
     }
     if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {
         return $env:XDG_BIN_HOME
