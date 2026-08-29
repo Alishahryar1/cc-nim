@@ -1,18 +1,26 @@
 """pystray adapter for the Windows tray, macOS menu bar, and Linux status area."""
 
 from io import BytesIO
+from typing import TYPE_CHECKING
 
 from PIL import Image
-from pystray import Icon, Menu, MenuItem
 
 from free_claude_code.cli.desktop import DesktopController, launch_desktop
 from free_claude_code.cli.desktop_assets import app_icon_bytes
+
+if TYPE_CHECKING:
+    from pystray import Icon, MenuItem
 
 
 class PystrayDesktopTray:
     """Render desktop lifecycle actions through the native status area."""
 
     def __init__(self, controller: DesktopController) -> None:
+        # Imported here, not at module scope: pystray resolves an X11 display
+        # during import and crashes headless environments that only ever want
+        # the console fallback this module's probe supports.
+        from pystray import Icon, Menu, MenuItem
+
         self._controller = controller
         self._icon = Icon(
             "free-claude-code",
@@ -91,6 +99,8 @@ def tray_is_available() -> tuple[bool, str]:
     except Exception as exc:
         return False, f"tray icon artwork failed to load: {exc}"
     try:
+        from pystray import Icon
+
         Icon("free-claude-code", image, "Free Claude Code")
     except Exception as exc:
         if isinstance(exc, ImportError):

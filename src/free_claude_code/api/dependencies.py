@@ -13,28 +13,6 @@ from free_claude_code.config.settings import Settings
 from .ports import ApiServices
 
 
-def _extract_proxy_token(request: Request) -> str | None:
-    """Token from an ``Authorization: Bearer`` header, else ``x-api-key``.
-
-    Anthropic-native clients (including Claude Desktop's inference gateway)
-    authenticate with ``x-api-key``, so it is accepted as an equal scheme.
-    A malformed Authorization header wins and yields nothing; without one,
-    the ``x-api-key`` value is used as-is.
-    """
-
-    authorization = request.headers.get("authorization")
-    if authorization is not None:
-        parts = authorization.strip().split(maxsplit=1)
-        if len(parts) == 2 and parts[0].casefold() == "bearer":
-            token = parts[1].strip()
-            return token or None
-        return None
-    api_key = request.headers.get("x-api-key")
-    if api_key is None:
-        return None
-    return api_key.strip() or None
-
-
 def get_services(request: Request) -> ApiServices:
     """Return the complete services supplied when the app was constructed."""
     return request.app.state.services
@@ -74,27 +52,7 @@ def require_proxy_auth(
     if not settings.proxy_auth_enabled:
         return
 
-    token = _extract_proxy_token(request)
-    if token is None:
-        # A present-but-malformed Authorization header is a bad credential,
-        # not a missing one; with no Authorization at all it's just missing.
-        raise HTTPException(
-            status_code=401,
-            detail=(
-                "Invalid proxy authentication token"
-                if request.headers.get("authorization")
-                else "Missing proxy authentication token"
-            ),
-        )
-
-    if not secrets.compare_digest(
-        token.encode("utf-8"),
-        settings.proxy_auth_token.encode("utf-8"),
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid proxy authentication token",
-        )
+    _validate_proxy_credential(request, settings.proxy_auth_token)
 
 
 def require_anthropic_proxy_auth(
@@ -105,18 +63,32 @@ def require_anthropic_proxy_auth(
     if not settings.proxy_auth_enabled:
         return
 
+    _validate_proxy_credential(request, settings.proxy_auth_token)
+
+
+def _validate_proxy_credential(request: Request, configured_token: str) -> None:
+    """Raise 401 unless the request carries the configured proxy token.
+
+    A present ``Authorization`` header is authoritative: it must be a
+    ``Bearer <token>`` value matching the configured token, so a malformed
+    or mismatched value is rejected as an invalid credential without any
+    fallback to ``x-api-key``. With no ``Authorization`` header, the
+    ``x-api-key`` value is accepted as an equal scheme. Only when neither
+    header is present is the credential reported missing.
+    """
+
     authorization = request.headers.get("authorization")
     if authorization is not None:
-        if _proxy_token_matches(
+        if not _proxy_token_matches(
             authorization,
-            settings.proxy_auth_token,
+            configured_token,
             require_bearer=True,
         ):
-            return
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid proxy authentication token",
-        )
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid proxy authentication token",
+            )
+        return
 
     x_api_key = request.headers.get("x-api-key")
     if x_api_key is None:
@@ -127,7 +99,7 @@ def require_anthropic_proxy_auth(
 
     if not _proxy_token_matches(
         x_api_key,
-        settings.proxy_auth_token,
+        configured_token,
         require_bearer=False,
     ):
         raise HTTPException(

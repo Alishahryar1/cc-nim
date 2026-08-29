@@ -29,7 +29,7 @@ from free_claude_code.cli.desktop_tray import tray_is_available
 def test_tray_is_available_true_when_icon_constructs():
     with (
         patch("free_claude_code.cli.desktop_tray._create_icon"),
-        patch("free_claude_code.cli.desktop_tray.Icon", MagicMock()),
+        patch("pystray.Icon", MagicMock()),
     ):
         available, reason = tray_is_available()
 
@@ -41,7 +41,7 @@ def test_tray_is_available_reports_backend_import_error():
     with (
         patch("free_claude_code.cli.desktop_tray._create_icon"),
         patch(
-            "free_claude_code.cli.desktop_tray.Icon",
+            "pystray.Icon",
             MagicMock(side_effect=ImportError("gir bindings missing")),
         ),
     ):
@@ -55,7 +55,7 @@ def test_tray_is_available_reports_other_construction_errors_verbatim():
     error = RuntimeError("no display")
     with (
         patch("free_claude_code.cli.desktop_tray._create_icon"),
-        patch("free_claude_code.cli.desktop_tray.Icon", MagicMock(side_effect=error)),
+        patch("pystray.Icon", MagicMock(side_effect=error)),
     ):
         available, reason = tray_is_available()
 
@@ -146,16 +146,46 @@ def test_console_launch_uses_native_tray_when_probe_succeeds():
 def test_entrypoint_routes_supported_native_platforms_to_tray(platform):
     with (
         patch.object(sys, "platform", platform),
+        patch(
+            "free_claude_code.cli.desktop_entrypoint.configure_claude_desktop_config"
+        ) as configure,
         patch("free_claude_code.cli.desktop_tray.launch") as tray_launch,
     ):
         entrypoint_launch([])
 
     tray_launch.assert_called_once()
+    configure.assert_called_once_with()
+
+
+def test_entrypoint_configures_desktop_routing_before_the_platform_lifecycle():
+    events: list[str] = []
+
+    def record_configure() -> bool:
+        events.append("configure")
+        return True
+
+    with (
+        patch.object(sys, "platform", "linux"),
+        patch(
+            "free_claude_code.cli.desktop_entrypoint.configure_claude_desktop_config",
+            record_configure,
+        ),
+        patch(
+            "free_claude_code.cli.desktop_console.launch_desktop",
+            side_effect=lambda *_: events.append("lifecycle"),
+        ),
+    ):
+        entrypoint_launch([])
+
+    assert events == ["configure", "lifecycle"]
 
 
 def test_entrypoint_routes_linux_through_probe_and_console_mode(capsys):
     with (
         patch.object(sys, "platform", "linux"),
+        patch(
+            "free_claude_code.cli.desktop_entrypoint.configure_claude_desktop_config"
+        ),
         patch("free_claude_code.cli.desktop_tray.tray_is_available") as probe,
         patch("free_claude_code.cli.desktop_console.launch_desktop") as start,
     ):
@@ -370,3 +400,18 @@ def test_headless_entrypoint_routes_linux_to_console_mode(capsys):
 
     assert start.call_args.args[0] is ConsoleDesktopTray
     assert "failed to load" in capsys.readouterr().out
+
+
+def test_tray_module_imports_without_display():
+    """pystray resolves an X11 display at import; the module must not."""
+
+    import importlib
+
+    module = sys.modules["free_claude_code.cli.desktop_tray"]
+    # A ``None`` entry makes ``import pystray`` fail as if it were absent.
+    try:
+        with patch.dict(sys.modules, {"pystray": None}):
+            reloaded = importlib.reload(module)
+    finally:
+        importlib.reload(module)
+    assert reloaded.tray_is_available.__module__ == module.__name__
