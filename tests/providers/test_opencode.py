@@ -329,6 +329,7 @@ def test_catalog_resolves_package_precedence_status_alias_and_reasoning() -> Non
                     "id": "provider-default",
                     "reasoning": False,
                     "modalities": {"input": ["text"]},
+                    "limit": {"context": 131072, "output": 8192},
                 },
                 "responses-alias": {
                     "id": "actual-responses-id",
@@ -382,6 +383,8 @@ def test_catalog_resolves_package_precedence_status_alias_and_reasoning() -> Non
                 "provider-default",
                 supports_thinking=False,
                 input_modalities=frozenset({ModelInputModality.TEXT}),
+                context_window_tokens=131072,
+                max_output_tokens=8192,
             ),
             ProviderModelInfo(
                 "responses-alias",
@@ -410,6 +413,28 @@ def test_catalog_defaults_missing_package_to_chat_completions() -> None:
     route = snapshot.route("defaulted")
     assert route is not None
     assert route.transport is OpenCodeUpstreamTransport.CHAT_COMPLETIONS
+
+
+def test_catalog_token_limits_degrade_independently_without_rejecting_model() -> None:
+    snapshot = parse_open_code_catalog(
+        _catalog_payload(
+            {
+                "partial": {
+                    "id": "upstream",
+                    "limit": {"context": "bad", "output": 8192},
+                },
+                "malformed": {"id": "other", "limit": "bad"},
+            }
+        ),
+        provider_key="opencode",
+        provider_name="OPENCODE_ZEN",
+    )
+
+    infos = {info.model_id: info for info in snapshot.model_infos}
+    assert infos["partial"].context_window_tokens is None
+    assert infos["partial"].max_output_tokens == 8192
+    assert infos["malformed"].context_window_tokens is None
+    assert infos["malformed"].max_output_tokens is None
 
 
 @pytest.mark.parametrize(

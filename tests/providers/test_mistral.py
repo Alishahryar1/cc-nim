@@ -62,6 +62,7 @@ async def test_model_catalog_extracts_exact_input_modalities(mistral_provider):
             "data": [
                 {
                     "id": "vision-model",
+                    "max_context_length": 131072,
                     "capabilities": {
                         "completion_chat": True,
                         "vision": True,
@@ -85,6 +86,7 @@ async def test_model_catalog_extracts_exact_input_modalities(mistral_provider):
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=131072,
             ),
             ProviderModelInfo(
                 "text-model",

@@ -19,6 +19,7 @@ from free_claude_code.providers.failure_policy import classify_provider_failure
 from free_claude_code.providers.model_listing import (
     ModelListResponseError,
     optional_input_modalities,
+    optional_positive_int,
 )
 
 OPENCODE_CATALOG_URL = "https://models.opencode.ai/api.json"
@@ -44,6 +45,8 @@ class OpenCodeModelRoute:
     transport: OpenCodeUpstreamTransport
     supports_thinking: bool | None
     input_modalities: frozenset[ModelInputModality] | None
+    context_window_tokens: int | None
+    max_output_tokens: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +130,17 @@ def parse_open_code_catalog(
             if isinstance(raw_modalities, Mapping)
             else None
         )
+        limit = model.get("limit")
+        context_window_tokens = (
+            optional_positive_int(limit.get("context"))
+            if isinstance(limit, Mapping)
+            else None
+        )
+        max_output_tokens = (
+            optional_positive_int(limit.get("output"))
+            if isinstance(limit, Mapping)
+            else None
+        )
         effective_package = model_package or provider_package or _DEFAULT_PACKAGE
         route = OpenCodeModelRoute(
             selector_id=selector_id,
@@ -138,6 +152,8 @@ def parse_open_code_catalog(
             ),
             supports_thinking=supports_thinking,
             input_modalities=input_modalities,
+            context_window_tokens=context_window_tokens,
+            max_output_tokens=max_output_tokens,
         )
         routes[selector_id] = route
 
@@ -148,6 +164,8 @@ def parse_open_code_catalog(
             model_id=route.selector_id,
             supports_thinking=route.supports_thinking,
             input_modalities=route.input_modalities,
+            context_window_tokens=route.context_window_tokens,
+            max_output_tokens=route.max_output_tokens,
         )
         for route in routes.values()
     )

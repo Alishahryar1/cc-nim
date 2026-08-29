@@ -53,6 +53,12 @@ class ModelResponse(BaseModel):
     input_modalities: tuple[ModelInputModality, ...] | None = Field(
         default=None, serialization_alias="inputModalities"
     )
+    context_window_tokens: int | None = Field(
+        default=None, serialization_alias="contextWindow"
+    )
+    max_output_tokens: int | None = Field(
+        default=None, serialization_alias="maxCompletionTokens"
+    )
     reasoning_efforts: tuple[str, ...] | None = Field(
         default=None, serialization_alias="reasoningEfforts"
     )
@@ -118,6 +124,8 @@ class _InventoryModel:
     provider_model_ref: str
     supports_thinking: bool | None
     input_modalities: frozenset[ModelInputModality] | None
+    context_window_tokens: int | None
+    max_output_tokens: int | None
 
 
 def build_models_list_response(
@@ -208,6 +216,8 @@ def _build_direct_models_response(
                 input_modalities=_serialize_input_modalities(
                     inventory_model.input_modalities
                 ),
+                context_window_tokens=inventory_model.context_window_tokens,
+                max_output_tokens=inventory_model.max_output_tokens,
                 supports_reasoning_effort=(
                     allows_reasoning if view is ModelCatalogView.RESPONSES else None
                 ),
@@ -248,6 +258,12 @@ def _collect_inventory(
                 input_modalities=(
                     model_info.input_modalities if model_info is not None else None
                 ),
+                context_window_tokens=(
+                    model_info.context_window_tokens if model_info is not None else None
+                ),
+                max_output_tokens=(
+                    model_info.max_output_tokens if model_info is not None else None
+                ),
             )
         )
 
@@ -260,6 +276,8 @@ def _collect_inventory(
                 provider_model_ref=model_info.model_id,
                 supports_thinking=model_info.supports_thinking,
                 input_modalities=model_info.input_modalities,
+                context_window_tokens=model_info.context_window_tokens,
+                max_output_tokens=model_info.max_output_tokens,
             )
         )
 

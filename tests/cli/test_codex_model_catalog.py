@@ -159,12 +159,15 @@ def test_codex_catalog_projects_known_capabilities_and_preserves_unknown_default
                     "provider_model_ref": "provider/vision-reasoning",
                     "supportsReasoning": True,
                     "inputModalities": ["text", "image"],
+                    "contextWindow": 131072,
+                    "maxCompletionTokens": 8192,
                 },
                 {
                     "id": "claude-3-freecc-no-thinking/provider/text-only",
                     "provider_model_ref": "provider/text-only",
                     "supportsReasoning": False,
                     "inputModalities": ["text"],
+                    "maxCompletionTokens": 4096,
                 },
                 {
                     "id": "provider/unknown",
@@ -180,18 +183,24 @@ def test_codex_catalog_projects_known_capabilities_and_preserves_unknown_default
     assert vision["supported_reasoning_levels"]
     assert vision["supports_reasoning_summaries"] is True
     assert vision["default_reasoning_summary"] == "none"
+    assert vision["context_window"] == 131072
+    assert vision["max_context_window"] == 131072
 
     assert text_only["input_modalities"] == ["text"]
     assert "default_reasoning_level" not in text_only
     assert text_only["supported_reasoning_levels"] == []
     assert text_only["supports_reasoning_summaries"] is False
     assert "default_reasoning_summary" not in text_only
+    assert text_only["context_window"] == 200000
+    assert text_only["max_context_window"] == 200000
 
     assert unknown["input_modalities"] == ["text"]
     assert unknown["default_reasoning_level"] == "medium"
     assert unknown["supported_reasoning_levels"]
     assert unknown["supports_reasoning_summaries"] is True
     assert unknown["default_reasoning_summary"] == "none"
+    assert unknown["context_window"] == 200000
+    assert unknown["max_context_window"] == 200000
 
 
 def test_launcher_config_composes_with_persistent_codex_config(

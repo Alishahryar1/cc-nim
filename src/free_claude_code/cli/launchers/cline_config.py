@@ -113,4 +113,8 @@ def _model_entry(model: ClientModel) -> JsonObject:
                 "outputModalities": ["text"],
             }
         )
+    if model.context_window_tokens is not None:
+        entry["contextWindow"] = model.context_window_tokens
+    if model.max_output_tokens is not None:
+        entry["maxTokens"] = model.max_output_tokens
     return entry

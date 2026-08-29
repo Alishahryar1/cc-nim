@@ -21,6 +21,8 @@ def _models() -> tuple[ClientModel, ...]:
             input_modalities=frozenset(
                 {ModelInputModality.TEXT, ModelInputModality.IMAGE}
             ),
+            context_window_tokens=131072,
+            max_output_tokens=8192,
         ),
         ClientModel(
             wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
@@ -28,6 +30,7 @@ def _models() -> tuple[ClientModel, ...]:
             display_name="No-thinking model",
             supports_reasoning=False,
             input_modalities=frozenset({ModelInputModality.TEXT}),
+            max_output_tokens=4096,
         ),
         ClientModel(
             wire_slug="future_provider/unknown-model",
@@ -81,10 +84,13 @@ def test_hermes_config_pins_responses_catalog_and_fallbacks() -> None:
             "nvidia_nim/vendor/model": {
                 "supports_reasoning": True,
                 "supports_vision": True,
+                "context_window": 131072,
+                "max_output_tokens": 8192,
             },
             "claude-3-freecc-no-thinking/open_router/plain-model": {
                 "supports_reasoning": False,
                 "supports_vision": False,
+                "max_output_tokens": 4096,
             },
         }
     }

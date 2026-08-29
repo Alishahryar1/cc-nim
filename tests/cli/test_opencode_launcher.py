@@ -54,6 +54,8 @@ def test_opencode_config_uses_responses_sdk_and_only_known_metadata() -> None:
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=131072,
+                max_output_tokens=8192,
             ),
             ClientModel(
                 wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
@@ -61,6 +63,7 @@ def test_opencode_config_uses_responses_sdk_and_only_known_metadata() -> None:
                 display_name="No-thinking model",
                 supports_reasoning=False,
                 input_modalities=frozenset({ModelInputModality.TEXT}),
+                context_window_tokens=65536,
             ),
             ClientModel(
                 wire_slug="future_provider/unknown-model",
@@ -86,11 +89,13 @@ def test_opencode_config_uses_responses_sdk_and_only_known_metadata() -> None:
             "name": "Nested model",
             "reasoning": True,
             "modalities": {"input": ["text", "image"]},
+            "limit": {"context": 131072, "output": 8192},
         },
         "claude-3-freecc-no-thinking/open_router/plain-model": {
             "name": "No-thinking model",
             "reasoning": False,
             "modalities": {"input": ["text"]},
+            "limit": {"context": 65536},
         },
         "future_provider/unknown-model": {
             "name": "Unknown model",
@@ -115,7 +120,6 @@ def test_opencode_config_uses_responses_sdk_and_only_known_metadata() -> None:
     }
     serialized = json.dumps(config.file | config.overlay)
     assert "proxy-token" not in serialized
-    assert "context" not in serialized
     assert "attachment" not in serialized
 
 

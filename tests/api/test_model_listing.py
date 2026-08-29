@@ -237,11 +237,14 @@ def test_direct_model_views_serialize_known_capabilities_and_omit_unknowns():
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=131072,
+                max_output_tokens=8192,
             ),
             ProviderModelInfo(
                 "text-only",
                 supports_thinking=False,
                 input_modalities=frozenset({ModelInputModality.TEXT}),
+                context_window_tokens=65536,
             ),
             ProviderModelInfo("unknown"),
         },
@@ -262,12 +265,20 @@ def test_direct_model_views_serialize_known_capabilities_and_omit_unknowns():
         "text",
         "image",
     ]
+    assert messages["open_router/vision-reasoning"]["contextWindow"] == 131072
+    assert messages["open_router/vision-reasoning"]["maxCompletionTokens"] == 8192
     assert messages["open_router/text-only"]["supportsReasoning"] is False
     assert messages["open_router/text-only"]["inputModalities"] == ["text"]
+    assert messages["open_router/text-only"]["contextWindow"] == 65536
+    assert "maxCompletionTokens" not in messages["open_router/text-only"]
     assert "supportsReasoning" not in messages["open_router/unknown"]
     assert "inputModalities" not in messages["open_router/unknown"]
+    assert "contextWindow" not in messages["open_router/unknown"]
+    assert "maxCompletionTokens" not in messages["open_router/unknown"]
     assert responses["open_router/text-only"]["supportsReasoningEffort"] is False
     assert "reasoningEfforts" not in responses["open_router/text-only"]
+    assert responses["open_router/vision-reasoning"]["contextWindow"] == 131072
+    assert responses["open_router/vision-reasoning"]["maxCompletionTokens"] == 8192
 
 
 def test_claude_model_view_does_not_expose_capability_fields():
@@ -281,6 +292,8 @@ def test_claude_model_view_does_not_expose_capability_fields():
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=131072,
+                max_output_tokens=8192,
             )
         },
     )
@@ -288,7 +301,11 @@ def test_claude_model_view_does_not_expose_capability_fields():
     rows = TestClient(app).get("/v1/models").json()["data"]
 
     assert all(
-        "supportsReasoning" not in row and "inputModalities" not in row for row in rows
+        "supportsReasoning" not in row
+        and "inputModalities" not in row
+        and "contextWindow" not in row
+        and "maxCompletionTokens" not in row
+        for row in rows
     )
 
 

@@ -121,6 +121,10 @@ def _model_profile(model: ClientModel) -> JsonObject:
             for modality in ModelInputModality
             if modality in model.input_modalities
         ]
+    if model.context_window_tokens is not None:
+        profile["contextWindow"] = model.context_window_tokens
+    if model.max_output_tokens is not None:
+        profile["maxTokens"] = model.max_output_tokens
     return profile
 
 

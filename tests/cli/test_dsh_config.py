@@ -21,6 +21,8 @@ def _models() -> tuple[ClientModel, ...]:
             input_modalities=frozenset(
                 {ModelInputModality.TEXT, ModelInputModality.IMAGE}
             ),
+            context_window_tokens=131072,
+            max_output_tokens=8192,
         ),
         ClientModel(
             wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
@@ -28,6 +30,7 @@ def _models() -> tuple[ClientModel, ...]:
             display_name="No-thinking model",
             supports_reasoning=False,
             input_modalities=frozenset({ModelInputModality.TEXT}),
+            max_output_tokens=4096,
         ),
         ClientModel(
             wire_slug="future_provider/unknown-model",
@@ -92,12 +95,15 @@ def test_dsh_config_pins_responses_models_retries_and_private_state(
                     "max": "max",
                 },
                 "input": ["text", "image"],
+                "contextWindow": 131072,
+                "maxTokens": 8192,
             },
             {
                 "id": "claude-3-freecc-no-thinking/open_router/plain-model",
                 "name": "No-thinking model",
                 "reasoningEfforts": False,
                 "input": ["text"],
+                "maxTokens": 4096,
             },
             {
                 "id": "future_provider/unknown-model",
@@ -139,13 +145,7 @@ def test_dsh_config_pins_responses_models_retries_and_private_state(
 
     serialized = json.dumps(launch.patch)
     assert "proxy-token" not in serialized
-    for unsupported in (
-        "contextWindow",
-        "maxTokens",
-        "compat",
-        "headers",
-        "telemetry",
-    ):
+    for unsupported in ("compat", "headers", "telemetry"):
         assert unsupported not in serialized
 
 

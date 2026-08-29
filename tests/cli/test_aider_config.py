@@ -19,6 +19,8 @@ def _models() -> tuple[ClientModel, ...]:
             input_modalities=frozenset(
                 {ModelInputModality.TEXT, ModelInputModality.IMAGE}
             ),
+            context_window_tokens=131072,
+            max_output_tokens=8192,
         ),
         ClientModel(
             wire_slug="ollama_cloud/qwen3-coder:480b",
@@ -26,6 +28,7 @@ def _models() -> tuple[ClientModel, ...]:
             display_name="Colon model",
             supports_reasoning=False,
             input_modalities=frozenset({ModelInputModality.TEXT}),
+            max_output_tokens=4096,
         ),
         ClientModel(
             wire_slug="future_provider/unknown-model",
@@ -70,11 +73,14 @@ def test_aider_config_projects_messages_route_and_canonical_catalog() -> None:
             "litellm_provider": "anthropic",
             "mode": "chat",
             "supports_vision": True,
+            "max_input_tokens": 131072,
+            "max_output_tokens": 8192,
         },
         "anthropic/ollama_cloud/qwen3-coder:480b": {
             "litellm_provider": "anthropic",
             "mode": "chat",
             "supports_vision": False,
+            "max_output_tokens": 4096,
         },
         "anthropic/future_provider/unknown-model": {
             "litellm_provider": "anthropic",

@@ -70,6 +70,11 @@ def _codex_catalog_entry(candidate: ClientModel, *, priority: int) -> JsonObject
     input_modalities = candidate.input_modalities or frozenset(
         {ModelInputModality.TEXT}
     )
+    context_window = (
+        candidate.context_window_tokens
+        if candidate.context_window_tokens is not None
+        else 200000
+    )
     entry: JsonObject = {
         "slug": candidate.wire_slug,
         "display_name": candidate.display_name,
@@ -92,8 +97,8 @@ def _codex_catalog_entry(candidate: ClientModel, *, priority: int) -> JsonObject
         "truncation_policy": {"mode": "tokens", "limit": 10000},
         "supports_parallel_tool_calls": True,
         "supports_image_detail_original": True,
-        "context_window": 200000,
-        "max_context_window": 200000,
+        "context_window": context_window,
+        "max_context_window": context_window,
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
         "input_modalities": [

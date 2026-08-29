@@ -99,6 +99,7 @@ def test_optional_model_capabilities_are_normalized_and_copied_to_aliases() -> N
                     "aliases": ["latest"],
                     "architecture": {"input_modalities": ["text", "image", "audio"]},
                     "supported_parameters": ["tools", "reasoning"],
+                    "limits": {"context": 131072, "output": 16384},
                 },
                 {
                     "id": "text-only",
@@ -112,12 +113,16 @@ def test_optional_model_capabilities_are_normalized_and_copied_to_aliases() -> N
         aliases_field="aliases",
         input_modalities_path=("architecture", "input_modalities"),
         thinking_sequence_path=("supported_parameters",),
+        context_window_tokens_path=("limits", "context"),
+        max_output_tokens_path=("limits", "output"),
     )
 
     vision = ProviderModelInfo(
         "vision-reasoning",
         supports_thinking=True,
         input_modalities=frozenset({ModelInputModality.TEXT, ModelInputModality.IMAGE}),
+        context_window_tokens=131072,
+        max_output_tokens=16384,
     )
     assert model_infos == frozenset(
         {
@@ -126,6 +131,8 @@ def test_optional_model_capabilities_are_normalized_and_copied_to_aliases() -> N
                 "latest",
                 supports_thinking=True,
                 input_modalities=vision.input_modalities,
+                context_window_tokens=131072,
+                max_output_tokens=16384,
             ),
             ProviderModelInfo(
                 "text-only",
@@ -134,6 +141,50 @@ def test_optional_model_capabilities_are_normalized_and_copied_to_aliases() -> N
             ),
         }
     )
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    [True, False, 0, -1, 1.5, "4096", None, [], {}],
+)
+def test_optional_token_limits_require_exact_positive_integers(
+    invalid_value: object,
+) -> None:
+    [info] = extract_openai_model_infos(
+        {
+            "data": [
+                {
+                    "id": "model",
+                    "limits": {"context": invalid_value, "output": invalid_value},
+                }
+            ]
+        },
+        provider_name="TEST",
+        context_window_tokens_path=("limits", "context"),
+        max_output_tokens_path=("limits", "output"),
+    )
+
+    assert info.context_window_tokens is None
+    assert info.max_output_tokens is None
+
+
+def test_optional_token_limits_degrade_independently() -> None:
+    [info] = extract_openai_model_infos(
+        {
+            "data": [
+                {
+                    "id": "model",
+                    "limits": {"context": "bad", "output": 8192},
+                }
+            ]
+        },
+        provider_name="TEST",
+        context_window_tokens_path=("limits", "context"),
+        max_output_tokens_path=("limits", "output"),
+    )
+
+    assert info.context_window_tokens is None
+    assert info.max_output_tokens == 8192
 
 
 @pytest.mark.parametrize(
@@ -202,6 +253,8 @@ def test_tool_capable_parser_retains_exact_input_modalities() -> None:
                     "id": "vision",
                     "supported_parameters": ["tools", "reasoning"],
                     "architecture": {"input_modalities": ["text", "image", "audio"]},
+                    "context_length": 262144,
+                    "top_provider": {"max_completion_tokens": 32768},
                 },
                 {
                     "id": "unknown-media",
@@ -221,6 +274,8 @@ def test_tool_capable_parser_retains_exact_input_modalities() -> None:
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=262144,
+                max_output_tokens=32768,
             ),
             ProviderModelInfo("unknown-media", supports_thinking=False),
         }

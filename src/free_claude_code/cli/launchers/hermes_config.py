@@ -128,4 +128,8 @@ def _model_override(model: ClientModel) -> JsonObject:
         override["supports_reasoning"] = model.supports_reasoning
     if model.input_modalities is not None:
         override["supports_vision"] = ModelInputModality.IMAGE in model.input_modalities
+    if model.context_window_tokens is not None:
+        override["context_window"] = model.context_window_tokens
+    if model.max_output_tokens is not None:
+        override["max_output_tokens"] = model.max_output_tokens
     return override

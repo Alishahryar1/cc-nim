@@ -73,4 +73,11 @@ def _model_config(model: ClientModel) -> JsonObject:
                 if modality in model.input_modalities
             ]
         }
+    limit: JsonObject = {}
+    if model.context_window_tokens is not None:
+        limit["context"] = model.context_window_tokens
+    if model.max_output_tokens is not None:
+        limit["output"] = model.max_output_tokens
+    if limit:
+        config["limit"] = limit
     return config

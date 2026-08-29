@@ -22,6 +22,8 @@ class ClientModel:
     display_name: str
     supports_reasoning: bool | None
     input_modalities: frozenset[ModelInputModality] | None = None
+    context_window_tokens: int | None = None
+    max_output_tokens: int | None = None
 
 
 def client_models_from_response(
@@ -108,6 +110,10 @@ def _catalog_candidates(
                 display_name=_nonempty_string(item.get("display_name")) or model_id,
                 supports_reasoning=_optional_boolean(item.get("supportsReasoning")),
                 input_modalities=_input_modalities(item.get("inputModalities")),
+                context_window_tokens=_optional_positive_int(item.get("contextWindow")),
+                max_output_tokens=_optional_positive_int(
+                    item.get("maxCompletionTokens")
+                ),
             )
         )
     return candidates
@@ -122,6 +128,10 @@ def _nonempty_string(value: object) -> str | None:
 
 def _optional_boolean(value: object) -> bool | None:
     return value if isinstance(value, bool) else None
+
+
+def _optional_positive_int(value: object) -> int | None:
+    return value if type(value) is int and value > 0 else None
 
 
 def _input_modalities(value: object) -> frozenset[ModelInputModality] | None:

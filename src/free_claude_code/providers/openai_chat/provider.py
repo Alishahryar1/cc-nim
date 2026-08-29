@@ -553,6 +553,9 @@ class OpenAIChatProvider(BaseProvider):
             thinking_sequence_path=listing.thinking_sequence_path,
             fixed_input_modalities=listing.fixed_input_modalities,
             input_modality_boolean_paths=listing.input_modality_boolean_paths,
+            context_window_tokens_path=listing.context_window_tokens_path,
+            max_output_tokens_path=listing.max_output_tokens_path,
+            context_window_tokens_resolver=listing.context_window_tokens_resolver,
         )
         model_infos_by_id = {
             model_info.model_id: model_info for model_info in live_model_infos

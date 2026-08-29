@@ -78,6 +78,11 @@ async def test_model_catalog_extracts_exact_input_modalities(
                 {
                     "id": "vision-model",
                     "architecture": {"input_modalities": ["text", "image", "audio"]},
+                    "providers": [
+                        {"status": "live", "context_length": 131072},
+                        {"status": "live", "context_length": 131072},
+                        {"status": "staging", "context_length": 999999},
+                    ],
                 },
                 {
                     "id": "unknown-model",
@@ -94,9 +99,37 @@ async def test_model_catalog_extracts_exact_input_modalities(
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=131072,
             ),
             ProviderModelInfo("unknown-model"),
         }
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "providers",
+    [
+        [],
+        [{"status": "staging", "context_length": 131072}],
+        [{"status": "live"}],
+        [{"status": "live", "context_length": "131072"}],
+        [
+            {"status": "live", "context_length": 131072},
+            {"status": "live", "context_length": 65536},
+        ],
+    ],
+)
+async def test_model_catalog_requires_consensus_across_live_huggingface_routes(
+    huggingface_provider,
+    providers: list[dict[str, object]],
+) -> None:
+    huggingface_provider._client.models.list = AsyncMock(
+        return_value=SimpleNamespace(data=[{"id": "model", "providers": providers}])
+    )
+
+    assert await huggingface_provider.list_model_infos() == frozenset(
+        {ProviderModelInfo("model")}
     )
 
 
