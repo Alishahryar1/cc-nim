@@ -618,6 +618,34 @@ def test_start_swallows_state_preparation_errors(
     popen.assert_not_called()
 
 
+def test_start_swallows_front_identity_errors(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Filesystem failures while creating the identity secret stay swallowed.
+
+    ``load_or_create_front_identity`` runs before the caddy state write
+    and needs the same never-raise guarantee: without a secret there is
+    nothing to prove front ownership with, so the front is not adoptable
+    and the plain-HTTP fallback must apply instead of an escaping
+    ``OSError`` killing the serving generation.
+    """
+
+    unwritable = tmp_path / "occupied"
+    unwritable.write_text("not a directory", encoding="utf-8")
+
+    with (
+        patch.object(tls_proxy, "probe_fcc_front", return_value=False),
+        patch.object(tls_proxy.shutil, "which", return_value="/usr/bin/caddy"),
+        patch.object(tls_proxy.subprocess, "Popen") as popen,
+    ):
+        proxy = CaddyTlsProxy(settings, home_dir=unwritable / "caddy")
+        started = proxy.start()
+
+    assert started is False
+    popen.assert_not_called()
+
+
 def test_start_reports_child_that_exits_immediately(
     settings: Settings,
     tmp_path: Path,

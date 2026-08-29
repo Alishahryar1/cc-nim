@@ -338,7 +338,15 @@ class CaddyTlsProxy:
         if not self._settings.tls_proxy_enabled:
             return False
         target = tls_root_url(self._settings)
-        identity = load_or_create_front_identity(self._home_dir)
+        try:
+            identity = load_or_create_front_identity(self._home_dir)
+        except OSError as exc:
+            logger.warning(
+                "Could not read or create the front identity secret: {}; "
+                "Claude Desktop routing stays on plain HTTP.",
+                exc,
+            )
+            return False
         if probe_fcc_front(target, identity, self._home_dir):
             logger.info("Reusing existing FCC HTTPS front at {}", target)
             return True

@@ -272,7 +272,15 @@ class ServerSupervisor:
         """
 
         root = tls_root_url(settings)
-        identity = load_or_create_front_identity()
+        try:
+            identity = load_or_create_front_identity()
+        except OSError as exc:
+            logger.warning(
+                "Could not read or create the front identity secret: {}; "
+                "the published gateway URL stays on plain HTTP.",
+                exc,
+            )
+            return
         deadline = time.monotonic() + GATEWAY_HEALTH_UPGRADE_SECONDS
         while time.monotonic() < deadline:
             verified = probe_fcc_front(root, identity)
