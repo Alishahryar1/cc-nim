@@ -23,6 +23,9 @@ from .model_cache import ProviderModelCache
 
 ProviderResolver = Callable[[str], BaseProvider]
 
+# A local provider that is actually running answers over loopback in milliseconds.
+OPPORTUNISTIC_LOCAL_DISCOVERY_TIMEOUT_SECONDS = 5.0
+
 
 def _provider_query_failure_reason(exc: BaseException, settings: Settings) -> str:
     """Return a concise model-list query failure reason for user-facing logs."""
@@ -60,21 +63,6 @@ def model_cache_provider_ids_for_settings(
     )
 
 
-def model_list_provider_ids_for_settings(
-    settings: Settings,
-    connected_provider_ids: tuple[str, ...] = (),
-) -> tuple[str, ...]:
-    """Return providers worth discovering for this process configuration."""
-    referenced_ids = referenced_provider_ids(settings)
-    return tuple(
-        provider_id
-        for provider_id in model_cache_provider_ids_for_settings(
-            settings, connected_provider_ids
-        )
-        if not PROVIDER_CATALOG[provider_id].local or provider_id in referenced_ids
-    )
-
-
 class ProviderModelDiscovery:
     """Refresh provider model-list metadata for one provider runtime."""
 
@@ -98,7 +86,7 @@ class ProviderModelDiscovery:
         self, *, only_missing: bool = False
     ) -> ProviderModelRefreshResult:
         """Best-effort refresh of model lists for usable providers."""
-        provider_ids = model_list_provider_ids_for_settings(
+        provider_ids = model_cache_provider_ids_for_settings(
             self._settings, self._connected_provider_ids
         )
         if only_missing:
@@ -118,15 +106,25 @@ class ProviderModelDiscovery:
         self, provider_ids: tuple[str, ...]
     ) -> ProviderModelRefreshResult:
         failed_provider_ids: list[str] = []
+        opportunistic_ids = self._opportunistic_local_ids()
         tasks: dict[str, asyncio.Task[frozenset[ProviderModelInfo]]] = {}
         for provider_id in provider_ids:
             try:
                 provider = self._provider_resolver(provider_id)
             except Exception as exc:
-                self._log_discovery_failure(provider_id, exc)
-                failed_provider_ids.append(provider_id)
+                self._record_discovery_failure(
+                    provider_id, exc, failed_provider_ids, opportunistic_ids
+                )
                 continue
-            tasks[provider_id] = asyncio.create_task(provider.list_model_infos())
+            query = provider.list_model_infos()
+            if provider_id in opportunistic_ids:
+                # Provider retry policy assumes a transient upstream fault. A local
+                # endpoint nobody is running refuses instantly and stays refused, so
+                # cap the whole opportunistic query instead of paying that backoff.
+                query = asyncio.wait_for(
+                    query, OPPORTUNISTIC_LOCAL_DISCOVERY_TIMEOUT_SECONDS
+                )
+            tasks[provider_id] = asyncio.create_task(query)
 
         refreshed_provider_ids: list[str] = []
         if tasks:
@@ -137,8 +135,9 @@ class ProviderModelDiscovery:
                 if isinstance(result, BaseException):
                     if isinstance(result, asyncio.CancelledError):
                         raise result
-                    self._log_discovery_failure(provider_id, result)
-                    failed_provider_ids.append(provider_id)
+                    self._record_discovery_failure(
+                        provider_id, result, failed_provider_ids, opportunistic_ids
+                    )
                     continue
                 self._model_cache.cache_model_infos(provider_id, result)
                 refreshed_provider_ids.append(provider_id)
@@ -153,9 +152,42 @@ class ProviderModelDiscovery:
             failed_provider_ids=tuple(failed_provider_ids),
         )
 
-    def _log_discovery_failure(self, provider_id: str, exc: BaseException) -> None:
+    def _opportunistic_local_ids(self) -> frozenset[str]:
+        """Return local providers queried on the chance one is actually running.
+
+        A local provider carries a default base URL, so it is always configured
+        even for the many installs that never run one. Querying it anyway is what
+        lets its models reach the client model picker, but an unreachable endpoint
+        is the expected state rather than a fault, so it must not be reported.
+        A local provider the customer has routed to is excluded here: there a
+        failure is real and keeps its existing warning.
+        """
+
+        referenced = set(referenced_provider_ids(self._settings))
+        return frozenset(
+            provider_id
+            for provider_id, descriptor in PROVIDER_CATALOG.items()
+            if descriptor.local and provider_id not in referenced
+        )
+
+    def _record_discovery_failure(
+        self,
+        provider_id: str,
+        exc: BaseException,
+        failed_provider_ids: list[str],
+        opportunistic_ids: frozenset[str],
+    ) -> None:
+        """Log one failed model-list query and record only actionable failures."""
+        if provider_id in opportunistic_ids:
+            logger.debug(
+                "Local provider model discovery unavailable: provider={} reason={}",
+                provider_id,
+                _provider_query_failure_reason(exc, self._settings),
+            )
+            return
         logger.warning(
             "Provider model discovery skipped: provider={} reason={}",
             provider_id,
             _provider_query_failure_reason(exc, self._settings),
         )
+        failed_provider_ids.append(provider_id)

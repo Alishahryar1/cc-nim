@@ -23,11 +23,15 @@ class FakeRuntime(ProviderRuntime):
         self.cleanup_release: asyncio.Event | None = None
         self.provider = MagicMock()
         self.provider.list_model_infos = AsyncMock(return_value=frozenset())
+        # None resolves every id; a set models a host where only these exist.
+        self.resolvable_ids: set[str] | None = None
 
     def is_cached(self, provider_id: str) -> bool:
         return provider_id == "cached"
 
     def resolve_provider(self, provider_id: str) -> BaseProvider:
+        if self.resolvable_ids is not None and provider_id not in self.resolvable_ids:
+            raise KeyError(provider_id)
         return cast(BaseProvider, self.provider)
 
     async def cleanup(self) -> None:
@@ -144,6 +148,9 @@ async def test_catalog_publication_tracks_warm_refresh_and_direct_cache() -> Non
     factory.runtimes[0].provider.list_model_infos = AsyncMock(
         return_value=frozenset({ProviderModelInfo("warm-model")})
     )
+    # Local providers are always configured, so discovery now queries them too.
+    # This host runs none of them.
+    factory.runtimes[0].resolvable_ids = {"nvidia_nim"}
 
     await manager.warm_referenced_model_cache()
     manager.start_model_list_refresh()
