@@ -8,6 +8,7 @@ from enum import StrEnum
 import uvicorn
 from loguru import logger
 
+from free_claude_code.cli.claude_desktop import configure_claude_desktop_config
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.process_registry import kill_all_best_effort
 from free_claude_code.cli.tls_proxy import (
@@ -276,13 +277,40 @@ class ServerSupervisor:
         """Publish the TLS-prefixed URL for a front that just verified.
 
         Publishes the verified root directly — re-resolving would probe the
-        front a second time for the same answer.
+        front a second time for the same answer. The persisted Claude
+        Desktop config is re-merged with the verified URL too: the
+        pre-lifecycle merge recorded the plain-HTTP fallback while the
+        front was still starting, and Claude Desktop reads the config file,
+        not this process's memory.
         """
 
         gateway_url = desktop_gateway_base_url(settings, base_url=root)
         with self._lock:
             self._desktop_gateway_url = gateway_url
         logger.info("Claude Desktop gateway: {}", gateway_url)
+        self._repersist_verified_gateway_url(settings, root)
+
+    def _repersist_verified_gateway_url(self, settings: Settings, root: str) -> None:
+        """Rewrite the Claude Desktop routing block onto the verified front.
+
+        Runs once per verified readiness upgrade, inside the live serving
+        window. Failures downgrade to a warning: the in-memory publication
+        already succeeded, and a config-merge failure must not take the
+        serving generation down.
+        """
+
+        try:
+            merged = configure_claude_desktop_config(
+                settings=settings,
+                gateway_base_url=root,
+            )
+        except OSError as exc:
+            logger.warning("Could not re-merge the Claude Desktop config: {}", exc)
+            return
+        logger.info(
+            "Claude Desktop routing re-merged onto the verified HTTPS front{}.",
+            "" if merged else " (no change needed)",
+        )
 
     def _request_runtime_restart(self) -> None:
         self.request_restart()

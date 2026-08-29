@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from free_claude_code.cli import commands
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
 from free_claude_code.cli.desktop import DesktopController
 from free_claude_code.config.settings import Settings
@@ -440,3 +441,60 @@ def test_desktop_quit_stops_the_managed_tls_front() -> None:
         DesktopController(supervisor, QuittingTray, lambda: None).run()
 
     assert events == ["construct", "start", "server-run", "stop"]
+
+
+def test_verified_https_readiness_repersists_desktop_config() -> None:
+    """Readiness upgrade rewrites the persisted Claude Desktop config.
+
+    Regression guard for the Greptile "TLS endpoint stays unconfigured"
+    finding: the pre-lifecycle merge records the plain-HTTP fallback while
+    the front is still starting. Once the readiness task verifies the
+    front, the config file must be re-merged with the verified root —
+    Claude Desktop reads the config file, not this process's memory.
+    """
+
+    supervisor = ServerSupervisor(console_logging=False)
+    settings = Settings.model_construct(
+        host="0.0.0.0", port=8082, tls_proxy_enabled=True, tls_proxy_port=8444
+    )
+
+    with (
+        patch.object(
+            commands,
+            "configure_claude_desktop_config",
+            return_value=True,
+        ) as remerge,
+    ):
+        supervisor._publish_verified_https_gateway_url(
+            settings, "https://localhost:8444"
+        )
+
+    remerge.assert_called_once_with(
+        settings=settings, gateway_base_url="https://localhost:8444"
+    )
+
+
+def test_verified_https_repersist_failure_does_not_raise() -> None:
+    """A config re-merge failure downgrades to a warning, not a crash.
+
+    The re-merge runs inside the live serving window on the readiness
+    thread; a filesystem failure there must not take the generation down.
+    """
+
+    supervisor = ServerSupervisor(console_logging=False)
+    settings = Settings.model_construct(
+        host="0.0.0.0", port=8082, tls_proxy_enabled=True, tls_proxy_port=8444
+    )
+
+    with (
+        patch.object(
+            commands,
+            "configure_claude_desktop_config",
+            side_effect=OSError("disk full"),
+        ),
+    ):
+        supervisor._publish_verified_https_gateway_url(
+            settings, "https://localhost:8444"
+        )
+
+    assert supervisor.desktop_gateway_url() == "https://localhost:8444/claude-desktop"

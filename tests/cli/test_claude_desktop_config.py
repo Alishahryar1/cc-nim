@@ -748,3 +748,53 @@ def test_repeated_merges_absorb_post_merge_user_edits(
     out = json.loads(fake_config.read_text(encoding="utf-8"))
     assert out["inference"]["inferenceAnthropicApiKey"] == "user-key-v2"
     assert out["inference"]["custom"] == "keep"
+
+
+def test_repeated_merges_keep_container_provenance(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """The origin container shape survives repeated merges.
+
+    Regression guard for the Greptile "repeated merge loses container
+    provenance" finding: a second merge sees the ``inference`` object the
+    FIRST merge wrote, so re-snapshotting it would record
+    ``existed=True, was_object=True`` and leave unconfigure restoring into
+    an FCC-shaped container the user never had — an empty ``inference``
+    where the entry was absent, or ``{}`` where the user held a scalar. The
+    original provenance must be retained from the ownership record.
+    """
+
+    # Absent origin: after configure + rotated re-configure + unconfigure,
+    # the inference entry must be gone entirely.
+    fake_config.write_text(json.dumps({}), encoding="utf-8")
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    rotated = fake_settings.model_copy(update={"proxy_auth_token": "tok-456"})
+    assert (
+        claude_desktop.configure_claude_desktop_config(fake_config, settings=rotated)
+        is True
+    )
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {}
+
+    # Scalar origin: the user's non-object value must come back verbatim.
+    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    assert (
+        claude_desktop.configure_claude_desktop_config(fake_config, settings=rotated)
+        is True
+    )
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+        "inference": "legacy-scalar"
+    }

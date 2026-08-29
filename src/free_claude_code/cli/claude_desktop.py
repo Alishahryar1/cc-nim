@@ -370,6 +370,27 @@ def configure_claude_desktop_config(
                 if previous is not None
                 else prior.inference_keys
             ),
+            # The container provenance (absent / object / scalar origin) is a
+            # fact about the FIRST merge: this merge sees an ``inference``
+            # that configure itself wrote, which would otherwise overwrite
+            # the original origin with ``existed=True, was_object=True`` and
+            # leave unconfigure restoring into an FCC-shaped container the
+            # user never had.
+            inference_existed=(
+                previous.inference_existed
+                if previous is not None
+                else prior.inference_existed
+            ),
+            inference_was_object=(
+                previous.inference_was_object
+                if previous is not None
+                else prior.inference_was_object
+            ),
+            inference_scalar=(
+                previous.inference_scalar
+                if previous is not None
+                else prior.inference_scalar
+            ),
         )
         _save_config(record_path, _record_payload(prior))
         _save_config(config_path, data)
