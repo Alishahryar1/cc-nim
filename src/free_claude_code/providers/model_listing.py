@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
-from typing import Any
+from typing import Any, TypeIs
 
 from free_claude_code.application.model_metadata import (
     ProviderModelInfo as _ProviderModelInfo,
@@ -200,10 +200,15 @@ def extract_tool_capable_model_infos(
         }
         if supported_parameter_names.isdisjoint({"tools", "tool_choice"}):
             continue
+        capability_parameters = _optional_string_sequence(supported_parameters)
         model_infos.add(
             _ProviderModelInfo(
                 model_id=model_id,
-                supports_thinking="reasoning" in supported_parameter_names,
+                supports_thinking=(
+                    "reasoning" in capability_parameters
+                    if capability_parameters is not None
+                    else None
+                ),
                 input_modalities=optional_input_modalities(
                     _path(item, ("architecture", "input_modalities"))
                 ),
@@ -323,18 +328,21 @@ def _path(item: Any, path: tuple[str, ...]) -> Any:
     return current
 
 
-def _is_sequence(value: Any) -> bool:
+def _is_sequence(value: object) -> TypeIs[Sequence[object]]:
     return isinstance(value, Sequence) and not isinstance(
         value, str | bytes | bytearray
     )
 
 
-def _optional_string_sequence(value: Any) -> tuple[str, ...] | None:
+def _optional_string_sequence(value: object) -> tuple[str, ...] | None:
     if value is _MISSING or value is None or not _is_sequence(value):
         return None
-    if any(not isinstance(item, str) or not item.strip() for item in value):
-        return None
-    return tuple(value)
+    strings: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            return None
+        strings.append(item)
+    return tuple(strings)
 
 
 _INPUT_MODALITY_BY_VALUE = {modality.value: modality for modality in ModelInputModality}
@@ -358,7 +366,7 @@ def optional_input_modalities(
 
 
 def _input_modalities(
-    item: Any,
+    item: object,
     *,
     sequence_path: tuple[str, ...] | None,
     fixed: frozenset[ModelInputModality] | None,

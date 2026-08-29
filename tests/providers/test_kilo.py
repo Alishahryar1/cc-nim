@@ -392,6 +392,11 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
                     "supported_parameters": ["tools"],
                 },
                 {
+                    "id": "malformed-optional-metadata",
+                    "supported_parameters": ["tools", 7],
+                    "architecture": {"input_modalities": ["text"]},
+                },
+                {
                     "id": "chat-only",
                     "supported_parameters": ["reasoning"],
                 },
@@ -426,6 +431,10 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
             ProviderModelInfo(
                 "missing-optional-metadata",
                 supports_thinking=False,
+            ),
+            ProviderModelInfo(
+                "malformed-optional-metadata",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
             ),
         }
     )

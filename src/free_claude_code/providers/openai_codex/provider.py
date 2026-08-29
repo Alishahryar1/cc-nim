@@ -605,7 +605,7 @@ def _model_infos(payload: Any) -> frozenset[ProviderModelInfo]:
         infos.add(
             ProviderModelInfo(
                 model_id=model_id,
-                supports_thinking=bool(efforts) if isinstance(efforts, list) else None,
+                supports_thinking=_supports_reasoning(efforts),
                 input_modalities=optional_input_modalities(
                     model.get("input_modalities")
                 ),
@@ -614,6 +614,18 @@ def _model_infos(payload: Any) -> frozenset[ProviderModelInfo]:
     if not infos:
         raise ValueError("OpenAI did not advertise any visible models.")
     return frozenset(infos)
+
+
+def _supports_reasoning(levels: object) -> bool | None:
+    if not isinstance(levels, list):
+        return None
+    for level in levels:
+        if not isinstance(level, dict):
+            return None
+        effort = level.get("effort")
+        if not isinstance(effort, str) or not effort.strip():
+            return None
+    return bool(levels)
 
 
 def _effective_error(error: Exception) -> Exception:

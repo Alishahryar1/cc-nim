@@ -198,6 +198,16 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
                             "supported_reasoning_levels": [{"effort": "high"}],
                             "input_modalities": ["text", "image"],
                         },
+                        {
+                            "slug": "gpt-no-reasoning",
+                            "visibility": "list",
+                            "supported_reasoning_levels": [],
+                        },
+                        {
+                            "slug": "gpt-malformed-reasoning",
+                            "visibility": "list",
+                            "supported_reasoning_levels": [None],
+                        },
                         {"slug": "gpt-hidden", "visibility": "hide"},
                     ]
                 },
@@ -238,7 +248,9 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
-            )
+            ),
+            ProviderModelInfo("gpt-no-reasoning", supports_thinking=False),
+            ProviderModelInfo("gpt-malformed-reasoning"),
         }
     )
     response_request = requests[-1]

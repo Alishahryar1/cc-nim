@@ -345,6 +345,11 @@ async def test_model_infos_filter_tool_models_and_thinking_metadata(
                     supported_parameters=["tools", "reasoning"],
                     architecture=SimpleNamespace(input_modalities=["text", "image"]),
                 ),
+                SimpleNamespace(
+                    id="tool-model-with-malformed-capabilities",
+                    supported_parameters=["tools", 7],
+                    architecture=SimpleNamespace(input_modalities=["text"]),
+                ),
                 SimpleNamespace(id="plain-model", supported_parameters=[]),
             ]
         )
@@ -360,7 +365,11 @@ async def test_model_infos_filter_tool_models_and_thinking_metadata(
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
-            )
+            ),
+            ProviderModelInfo(
+                "tool-model-with-malformed-capabilities",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
         }
     )
 
