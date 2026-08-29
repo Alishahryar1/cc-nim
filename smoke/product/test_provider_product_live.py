@@ -19,6 +19,7 @@ from smoke.lib.e2e import (
     echo_tool_schema,
     tool_use_blocks,
 )
+from smoke.lib.http import collect_message_stream
 from smoke.lib.skips import (
     skip_if_upstream_unavailable_events,
     skip_if_upstream_unavailable_exception,
@@ -130,13 +131,17 @@ def test_mistral_native_reasoning_model_e2e(smoke_config: SmokeConfig) -> None:
         "messages": [{"role": "user", "content": "Reply with one short sentence."}],
         "thinking": {"type": "adaptive"},
     }
-    with _server_for_provider(
-        smoke_config, provider_model, "mistral-native-reasoning"
-    ) as server:
-        turn = ConversationDriver(server, smoke_config).stream(payload)
+    try:
+        with _server_for_provider(
+            smoke_config, provider_model, "mistral-native-reasoning"
+        ) as server:
+            events = collect_message_stream(server, payload, smoke_config)
+    except Exception as exc:
+        skip_if_upstream_unavailable_exception(exc)
+        raise
 
     assert_native_thinking_stream(
-        turn.events,
+        events,
         context=f"{provider_model.source}={provider_model.full_model}",
     )
 
