@@ -65,4 +65,8 @@ def _model_metadata(model: ClientModel) -> JsonObject:
     }
     if model.input_modalities is not None:
         metadata["supports_vision"] = ModelInputModality.IMAGE in model.input_modalities
+    if model.context_window_tokens is not None:
+        metadata["max_input_tokens"] = model.context_window_tokens
+    if model.max_output_tokens is not None:
+        metadata["max_output_tokens"] = model.max_output_tokens
     return metadata

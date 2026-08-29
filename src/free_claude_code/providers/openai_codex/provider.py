@@ -48,7 +48,10 @@ from free_claude_code.providers.failure_policy import (
     is_retryable_stream_error,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
-from free_claude_code.providers.model_listing import optional_input_modalities
+from free_claude_code.providers.model_listing import (
+    optional_input_modalities,
+    optional_positive_int,
+)
 from free_claude_code.providers.openai_responses.presentation import (
     MessagesResponsesPresenter,
     NativeResponsesPresenter,
@@ -608,6 +611,9 @@ def _model_infos(payload: Any) -> frozenset[ProviderModelInfo]:
                 supports_thinking=_supports_reasoning(efforts),
                 input_modalities=optional_input_modalities(
                     model.get("input_modalities")
+                ),
+                context_window_tokens=optional_positive_int(
+                    model.get("context_window")
                 ),
             )
         )

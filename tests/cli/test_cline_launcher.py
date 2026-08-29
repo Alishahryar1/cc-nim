@@ -59,6 +59,8 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=131072,
+                max_output_tokens=8192,
             ),
             ClientModel(
                 wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
@@ -66,6 +68,7 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
                 display_name="No-thinking model",
                 supports_reasoning=False,
                 input_modalities=frozenset({ModelInputModality.TEXT}),
+                context_window_tokens=65536,
             ),
             ClientModel(
                 wire_slug="future_provider/unknown-model",
@@ -123,6 +126,8 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
                         "supportsVision": True,
                         "inputModalities": ["text", "image"],
                         "outputModalities": ["text"],
+                        "contextWindow": 131072,
+                        "maxTokens": 8192,
                         "apiFormat": "openai-responses",
                     },
                     "claude-3-freecc-no-thinking/open_router/plain-model": {
@@ -132,6 +137,7 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
                         "supportsVision": False,
                         "inputModalities": ["text"],
                         "outputModalities": ["text"],
+                        "contextWindow": 65536,
                         "apiFormat": "openai-responses",
                     },
                     "future_provider/unknown-model": {
@@ -145,8 +151,6 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
         },
     }
     serialized = json.dumps(config.providers | config.models)
-    assert "contextWindow" not in serialized
-    assert "maxTokens" not in serialized
     assert "reasoningEffort" not in serialized
     assert "proxy-token" not in repr(config)
 

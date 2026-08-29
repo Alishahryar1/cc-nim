@@ -12,6 +12,8 @@ class ProviderModelInfo:
     model_id: str
     supports_thinking: bool | None = None
     input_modalities: frozenset[ModelInputModality] | None = None
+    context_window_tokens: int | None = None
+    max_output_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

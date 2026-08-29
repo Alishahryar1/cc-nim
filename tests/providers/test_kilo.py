@@ -380,6 +380,8 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
                         "output_modalities": ["text"],
                     },
                     "opencode": {"ai_sdk_provider": "anthropic"},
+                    "context_length": 200000,
+                    "top_provider": {"max_completion_tokens": 16000},
                 },
                 {
                     "id": "plain-tool",
@@ -426,6 +428,8 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=200000,
+                max_output_tokens=16000,
             ),
             ProviderModelInfo("plain-tool", supports_thinking=False),
             ProviderModelInfo(

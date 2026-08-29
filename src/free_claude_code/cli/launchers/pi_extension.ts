@@ -37,6 +37,10 @@ function optionalBoolean(value: unknown): boolean | undefined {
 	return typeof value === "boolean" ? value : undefined;
 }
 
+function optionalPositiveInteger(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function inputModalities(value: unknown): ("text" | "image")[] | undefined {
 	if (!Array.isArray(value) || value.length === 0) return undefined;
 	if (value.some((item) => item !== "text" && item !== "image")) return undefined;
@@ -49,6 +53,8 @@ function modelDefinition(
 	providerModel: string,
 	supportsReasoning: boolean | undefined,
 	input: ("text" | "image")[] | undefined,
+	contextWindow: number | undefined,
+	maxTokens: number | undefined,
 ): ProviderModelConfig {
 	return {
 		id,
@@ -56,8 +62,8 @@ function modelDefinition(
 		reasoning: supportsReasoning ?? true,
 		input: input ?? ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: DEFAULT_CONTEXT_WINDOW,
-		maxTokens: DEFAULT_MAX_TOKENS,
+		contextWindow: contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+		maxTokens: maxTokens ?? DEFAULT_MAX_TOKENS,
 	};
 }
 
@@ -79,6 +85,8 @@ export function projectFccModels(payload: unknown): ProviderModelConfig[] {
 				providerModel,
 				optionalBoolean(entry.supportsReasoning),
 				inputModalities(entry.inputModalities),
+				optionalPositiveInteger(entry.contextWindow),
+				optionalPositiveInteger(entry.maxCompletionTokens),
 			),
 		);
 	}

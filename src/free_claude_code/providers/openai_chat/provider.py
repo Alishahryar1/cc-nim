@@ -4,7 +4,7 @@ import asyncio
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
@@ -553,12 +553,23 @@ class OpenAIChatProvider(BaseProvider):
             thinking_sequence_path=listing.thinking_sequence_path,
             fixed_input_modalities=listing.fixed_input_modalities,
             input_modality_boolean_paths=listing.input_modality_boolean_paths,
+            context_window_tokens_path=listing.context_window_tokens_path,
+            max_output_tokens_path=listing.max_output_tokens_path,
+            context_window_tokens_resolver=listing.context_window_tokens_resolver,
         )
         model_infos_by_id = {
             model_info.model_id: model_info for model_info in live_model_infos
         }
         for model_info in model_infos_from_ids(listing.additional_model_ids):
-            model_infos_by_id.setdefault(model_info.model_id, model_info)
+            existing = model_infos_by_id.get(model_info.model_id)
+            if existing is None:
+                model_infos_by_id[model_info.model_id] = model_info
+                continue
+            model_infos_by_id[model_info.model_id] = replace(
+                existing,
+                context_window_tokens=None,
+                max_output_tokens=None,
+            )
         return frozenset(model_infos_by_id.values())
 
     async def _list_models_payload(self) -> Any:

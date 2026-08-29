@@ -13,7 +13,9 @@ from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.model_listing import (
     InputModalityBooleanPaths,
+    ModelTokenLimitResolver,
     RequiredPathValues,
+    live_provider_context_window_consensus,
 )
 
 from .base_url import openai_v1_base_url
@@ -103,6 +105,9 @@ class OpenAIModelListing:
     thinking_sequence_path: tuple[str, ...] | None = None
     fixed_input_modalities: frozenset[ModelInputModality] | None = None
     input_modality_boolean_paths: InputModalityBooleanPaths = ()
+    context_window_tokens_path: tuple[str, ...] | None = None
+    max_output_tokens_path: tuple[str, ...] | None = None
+    context_window_tokens_resolver: ModelTokenLimitResolver | None = None
     pagination: OpenAIModelPagination | None = None
 
 
@@ -280,6 +285,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             path="/models",
             collection_field=None,
             required_path_values=((("type",), ("chat",)),),
+            context_window_tokens_path=("context_length",),
         ),
         reasoning_delta_field="reasoning",
     ),
@@ -305,6 +311,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             required_null_field="deprecated",
             tags_field="tags",
             non_thinking_tag="non-reasoning",
+            context_window_tokens_path=("max_tokens",),
         ),
     ),
     "siliconflow": OpenAIChatProfile(
@@ -337,6 +344,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             query_params=(("verbose", "true"),),
             required_path_values=((("architecture", "modality"), ("text->text",)),),
             fixed_input_modalities=_TEXT_INPUT_MODALITIES,
+            context_window_tokens_path=("context_length",),
         ),
     ),
     "chutes": OpenAIChatProfile(
@@ -356,6 +364,8 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             exclude_missing_sequence_fields=True,
             tags_field="supported_features",
             input_modalities_path=("input_modalities",),
+            context_window_tokens_path=("context_length",),
+            max_output_tokens_path=("max_output_length",),
         ),
     ),
     "featherless": OpenAIChatProfile(
@@ -384,6 +394,8 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             input_modality_boolean_paths=(
                 (ModelInputModality.IMAGE, ("features", "image_input")),
             ),
+            context_window_tokens_path=("context_length",),
+            max_output_tokens_path=("max_completion_tokens",),
             pagination=OpenAIModelPagination(),
         ),
     ),
@@ -415,6 +427,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             ),
             thinking_boolean_path=("capabilities", "reasoning"),
             input_modalities_path=("input_modalities",),
+            context_window_tokens_path=("context_length",),
         ),
         reasoning_delta_field="reasoning",
         reasoning_delta_fallback_field="reasoning_content",
@@ -456,6 +469,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
                 ),
                 (ModelInputModality.IMAGE, ("capabilities", "vision")),
             ),
+            context_window_tokens_path=("max_context_length",),
         ),
     ),
     "vercel": OpenAIChatProfile(
@@ -469,6 +483,8 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         model_listing=OpenAIModelListing(
             input_modalities_path=("modalities", "input"),
             thinking_sequence_path=("supported_parameters",),
+            context_window_tokens_path=("context_window",),
+            max_output_tokens_path=("max_tokens",),
         ),
     ),
     "bedrock": OpenAIChatProfile(
@@ -486,6 +502,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         NO_REASONING,
         model_listing=OpenAIModelListing(
             input_modalities_path=("architecture", "input_modalities"),
+            context_window_tokens_resolver=live_provider_context_window_consensus,
         ),
     ),
     "cohere": OpenAIChatProfile(
@@ -675,6 +692,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             ),
             thinking_boolean_path=("reasoning",),
             input_modalities_path=("modalities", "input"),
+            context_window_tokens_path=("context_window", "tokens"),
         ),
     ),
     "ollama_cloud": OpenAIChatProfile(

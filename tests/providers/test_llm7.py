@@ -71,6 +71,7 @@ def _catalog_model(
     tools_calling: object = True,
     reasoning: bool | None = None,
     input_modalities: object = ("text",),
+    context_window_tokens: int | None = None,
 ) -> dict[str, object]:
     model: dict[str, object] = {
         "id": model_id,
@@ -81,6 +82,11 @@ def _catalog_model(
     }
     if reasoning is not None:
         model["reasoning"] = reasoning
+    if context_window_tokens is not None:
+        model["context_window"] = {
+            "tokens": context_window_tokens,
+            "characters": context_window_tokens * 4,
+        }
     return model
 
 
@@ -185,7 +191,11 @@ async def test_filters_catalog_and_adds_live_authoritative_selectors(
                 ),
                 _catalog_model("plain-model", reasoning=False),
                 _catalog_model("unknown-reasoning-model"),
-                _catalog_model("default", reasoning=True),
+                _catalog_model(
+                    "default",
+                    reasoning=True,
+                    context_window_tokens=114688,
+                ),
                 _catalog_model("image-generator", model_type="image"),
                 _catalog_model("video-generator", model_type="video"),
                 _catalog_model("nonstreaming-chat", stream=False),

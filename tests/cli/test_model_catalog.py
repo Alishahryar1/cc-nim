@@ -101,12 +101,16 @@ def test_client_models_parse_capabilities_without_deriving_reasoning_from_slug()
                     "provider_model_ref": "provider/reasoning",
                     "supportsReasoning": False,
                     "inputModalities": ["text"],
+                    "contextWindow": 131072,
+                    "maxCompletionTokens": 8192,
                 },
                 {
                     "id": "claude-3-freecc-no-thinking/provider/unknown",
                     "provider_model_ref": "provider/unknown",
                     "supportsReasoning": "not-a-bool",
                     "inputModalities": ["text", "image"],
+                    "contextWindow": 0,
+                    "maxCompletionTokens": "8192",
                 },
                 {
                     "id": "provider/malformed-media",
@@ -118,13 +122,23 @@ def test_client_models_parse_capabilities_without_deriving_reasoning_from_slug()
         }
     )
 
-    assert [(model.supports_reasoning, model.input_modalities) for model in models] == [
-        (False, frozenset({ModelInputModality.TEXT})),
+    assert [
+        (
+            model.supports_reasoning,
+            model.input_modalities,
+            model.context_window_tokens,
+            model.max_output_tokens,
+        )
+        for model in models
+    ] == [
+        (False, frozenset({ModelInputModality.TEXT}), 131072, 8192),
         (
             None,
             frozenset({ModelInputModality.TEXT, ModelInputModality.IMAGE}),
+            None,
+            None,
         ),
-        (True, None),
+        (True, None, None, None),
     ]
 
 

@@ -40,6 +40,7 @@ _PROFILE = OpenAIChatProfile(
             ),
             (ModelInputModality.IMAGE, ("capabilities", "vision")),
         ),
+        context_window_tokens_path=("max_context_length",),
     ),
 )
 

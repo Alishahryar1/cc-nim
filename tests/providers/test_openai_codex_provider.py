@@ -197,6 +197,7 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
                             "supported_in_api": False,
                             "supported_reasoning_levels": [{"effort": "high"}],
                             "input_modalities": ["text", "image"],
+                            "context_window": 272000,
                         },
                         {
                             "slug": "gpt-no-reasoning",
@@ -248,6 +249,7 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=272000,
             ),
             ProviderModelInfo("gpt-no-reasoning", supports_thinking=False),
             ProviderModelInfo("gpt-malformed-reasoning"),

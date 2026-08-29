@@ -1,6 +1,6 @@
 """Provider model-list response parsing helpers."""
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any, TypeIs
 
@@ -14,6 +14,7 @@ type RequiredPathValues = tuple[
     tuple[tuple[str, ...], tuple[ModelListScalar, ...]], ...
 ]
 type InputModalityBooleanPaths = tuple[tuple[ModelInputModality, tuple[str, ...]], ...]
+type ModelTokenLimitResolver = Callable[[object], int | None]
 
 
 class ModelListResponseError(ValueError):
@@ -54,6 +55,9 @@ def extract_openai_model_infos(
     thinking_sequence_path: tuple[str, ...] | None = None,
     fixed_input_modalities: frozenset[ModelInputModality] | None = None,
     input_modality_boolean_paths: InputModalityBooleanPaths = (),
+    context_window_tokens_path: tuple[str, ...] | None = None,
+    max_output_tokens_path: tuple[str, ...] | None = None,
+    context_window_tokens_resolver: ModelTokenLimitResolver | None = None,
 ) -> frozenset[_ProviderModelInfo]:
     """Extract routable IDs from an OpenAI-compatible model-list response."""
     model_infos: dict[str, _ProviderModelInfo] = {}
@@ -146,6 +150,12 @@ def extract_openai_model_infos(
             fixed=fixed_input_modalities,
             boolean_paths=input_modality_boolean_paths,
         )
+        context_window_tokens = (
+            context_window_tokens_resolver(item)
+            if context_window_tokens_resolver is not None
+            else _optional_positive_int_at_path(item, context_window_tokens_path)
+        )
+        max_output_tokens = _optional_positive_int_at_path(item, max_output_tokens_path)
 
         if not included:
             continue
@@ -154,6 +164,8 @@ def extract_openai_model_infos(
             model_id=model_id,
             supports_thinking=supports_thinking,
             input_modalities=input_modalities,
+            context_window_tokens=context_window_tokens,
+            max_output_tokens=max_output_tokens,
         )
         model_infos.setdefault(model_id, model_info)
         if aliases_field is not None:
@@ -211,6 +223,12 @@ def extract_tool_capable_model_infos(
                 ),
                 input_modalities=optional_input_modalities(
                     _path(item, ("architecture", "input_modalities"))
+                ),
+                context_window_tokens=optional_positive_int(
+                    _path(item, ("context_length",))
+                ),
+                max_output_tokens=optional_positive_int(
+                    _path(item, ("top_provider", "max_completion_tokens"))
                 ),
             )
         )
@@ -363,6 +381,37 @@ def optional_input_modalities(
     if ModelInputModality.TEXT not in modalities:
         return None
     return modalities
+
+
+def optional_positive_int(value: object) -> int | None:
+    """Return an exact positive integer, otherwise unknown."""
+    return value if type(value) is int and value > 0 else None
+
+
+def live_provider_context_window_consensus(item: object) -> int | None:
+    """Return the common context limit across every advertised live route."""
+    routes = _path(item, ("providers",))
+    if not _is_sequence(routes):
+        return None
+    live_limits: list[int] = []
+    for route in routes:
+        if _path(route, ("status",)) != "live":
+            continue
+        limit = optional_positive_int(_path(route, ("context_length",)))
+        if limit is None:
+            return None
+        live_limits.append(limit)
+    if not live_limits or len(set(live_limits)) != 1:
+        return None
+    return live_limits[0]
+
+
+def _optional_positive_int_at_path(
+    item: object, path: tuple[str, ...] | None
+) -> int | None:
+    if path is None:
+        return None
+    return optional_positive_int(_path(item, path))
 
 
 def _input_modalities(

@@ -24,12 +24,15 @@ def test_pi_extension_projects_known_capabilities_and_preserves_unknown_defaults
                 "provider_model_ref": "provider/vision-reasoning",
                 "supportsReasoning": True,
                 "inputModalities": ["text", "image"],
+                "contextWindow": 131072,
+                "maxCompletionTokens": 8192,
             },
             {
                 "id": "claude-3-freecc-no-thinking/provider/text-only",
                 "provider_model_ref": "provider/text-only",
                 "supportsReasoning": False,
                 "inputModalities": ["text"],
+                "contextWindow": 65536,
             },
             {
                 "id": "provider/unknown",
@@ -67,4 +70,9 @@ console.log(JSON.stringify(projectFccModels(payload)));
         (True, ["text", "image"]),
         (False, ["text"]),
         (True, ["text"]),
+    ]
+    assert [(model["contextWindow"], model["maxTokens"]) for model in projected] == [
+        (131072, 8192),
+        (65536, 16384),
+        (128000, 16384),
     ]

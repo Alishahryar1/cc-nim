@@ -344,6 +344,11 @@ async def test_model_infos_filter_tool_models_and_thinking_metadata(
                     id="tool-model",
                     supported_parameters=["tools", "reasoning"],
                     architecture=SimpleNamespace(input_modalities=["text", "image"]),
+                    context_length=262144,
+                    top_provider=SimpleNamespace(
+                        context_length=999999,
+                        max_completion_tokens=32768,
+                    ),
                 ),
                 SimpleNamespace(
                     id="tool-model-with-malformed-capabilities",
@@ -365,6 +370,8 @@ async def test_model_infos_filter_tool_models_and_thinking_metadata(
                 input_modalities=frozenset(
                     {ModelInputModality.TEXT, ModelInputModality.IMAGE}
                 ),
+                context_window_tokens=262144,
+                max_output_tokens=32768,
             ),
             ProviderModelInfo(
                 "tool-model-with-malformed-capabilities",

@@ -9,6 +9,8 @@ def test_model_cache_returns_and_prefixes_complete_model_metadata() -> None:
         model_id="vendor/model",
         supports_thinking=False,
         input_modalities=frozenset({ModelInputModality.TEXT, ModelInputModality.IMAGE}),
+        context_window_tokens=131072,
+        max_output_tokens=8192,
     )
 
     cache.cache_model_infos("open_router", (info,))
@@ -22,5 +24,7 @@ def test_model_cache_returns_and_prefixes_complete_model_metadata() -> None:
             input_modalities=frozenset(
                 {ModelInputModality.TEXT, ModelInputModality.IMAGE}
             ),
+            context_window_tokens=131072,
+            max_output_tokens=8192,
         ),
     )
