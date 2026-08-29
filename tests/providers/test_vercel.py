@@ -1,11 +1,14 @@
 """Tests for Vercel AI Gateway provider."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import VERCEL_AI_GATEWAY_DEFAULT_BASE
+from free_claude_code.core.model_capabilities import ModelInputModality
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
@@ -67,6 +70,51 @@ def test_init_strips_trailing_slash(vercel_config):
         )
 
     assert provider._base_url == VERCEL_AI_GATEWAY_DEFAULT_BASE
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_extracts_modalities_and_exhaustive_reasoning_support(
+    vercel_provider,
+) -> None:
+    vercel_provider._client.models.list = AsyncMock(
+        return_value=SimpleNamespace(
+            data=[
+                {
+                    "id": "vision-reasoning",
+                    "modalities": {"input": ["text", "image"]},
+                    "supported_parameters": ["tools", "reasoning"],
+                },
+                {
+                    "id": "text-only",
+                    "modalities": {"input": ["text"]},
+                    "supported_parameters": ["tools"],
+                },
+                {
+                    "id": "malformed-optional",
+                    "modalities": {"input": "text"},
+                    "supported_parameters": "reasoning",
+                },
+            ]
+        )
+    )
+
+    assert await vercel_provider.list_model_infos() == frozenset(
+        {
+            ProviderModelInfo(
+                "vision-reasoning",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "text-only",
+                supports_thinking=False,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ProviderModelInfo("malformed-optional"),
+        }
+    )
 
 
 def test_build_request_body_keeps_max_tokens(vercel_provider):

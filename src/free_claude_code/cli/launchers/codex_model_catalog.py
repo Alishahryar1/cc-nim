@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 from .model_catalog import ClientModel, client_models_from_response
 
@@ -65,12 +66,17 @@ def write_codex_model_catalog(
 
 
 def _codex_catalog_entry(candidate: ClientModel, *, priority: int) -> JsonObject:
-    return {
+    supports_reasoning = candidate.supports_reasoning is not False
+    input_modalities = candidate.input_modalities or frozenset(
+        {ModelInputModality.TEXT}
+    )
+    entry: JsonObject = {
         "slug": candidate.wire_slug,
         "display_name": candidate.display_name,
         "description": "Free Claude Code provider model",
-        "default_reasoning_level": "medium",
-        "supported_reasoning_levels": SUPPORTED_REASONING_LEVELS,
+        "supported_reasoning_levels": (
+            SUPPORTED_REASONING_LEVELS if supports_reasoning else []
+        ),
         "shell_type": "shell_command",
         "visibility": "list",
         "supported_in_api": True,
@@ -78,8 +84,7 @@ def _codex_catalog_entry(candidate: ClientModel, *, priority: int) -> JsonObject
         "additional_speed_tiers": [],
         "service_tiers": [],
         "base_instructions": CODEX_BASE_INSTRUCTIONS,
-        "supports_reasoning_summaries": True,
-        "default_reasoning_summary": "none",
+        "supports_reasoning_summaries": supports_reasoning,
         "support_verbosity": True,
         "default_verbosity": "low",
         "apply_patch_tool_type": "freeform",
@@ -91,7 +96,15 @@ def _codex_catalog_entry(candidate: ClientModel, *, priority: int) -> JsonObject
         "max_context_window": 200000,
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
-        "input_modalities": ["text"],
+        "input_modalities": [
+            modality.value
+            for modality in ModelInputModality
+            if modality in input_modalities
+        ],
         "supports_search_tool": True,
         "use_responses_lite": False,
     }
+    if supports_reasoning:
+        entry["default_reasoning_level"] = "medium"
+        entry["default_reasoning_summary"] = "none"
+    return entry

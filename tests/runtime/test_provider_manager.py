@@ -790,7 +790,10 @@ async def test_application_catalog_survives_generation_replacement() -> None:
     )
 
     assert manager.cached_model_ids() == {"lmstudio": frozenset({"persisted"})}
-    assert manager.cached_model_supports_thinking("lmstudio", "persisted") is True
+    assert manager.cached_model_info("lmstudio", "persisted") == ProviderModelInfo(
+        "persisted",
+        supports_thinking=True,
+    )
     await manager.close()
 
 

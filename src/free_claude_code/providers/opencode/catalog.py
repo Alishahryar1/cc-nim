@@ -9,13 +9,17 @@ from types import MappingProxyType
 import httpx
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
     ProviderOperationKind,
 )
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.failure_policy import classify_provider_failure
-from free_claude_code.providers.model_listing import ModelListResponseError
+from free_claude_code.providers.model_listing import (
+    ModelListResponseError,
+    optional_input_modalities,
+)
 
 OPENCODE_CATALOG_URL = "https://models.opencode.ai/api.json"
 _DEFAULT_PACKAGE = "@ai-sdk/openai-compatible"
@@ -39,6 +43,7 @@ class OpenCodeModelRoute:
     upstream_model_id: str
     transport: OpenCodeUpstreamTransport
     supports_thinking: bool | None
+    input_modalities: frozenset[ModelInputModality] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,10 +120,12 @@ def parse_open_code_catalog(
                 provider_name=provider_name,
                 location=f"model {selector_id!r} provider npm",
             )
-        supports_thinking = _optional_boolean(
-            model.get("reasoning"),
-            provider_name=provider_name,
-            location=f"model {selector_id!r} reasoning",
+        supports_thinking = _optional_boolean(model.get("reasoning"))
+        raw_modalities = model.get("modalities")
+        input_modalities = (
+            optional_input_modalities(raw_modalities.get("input"))
+            if isinstance(raw_modalities, Mapping)
+            else None
         )
         effective_package = model_package or provider_package or _DEFAULT_PACKAGE
         route = OpenCodeModelRoute(
@@ -130,6 +137,7 @@ def parse_open_code_catalog(
                 else OpenCodeUpstreamTransport.CHAT_COMPLETIONS
             ),
             supports_thinking=supports_thinking,
+            input_modalities=input_modalities,
         )
         routes[selector_id] = route
 
@@ -139,6 +147,7 @@ def parse_open_code_catalog(
         ProviderModelInfo(
             model_id=route.selector_id,
             supports_thinking=route.supports_thinking,
+            input_modalities=route.input_modalities,
         )
         for route in routes.values()
     )
@@ -277,15 +286,8 @@ def _optional_package(
     )
 
 
-def _optional_boolean(
-    value: object,
-    *,
-    provider_name: str,
-    location: str,
-) -> bool | None:
-    if value is None or isinstance(value, bool):
-        return value
-    raise _catalog_error(provider_name, f"expected boolean {location}")
+def _optional_boolean(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _model_status(

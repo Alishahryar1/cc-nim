@@ -27,6 +27,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
 )
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
 from free_claude_code.providers.model_listing import ModelListResponseError
@@ -324,12 +325,17 @@ def test_catalog_resolves_package_precedence_status_alias_and_reasoning() -> Non
     snapshot = parse_open_code_catalog(
         _catalog_payload(
             {
-                "provider-default": {"id": "provider-default", "reasoning": False},
+                "provider-default": {
+                    "id": "provider-default",
+                    "reasoning": False,
+                    "modalities": {"input": ["text"]},
+                },
                 "responses-alias": {
                     "id": "actual-responses-id",
                     "provider": {"npm": "@ai-sdk/openai"},
                     "status": "beta",
                     "reasoning": True,
+                    "modalities": {"input": ["text", "image"]},
                 },
                 "anthropic": {
                     "id": "anthropic-id",
@@ -372,8 +378,18 @@ def test_catalog_resolves_package_precedence_status_alias_and_reasoning() -> Non
         assert route.transport is OpenCodeUpstreamTransport.CHAT_COMPLETIONS
     assert snapshot.model_infos == frozenset(
         {
-            ProviderModelInfo("provider-default", supports_thinking=False),
-            ProviderModelInfo("responses-alias", supports_thinking=True),
+            ProviderModelInfo(
+                "provider-default",
+                supports_thinking=False,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ProviderModelInfo(
+                "responses-alias",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
             ProviderModelInfo("anthropic"),
             ProviderModelInfo("google"),
             ProviderModelInfo("unknown-package"),
@@ -404,7 +420,6 @@ def test_catalog_defaults_missing_package_to_chat_completions() -> None:
         (_catalog_payload({" ": {"id": "x"}}), "model selector"),
         (_catalog_payload({"x": {"id": " "}}), "model 'x' id"),
         (_catalog_payload({"x": {"id": "x", "status": "future"}}), "status"),
-        (_catalog_payload({"x": {"id": "x", "reasoning": "yes"}}), "reasoning"),
         (
             _catalog_payload({"x": {"id": "x", "provider": {"npm": " "}}}),
             "provider npm",
@@ -425,6 +440,24 @@ def test_catalog_rejects_malformed_route_critical_data(
             provider_key="opencode",
             provider_name="OPENCODE_ZEN",
         )
+
+
+def test_catalog_degrades_malformed_optional_capabilities_to_unknown() -> None:
+    snapshot = parse_open_code_catalog(
+        _catalog_payload(
+            {
+                "x": {
+                    "id": "x",
+                    "reasoning": "yes",
+                    "modalities": {"input": ["text", 7]},
+                }
+            }
+        ),
+        provider_key="opencode",
+        provider_name="OPENCODE_ZEN",
+    )
+
+    assert snapshot.model_infos == frozenset({ProviderModelInfo("x")})
 
 
 def test_catalog_rejects_duplicate_normalized_selectors() -> None:

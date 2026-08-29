@@ -6,6 +6,7 @@ import pytest
 
 from free_claude_code.cli.launchers.aider_config import build_aider_config
 from free_claude_code.cli.launchers.model_catalog import ClientModel
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 
 def _models() -> tuple[ClientModel, ...]:
@@ -14,13 +15,23 @@ def _models() -> tuple[ClientModel, ...]:
             wire_slug="nvidia_nim/vendor/model",
             provider_model_ref="nvidia_nim/vendor/model",
             display_name="Nested model",
-            allows_reasoning=True,
+            supports_reasoning=True,
+            input_modalities=frozenset(
+                {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+            ),
         ),
         ClientModel(
             wire_slug="ollama_cloud/qwen3-coder:480b",
             provider_model_ref="ollama_cloud/qwen3-coder:480b",
             display_name="Colon model",
-            allows_reasoning=False,
+            supports_reasoning=False,
+            input_modalities=frozenset({ModelInputModality.TEXT}),
+        ),
+        ClientModel(
+            wire_slug="future_provider/unknown-model",
+            provider_model_ref="future_provider/unknown-model",
+            display_name="Unknown model",
+            supports_reasoning=None,
         ),
     )
 
@@ -39,18 +50,33 @@ def test_aider_config_projects_messages_route_and_canonical_catalog() -> None:
                 "api_base": "http://127.0.0.1:9191/v1/messages",
                 "api_key": "os.environ/FCC_AIDER_PROXY_AUTH_A1B2C3",
             },
-        }
+        },
+        {
+            "name": "anthropic/nvidia_nim/vendor/model",
+            "accepts_settings": ["reasoning_effort"],
+        },
+        {
+            "name": "anthropic/ollama_cloud/qwen3-coder:480b",
+            "accepts_settings": [],
+        },
     ]
     assert list(config.metadata) == [
         "anthropic/nvidia_nim/vendor/model",
         "anthropic/ollama_cloud/qwen3-coder:480b",
+        "anthropic/future_provider/unknown-model",
     ]
     assert config.metadata == {
         "anthropic/nvidia_nim/vendor/model": {
             "litellm_provider": "anthropic",
             "mode": "chat",
+            "supports_vision": True,
         },
         "anthropic/ollama_cloud/qwen3-coder:480b": {
+            "litellm_provider": "anthropic",
+            "mode": "chat",
+            "supports_vision": False,
+        },
+        "anthropic/future_provider/unknown-model": {
             "litellm_provider": "anthropic",
             "mode": "chat",
         },
@@ -67,7 +93,6 @@ def test_aider_config_projects_messages_route_and_canonical_catalog() -> None:
         "max_tokens",
         "input_cost_per_token",
         "output_cost_per_token",
-        "reasoning",
         "edit_format",
     ):
         assert fabricated_key not in serialized

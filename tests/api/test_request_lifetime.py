@@ -470,11 +470,11 @@ class _Requests:
     def current_settings(self) -> Settings:
         return self._lease.settings
 
-    def cached_model_supports_thinking(
+    def cached_model_info(
         self,
         provider_id: str,
         model_id: str,
-    ) -> bool | None:
+    ) -> ProviderModelInfo | None:
         del provider_id, model_id
         return None
 

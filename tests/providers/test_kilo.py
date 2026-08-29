@@ -15,6 +15,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.model_listing import ModelListResponseError
@@ -374,7 +375,10 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
                 {
                     "id": "anthropic/tool-reasoning",
                     "supported_parameters": ["tools", "reasoning"],
-                    "architecture": {"output_modalities": ["text"]},
+                    "architecture": {
+                        "input_modalities": ["text", "image"],
+                        "output_modalities": ["text"],
+                    },
                     "opencode": {"ai_sdk_provider": "anthropic"},
                 },
                 {
@@ -386,6 +390,11 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
                 {
                     "id": "missing-optional-metadata",
                     "supported_parameters": ["tools"],
+                },
+                {
+                    "id": "malformed-optional-metadata",
+                    "supported_parameters": ["tools", 7],
+                    "architecture": {"input_modalities": ["text"]},
                 },
                 {
                     "id": "chat-only",
@@ -411,11 +420,21 @@ async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_pro
 
     assert await kilo_provider.list_model_infos() == frozenset(
         {
-            ProviderModelInfo("anthropic/tool-reasoning", supports_thinking=True),
+            ProviderModelInfo(
+                "anthropic/tool-reasoning",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
             ProviderModelInfo("plain-tool", supports_thinking=False),
             ProviderModelInfo(
                 "missing-optional-metadata",
                 supports_thinking=False,
+            ),
+            ProviderModelInfo(
+                "malformed-optional-metadata",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
             ),
         }
     )

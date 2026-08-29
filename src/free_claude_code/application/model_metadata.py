@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from free_claude_code.core.model_capabilities import ModelInputModality
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderModelInfo:
@@ -9,6 +11,7 @@ class ProviderModelInfo:
 
     model_id: str
     supports_thinking: bool | None = None
+    input_modalities: frozenset[ModelInputModality] | None = None
 
 
 @dataclass(frozen=True, slots=True)

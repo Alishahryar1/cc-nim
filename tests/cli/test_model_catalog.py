@@ -9,6 +9,7 @@ from free_claude_code.cli.launchers.model_catalog import (
     fetch_proxy_models_response,
 )
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 
 def test_client_models_project_nested_direct_refs_in_source_order() -> None:
@@ -32,13 +33,13 @@ def test_client_models_project_nested_direct_refs_in_source_order() -> None:
             wire_slug="nvidia_nim/nvidia/nemotron-3-super",
             provider_model_ref="nvidia_nim/nvidia/nemotron-3-super",
             display_name="Display 0",
-            allows_reasoning=True,
+            supports_reasoning=None,
         ),
         ClientModel(
             wire_slug="open_router/meta-llama/llama-3.3-70b",
             provider_model_ref="open_router/meta-llama/llama-3.3-70b",
             display_name="Display 1",
-            allows_reasoning=True,
+            supports_reasoning=None,
         ),
     )
 
@@ -51,6 +52,7 @@ def test_client_models_keep_no_thinking_direct_route() -> None:
                     "id": "claude-3-freecc-no-thinking/nvidia_nim/provider-model",
                     "provider_model_ref": "nvidia_nim/provider-model",
                     "display_name": "Display 0",
+                    "supportsReasoning": False,
                 }
             ]
         }
@@ -61,7 +63,7 @@ def test_client_models_keep_no_thinking_direct_route() -> None:
             wire_slug="claude-3-freecc-no-thinking/nvidia_nim/provider-model",
             provider_model_ref="nvidia_nim/provider-model",
             display_name="Display 0",
-            allows_reasoning=False,
+            supports_reasoning=False,
         ),
     )
 
@@ -74,6 +76,7 @@ def test_client_models_keep_no_thinking_only_route() -> None:
                     "id": "claude-3-freecc-no-thinking/open_router/plain-model",
                     "provider_model_ref": "open_router/plain-model",
                     "display_name": "Display 0",
+                    "supportsReasoning": False,
                 }
             ]
         }
@@ -82,9 +85,47 @@ def test_client_models_keep_no_thinking_only_route() -> None:
             wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
             provider_model_ref="open_router/plain-model",
             display_name="Display 0",
-            allows_reasoning=False,
+            supports_reasoning=False,
         ),
     )
+
+
+def test_client_models_parse_capabilities_without_deriving_reasoning_from_slug() -> (
+    None
+):
+    models = client_models_from_response(
+        {
+            "data": [
+                {
+                    "id": "provider/reasoning",
+                    "provider_model_ref": "provider/reasoning",
+                    "supportsReasoning": False,
+                    "inputModalities": ["text"],
+                },
+                {
+                    "id": "claude-3-freecc-no-thinking/provider/unknown",
+                    "provider_model_ref": "provider/unknown",
+                    "supportsReasoning": "not-a-bool",
+                    "inputModalities": ["text", "image"],
+                },
+                {
+                    "id": "provider/malformed-media",
+                    "provider_model_ref": "provider/malformed-media",
+                    "supportsReasoning": True,
+                    "inputModalities": ["text", 7],
+                },
+            ]
+        }
+    )
+
+    assert [(model.supports_reasoning, model.input_modalities) for model in models] == [
+        (False, frozenset({ModelInputModality.TEXT})),
+        (
+            None,
+            frozenset({ModelInputModality.TEXT, ModelInputModality.IMAGE}),
+        ),
+        (True, None),
+    ]
 
 
 def test_client_models_ignore_compatibility_unknown_and_malformed_entries() -> None:
@@ -195,7 +236,7 @@ def _client_model(wire_slug: str, provider_model_ref: str) -> ClientModel:
         wire_slug=wire_slug,
         provider_model_ref=provider_model_ref,
         display_name=provider_model_ref,
-        allows_reasoning=wire_slug == provider_model_ref,
+        supports_reasoning=wire_slug == provider_model_ref,
     )
 
 

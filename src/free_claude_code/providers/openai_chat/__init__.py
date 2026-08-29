@@ -8,7 +8,7 @@ from .extra_body import (
     validate_extra_body_does_not_override_canonical_fields,
     validate_extra_body_does_not_override_reasoning_fields,
 )
-from .profiles import OPENAI_CHAT_PROFILES, OpenAIChatProfile
+from .profiles import OPENAI_CHAT_PROFILES, OpenAIChatProfile, OpenAIModelListing
 from .provider import OpenAIAsyncCredentialProvider, OpenAIChatProvider
 from .reasoning import (
     NO_REASONING,
@@ -55,6 +55,7 @@ __all__ = [
     "OpenAIChatProfile",
     "OpenAIChatProvider",
     "OpenAIChatRequestPolicy",
+    "OpenAIModelListing",
     "ReasoningObject",
     "apply_openai_chat_body_policy",
     "apply_reasoning_details_replay",

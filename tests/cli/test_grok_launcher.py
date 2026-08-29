@@ -28,13 +28,13 @@ def _models() -> tuple[ClientModel, ...]:
             wire_slug="nvidia_nim/vendor/model",
             provider_model_ref="nvidia_nim/vendor/model",
             display_name="Nested model",
-            allows_reasoning=True,
+            supports_reasoning=True,
         ),
         ClientModel(
             wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
             provider_model_ref="open_router/plain-model",
             display_name="Plain model",
-            allows_reasoning=False,
+            supports_reasoning=False,
         ),
     )
 

@@ -3,10 +3,12 @@
 import pytest
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.providers.model_listing import (
     ModelListResponseError,
     RequiredPathValues,
     extract_openai_model_infos,
+    extract_tool_capable_model_infos,
 )
 
 
@@ -85,4 +87,141 @@ def test_duplicate_model_ids_preserve_first_validated_capability() -> None:
 
     assert model_infos == frozenset(
         {ProviderModelInfo("overlap", supports_thinking=True)}
+    )
+
+
+def test_optional_model_capabilities_are_normalized_and_copied_to_aliases() -> None:
+    model_infos = extract_openai_model_infos(
+        {
+            "data": [
+                {
+                    "id": "vision-reasoning",
+                    "aliases": ["latest"],
+                    "architecture": {"input_modalities": ["text", "image", "audio"]},
+                    "supported_parameters": ["tools", "reasoning"],
+                },
+                {
+                    "id": "text-only",
+                    "aliases": [],
+                    "architecture": {"input_modalities": ["text"]},
+                    "supported_parameters": ["tools"],
+                },
+            ]
+        },
+        provider_name="TEST",
+        aliases_field="aliases",
+        input_modalities_path=("architecture", "input_modalities"),
+        thinking_sequence_path=("supported_parameters",),
+    )
+
+    vision = ProviderModelInfo(
+        "vision-reasoning",
+        supports_thinking=True,
+        input_modalities=frozenset({ModelInputModality.TEXT, ModelInputModality.IMAGE}),
+    )
+    assert model_infos == frozenset(
+        {
+            vision,
+            ProviderModelInfo(
+                "latest",
+                supports_thinking=True,
+                input_modalities=vision.input_modalities,
+            ),
+            ProviderModelInfo(
+                "text-only",
+                supports_thinking=False,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("modalities", ["image"], (True, None)),
+        ("modalities", "text", (True, None)),
+        ("reasoning", "true", (None, frozenset({ModelInputModality.TEXT}))),
+        ("reasoning", ["reasoning", 7], (None, frozenset({ModelInputModality.TEXT}))),
+    ],
+)
+def test_malformed_optional_capability_degrades_only_that_field(
+    field: str,
+    value: object,
+    expected: tuple[bool | None, frozenset[ModelInputModality] | None],
+) -> None:
+    item: dict[str, object] = {
+        "id": "model",
+        "architecture": {"input_modalities": ["text"]},
+        "supported_parameters": ["reasoning"],
+    }
+    if field == "modalities":
+        item["architecture"] = {"input_modalities": value}
+    else:
+        item["supported_parameters"] = value
+
+    [info] = extract_openai_model_infos(
+        {"data": [item]},
+        provider_name="TEST",
+        input_modalities_path=("architecture", "input_modalities"),
+        thinking_sequence_path=("supported_parameters",),
+    )
+
+    assert (info.supports_thinking, info.input_modalities) == expected
+
+
+def test_malformed_optional_boolean_and_tags_are_unknown_not_catalog_failures() -> None:
+    boolean_info = next(
+        iter(
+            extract_openai_model_infos(
+                {"data": [{"id": "model", "capabilities": {"reasoning": "yes"}}]},
+                provider_name="TEST",
+                thinking_boolean_path=("capabilities", "reasoning"),
+            )
+        )
+    )
+    tags_info = next(
+        iter(
+            extract_openai_model_infos(
+                {"data": [{"id": "model", "tags": ["reasoning", 7]}]},
+                provider_name="TEST",
+                tags_field="tags",
+            )
+        )
+    )
+
+    assert boolean_info.supports_thinking is None
+    assert tags_info.supports_thinking is None
+
+
+def test_tool_capable_parser_retains_exact_input_modalities() -> None:
+    infos = extract_tool_capable_model_infos(
+        {
+            "data": [
+                {
+                    "id": "vision",
+                    "supported_parameters": ["tools", "reasoning"],
+                    "architecture": {"input_modalities": ["text", "image", "audio"]},
+                },
+                {
+                    "id": "unknown-media",
+                    "supported_parameters": ["tool_choice"],
+                    "architecture": {"input_modalities": "text"},
+                },
+            ]
+        },
+        provider_name="TEST",
+    )
+
+    assert infos == frozenset(
+        {
+            ProviderModelInfo(
+                "vision",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo("unknown-media", supports_thinking=False),
+        }
     )

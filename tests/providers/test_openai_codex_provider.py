@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -16,6 +17,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.core.diagnostics import ERROR_DETAIL_DISPLAY_CAP_BYTES
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
@@ -194,6 +196,17 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
                             "visibility": "list",
                             "supported_in_api": False,
                             "supported_reasoning_levels": [{"effort": "high"}],
+                            "input_modalities": ["text", "image"],
+                        },
+                        {
+                            "slug": "gpt-no-reasoning",
+                            "visibility": "list",
+                            "supported_reasoning_levels": [],
+                        },
+                        {
+                            "slug": "gpt-malformed-reasoning",
+                            "visibility": "list",
+                            "supported_reasoning_levels": [None],
                         },
                         {"slug": "gpt-hidden", "visibility": "hide"},
                     ]
@@ -227,9 +240,19 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
         )
     )
 
-    assert {(info.model_id, info.supports_thinking) for info in infos} == {
-        ("gpt-visible", True)
-    }
+    assert infos == frozenset(
+        {
+            ProviderModelInfo(
+                "gpt-visible",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo("gpt-no-reasoning", supports_thinking=False),
+            ProviderModelInfo("gpt-malformed-reasoning"),
+        }
+    )
     response_request = requests[-1]
     assert response_request.headers["authorization"] == "Bearer access_1"
     assert response_request.headers["chatgpt-account-id"] == "account_1"
