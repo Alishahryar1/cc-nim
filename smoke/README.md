@@ -103,14 +103,14 @@ uv run pytest smoke/product -n 0 -s --tb=short
 ```powershell
 $env:FCC_LIVE_SMOKE = "1"
 $env:FCC_SMOKE_TARGETS = "nvidia_nim_cli"
-$env:FCC_SMOKE_NIM_MODELS = "z-ai/glm-5.2,moonshotai/kimi-k2.6,minimaxai/minimax-m2.7,minimaxai/minimax-m3,nvidia/nemotron-3-super-120b-a12b,deepseek-ai/deepseek-v4-pro,deepseek-ai/deepseek-v4-flash"
+$env:FCC_SMOKE_NIM_MODELS = "nvidia/nemotron-3.5-lightning-30b-a3b,moonshotai/kimi-k3,minimaxai/minimax-m3,nvidia/nemotron-3-super-120b-a12b"
 uv run pytest smoke/product -n 0 -s --tb=short
 ```
 
 ```powershell
 $env:FCC_LIVE_SMOKE = "1"
 $env:FCC_SMOKE_TARGETS = "openrouter_free_cli"
-$env:FCC_SMOKE_OPENROUTER_FREE_MODELS = "nvidia/nemotron-3-super-120b-a12b:free,openai/gpt-oss-120b:free,poolside/laguna-m.1:free"
+$env:FCC_SMOKE_OPENROUTER_FREE_MODELS = "nvidia/nemotron-3-super-120b-a12b:free,poolside/laguna-s-2.1:free,poolside/laguna-xs-2.1:free"
 uv run pytest smoke/product -n 0 -s --tb=short
 ```
 

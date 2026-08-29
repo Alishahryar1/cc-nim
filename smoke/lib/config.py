@@ -101,18 +101,15 @@ MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
     "nvidia/nemotron-3.5-lightning-30b-a3b",
-    "moonshotai/kimi-k2.6",
-    "minimaxai/minimax-m2.7",
+    "moonshotai/kimi-k3",
     "minimaxai/minimax-m3",
     "nvidia/nemotron-3-super-120b-a12b",
-    "deepseek-ai/deepseek-v4-pro",
-    "deepseek-ai/deepseek-v4-flash",
 )
 
 OPENROUTER_FREE_CLI_DEFAULT_MODELS: tuple[str, ...] = (
     "nvidia/nemotron-3-super-120b-a12b:free",
-    "openai/gpt-oss-120b:free",
-    "poolside/laguna-m.1:free",
+    "poolside/laguna-s-2.1:free",
+    "poolside/laguna-xs-2.1:free",
 )
 
 

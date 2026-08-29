@@ -67,7 +67,8 @@ def build_hermes_managed_config(
     provider_ref = f"custom:{provider_key}"
     key_env = f"{HERMES_KEY_ENV_PREFIX}{nonce.upper()}"
     auxiliary: JsonObject = {
-        task: _auxiliary_task_config(task) for task in _AUXILIARY_TASKS
+        task: _auxiliary_task_config(task, provider_ref=provider_ref)
+        for task in _AUXILIARY_TASKS
     }
     model_overrides = {
         model.wire_slug: override
@@ -80,6 +81,9 @@ def build_hermes_managed_config(
                 "name": "Free Claude Code",
                 "api": proxy_v1_url(proxy_root_url),
                 "key_env": key_env,
+                "extra_headers": {
+                    "Authorization": f"Bearer ${{{key_env}}}",
+                },
                 "transport": "codex_responses",
                 "default_model": active_model,
                 "models": {wire_slug: {} for wire_slug in wire_slugs},
@@ -108,9 +112,9 @@ def build_hermes_managed_config(
     )
 
 
-def _auxiliary_task_config(task: str) -> JsonObject:
+def _auxiliary_task_config(task: str, *, provider_ref: str) -> JsonObject:
     config: JsonObject = {
-        "provider": "main",
+        "provider": provider_ref,
         "model": "",
         "base_url": "",
         "api_key": "",

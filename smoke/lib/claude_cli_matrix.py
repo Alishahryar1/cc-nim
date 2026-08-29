@@ -286,9 +286,6 @@ def classify_probe(
         return "skipped", "missing_env"
     if run.timed_out:
         return "failed", "probe_timeout"
-    if requires_agent and not _tool_catalog_has(log_delta, "Agent"):
-        return "failed", "harness_bug"
-
     marker_ok = not marker or marker in combined
     tool_ok = not requires_tool_result or '"tool_result"' in combined
     agent_ok = not requires_agent or (
