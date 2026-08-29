@@ -114,7 +114,12 @@ def test_messages_auth_gives_authorization_precedence_over_x_api_key():
     app.dependency_overrides.clear()
 
 
-def test_x_api_key_remains_rejected_on_non_messages_routes():
+def test_x_api_key_is_accepted_on_all_proxy_auth_routes():
+    # Claude Desktop authenticates to the inference gateway with an
+    # Anthropic-native ``x-api-key`` header, and its model discovery reads the
+    # models route. Every proxy-authenticated route therefore accepts
+    # ``x-api-key`` as an equal scheme alongside Bearer, while a wrong key is
+    # still rejected.
     client = TestClient(app)
     settings = Settings(proxy_auth_enabled=True, proxy_auth_token="route-token")
     app.dependency_overrides[get_settings] = lambda: settings
@@ -125,7 +130,10 @@ def test_x_api_key_remains_rejected_on_non_messages_routes():
         (client.get, "/"),
     ):
         response = method(path, headers={"X-API-Key": "route-token"})
-        assert response.status_code == 401
+        assert response.status_code in (200, 204)
+
+        wrong = method(path, headers={"X-API-Key": "wrong"})
+        assert wrong.status_code == 401
 
     app.dependency_overrides.clear()
 
