@@ -846,3 +846,42 @@ def test_uninstallers_guard_running_commands_and_preserve_shared_owners() -> Non
         assert "is not installed" in text
         assert "no tool" not in text
         assert "nothing to uninstall" not in text
+
+
+LINUX_DESKTOP_MARKER = "# Owned by Free Claude Code. Remove this line to unclaim."
+
+
+def test_uninstall_sh_removes_owned_linux_desktop_entry_and_icon(
+    posix_uninstall_harness,
+) -> None:
+    data_home = posix_uninstall_harness.home / ".local" / "share"
+    posix_uninstall_harness.env["XDG_DATA_HOME"] = str(data_home)
+    posix_uninstall_harness.env["FAKE_UNAME"] = "Linux"
+    entry = data_home / "applications" / "free-claude-code.desktop"
+    icon = data_home / "icons" / "free-claude-code.png"
+    entry.parent.mkdir(parents=True)
+    icon.parent.mkdir(parents=True)
+    entry.write_text(f"{LINUX_DESKTOP_MARKER}\n[Desktop Entry]\n", encoding="utf-8")
+    icon.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    result = posix_uninstall_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert not entry.exists()
+    assert not icon.exists()
+
+
+def test_uninstall_sh_preserves_unowned_linux_desktop_entry(
+    posix_uninstall_harness,
+) -> None:
+    data_home = posix_uninstall_harness.home / ".local" / "share"
+    posix_uninstall_harness.env["XDG_DATA_HOME"] = str(data_home)
+    posix_uninstall_harness.env["FAKE_UNAME"] = "Linux"
+    entry = data_home / "applications" / "free-claude-code.desktop"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("[Desktop Entry]\nName=User Custom\n", encoding="utf-8")
+
+    result = posix_uninstall_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert entry.read_text(encoding="utf-8") == "[Desktop Entry]\nName=User Custom\n"

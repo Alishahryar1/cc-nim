@@ -1,6 +1,7 @@
 import hashlib
 import io
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -632,11 +633,12 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
         for call in calls
     )
     assert not any(call.startswith("git:") for call in calls)
-    assert calls[-3:] == [
+    assert calls[-4:-1] == [
         "uv:tool update-shell",
         "uv:tool dir --bin",
         "fcc-server:--version",
     ]
+    assert calls[-1].startswith("fcc-desktop:--export-icon ")
     assert not any("hermes:setup" in call for call in calls)
     home = Path(posix_harness.env["HOME"])
     assert (home / ".grok" / "bin" / "grok").is_file()
@@ -922,6 +924,12 @@ def test_install_sh_rejects_incompatible_node_for_selected_dsh(
 def test_install_sh_noninteractive_skips_dsh_without_node(
     posix_harness: PosixHarness,
 ) -> None:
+    if shutil.which("node", path="/usr/bin:/bin") or shutil.which(
+        "npm", path="/usr/bin:/bin"
+    ):
+        pytest.skip(
+            "system node/npm in the harness PATH fallback defeats the no-node setup"
+        )
     (posix_harness.bin_dir / "node").unlink()
     (posix_harness.bin_dir / "npm").unlink()
 
@@ -1490,6 +1498,50 @@ def test_install_sh_dry_run_never_executes_commands(
     assert posix_harness.calls() == []
     assert "Dry run complete. No changes were made." in result.stdout
     assert "Free Claude Code is installed and verified." not in result.stdout
+
+
+def test_install_sh_trusts_managed_caddy_cert_in_nss(
+    posix_harness: PosixHarness,
+) -> None:
+    """Managed-front root cert is trusted in Chromium/Electron's NSS database."""
+
+    def fake_logging_tool(name: str) -> None:
+        _write_executable(
+            posix_harness.bin_dir / name,
+            f"""#!/bin/sh
+echo "{name}:$*" >> "$CALL_LOG"
+exit 0
+""",
+        )
+
+    # certutil exercises the NSS trust path; sudo/update-ca-certificates are
+    # faked so the system-store step never mutates the real host.
+    for tool in ("certutil", "sudo", "update-ca-certificates"):
+        fake_logging_tool(tool)
+    managed_root = (
+        pathlib.Path(posix_harness.env["HOME"])
+        / ".fcc"
+        / "caddy"
+        / "data"
+        / "caddy"
+        / "pki"
+        / "authorities"
+        / "local"
+    )
+    managed_root.mkdir(parents=True)
+    (managed_root / "root.crt").write_text("-----BEGIN CERTIFICATE-----\n")
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    home = posix_harness.env["HOME"]
+    certutil_calls = [
+        call for call in posix_harness.calls() if call.startswith("certutil:")
+    ]
+    assert any(
+        call.startswith("certutil:-A ") and f"sql:{home}/.pki/nssdb" in call
+        for call in certutil_calls
+    ), certutil_calls
+    assert any("-n FCC-Caddy" in call for call in certutil_calls)
 
 
 def test_install_sh_rejects_broken_existing_client_without_replacing_it(
@@ -3479,3 +3531,71 @@ if ($resolved -ne {str(fallback)!r}) {{
     )
 
     assert result.returncode == 0, result.stderr
+
+
+LINUX_DESKTOP_MARKER = "# Owned by Free Claude Code. Remove this line to unclaim."
+
+
+def _linux_desktop_entry_path(posix_harness: PosixHarness) -> Path:
+    return (
+        Path(posix_harness.env["XDG_DATA_HOME"])
+        / "applications"
+        / "free-claude-code.desktop"
+    )
+
+
+def test_install_sh_writes_linux_desktop_entry_and_icon(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["XDG_DATA_HOME"] = str(posix_harness.root / "xdgdata")
+    tool_bin = posix_harness.root / "tool's bin"
+    posix_harness.env["FAKE_TOOL_BIN"] = str(tool_bin)
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    entry = _linux_desktop_entry_path(posix_harness)
+    icon = posix_harness.root / "xdgdata" / "icons" / "free-claude-code.png"
+    text = entry.read_text(encoding="utf-8")
+    assert text.splitlines()[0] == LINUX_DESKTOP_MARKER
+    assert "[Desktop Entry]" in text
+    assert "Name=Free Claude Code" in text
+    expected_command = str(tool_bin / "fcc-desktop").replace("'", "'\\''")
+    assert f"Exec={expected_command}" in text or f"Exec='{expected_command}'" in text
+    assert f"Icon={icon}" in text
+    assert icon.read_bytes() == b"fake icon\n"
+    assert any(
+        call.startswith("fcc-desktop:--export-icon ") and call.endswith(str(icon))
+        for call in posix_harness.calls()
+    )
+    assert "Open Free Claude Code from your application launcher" in result.stdout
+
+
+def test_install_sh_preserves_unowned_linux_desktop_entry(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["XDG_DATA_HOME"] = str(posix_harness.root / "xdgdata")
+    entry = _linux_desktop_entry_path(posix_harness)
+    entry.parent.mkdir(parents=True)
+    entry.write_text("[Desktop Entry]\nName=User Custom\n", encoding="utf-8")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert entry.read_text(encoding="utf-8") == "[Desktop Entry]\nName=User Custom\n"
+    assert "leaving it unchanged" in result.stdout
+    assert not (
+        posix_harness.root / "xdgdata" / "icons" / "free-claude-code.png"
+    ).exists()
+
+
+def test_install_sh_stops_when_linux_icon_export_fails(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["XDG_DATA_HOME"] = str(posix_harness.root / "xdgdata")
+    posix_harness.env["FAIL_STEP"] = "desktop-icon-export"
+
+    result = posix_harness.run(fail_step="desktop-icon-export")
+
+    assert result.returncode != 0
+    assert not _linux_desktop_entry_path(posix_harness).exists()

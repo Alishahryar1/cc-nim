@@ -370,9 +370,11 @@ def test_configure_keeps_first_snapshot_across_remerges(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
-    # The snapshot must record the user's ORIGINAL values: a re-merge that
-    # refreshed it with FCC's own block would make unconfigure "restore"
-    # the FCC values instead of the user's.
+    # The snapshot's user-state entries must record the user's ORIGINAL
+    # values: a re-merge that refreshed them with FCC's own block would make
+    # unconfigure "restore" the FCC values instead of the user's. (The
+    # ``managed`` entry is different: it tracks the newest block FCC writes
+    # and is refreshed on every merge; see the rotation test below.)
     fake_config.write_text(
         json.dumps(
             {
