@@ -12,13 +12,16 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.config.model_refs import configured_chat_model_refs
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.provider_catalog import (
+    PROVIDER_CATALOG,
+    ProviderDescriptor,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.model_listing import ModelListResponseError
 
-from .config import has_provider_configuration
+from .config import has_provider_configuration, string_setting
 from .model_cache import ProviderModelCache
 
 ProviderResolver = Callable[[str], BaseProvider]
@@ -159,16 +162,30 @@ class ProviderModelDiscovery:
         even for the many installs that never run one. Querying it anyway is what
         lets its models reach the client model picker, but an unreachable endpoint
         is the expected state rather than a fault, so it must not be reported.
-        A local provider the customer has routed to is excluded here: there a
-        failure is real and keeps its existing warning.
+
+        Only a provider the customer has expressed no intent about is treated
+        this way. Routing a model to it, or pointing it at a base URL other than
+        the shipped default, is a deliberate act, and a failure to reach what was
+        asked for stays a reported failure.
         """
 
         referenced = set(referenced_provider_ids(self._settings))
         return frozenset(
             provider_id
             for provider_id, descriptor in PROVIDER_CATALOG.items()
-            if descriptor.local and provider_id not in referenced
+            if descriptor.local
+            and provider_id not in referenced
+            and self._has_default_base_url(descriptor)
         )
+
+    def _has_default_base_url(self, descriptor: ProviderDescriptor) -> bool:
+        """Return whether a provider still points at its shipped base URL."""
+
+        attr = descriptor.base_url_attr
+        if attr is None:
+            return True
+        default = Settings.model_fields[attr].get_default(call_default_factory=True)
+        return string_setting(self._settings, attr) == default
 
     def _record_discovery_failure(
         self,

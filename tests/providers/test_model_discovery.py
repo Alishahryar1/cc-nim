@@ -47,6 +47,7 @@ def _settings(
     opencode_api_key: str = "",
     zai_api_key: str = "",
     vertex_project_id: str = "",
+    ollama_base_url: str | None = None,
 ) -> Settings:
     return Settings.model_construct(
         model=model,
@@ -63,6 +64,7 @@ def _settings(
         zai_api_key=zai_api_key,
         vertex_project_id=vertex_project_id,
         log_api_error_tracebacks=False,
+        **({"ollama_base_url": ollama_base_url} if ollama_base_url is not None else {}),
     )
 
 
@@ -610,6 +612,35 @@ async def test_runtime_refresh_model_list_cache_reports_a_routed_local_failure()
 
     assert result.failed_provider_ids == ("ollama",)
     assert runtime.cached_model_ids() == {}
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_reports_a_relocated_local_failure() -> (
+    None
+):
+    # Pointing a local provider somewhere other than the shipped default is as
+    # deliberate as routing a model to it, so an unreachable host is reported
+    # even though no configured model names the provider.
+    settings = _settings(ollama_base_url="http://gpu-box:11434")
+    runtime = _manager(settings, _offline_local_providers())
+
+    result = await runtime.refresh_model_list_cache()
+
+    assert result.failed_provider_ids == ("ollama",)
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_stays_quiet_for_default_local_hosts() -> (
+    None
+):
+    # The default base URL is present on every install, so it carries no intent
+    # and an absent daemon must not be reported as a provider failure.
+    settings = _settings()
+    runtime = _manager(settings, _offline_local_providers())
+
+    result = await runtime.refresh_model_list_cache()
+
+    assert result.failed_provider_ids == ()
 
 
 @pytest.mark.asyncio
