@@ -261,6 +261,33 @@ def test_start_falls_back_to_http_without_caddy_binary(
     popen.assert_not_called()
 
 
+def test_start_swallows_state_preparation_errors(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Filesystem failures while preparing the caddy home fall back to HTTP.
+
+    ``start()`` promises never to raise: ``ServerSupervisor._run_once``
+    calls it outside any try/except of its own, so an escaping ``OSError``
+    from the home-directory or Caddyfile write would kill the generation
+    before the plain-HTTP fallback could serve.
+    """
+
+    unwritable = tmp_path / "occupied"
+    unwritable.write_text("not a directory", encoding="utf-8")
+
+    with (
+        patch.object(tls_proxy, "probe_fcc_front", return_value=False),
+        patch.object(tls_proxy.shutil, "which", return_value="/usr/bin/caddy"),
+        patch.object(tls_proxy.subprocess, "Popen") as popen,
+    ):
+        proxy = CaddyTlsProxy(settings, home_dir=unwritable / "caddy")
+        started = proxy.start()
+
+    assert started is False
+    popen.assert_not_called()
+
+
 def test_start_reports_child_that_exits_immediately(
     settings: Settings,
     tmp_path: Path,

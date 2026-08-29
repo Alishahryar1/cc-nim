@@ -212,8 +212,16 @@ class CaddyTlsProxy:
             )
             return False
 
-        self._home_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.caddyfile_path.write_text(self.render_caddyfile(), encoding="utf-8")
+        try:
+            self._home_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.caddyfile_path.write_text(self.render_caddyfile(), encoding="utf-8")
+        except OSError as exc:
+            logger.warning(
+                "Could not prepare the managed caddy state directory: {}; "
+                "Claude Desktop routing stays on plain HTTP.",
+                exc,
+            )
+            return False
         env = dict(os.environ)
         env["XDG_DATA_HOME"] = str(self._home_dir / "data")
         env["XDG_CONFIG_HOME"] = str(self._home_dir / "config")
