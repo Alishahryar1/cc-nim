@@ -74,8 +74,15 @@ def _model_config(model: ClientModel) -> JsonObject:
             ]
         }
     if model.context_window_tokens is not None or model.max_output_tokens is not None:
+        # OpenCode requires both fields and uses zero when either limit is unknown.
         config["limit"] = {
-            "context": model.context_window_tokens or 0,
-            "output": model.max_output_tokens or 0,
+            "context": (
+                model.context_window_tokens
+                if model.context_window_tokens is not None
+                else 0
+            ),
+            "output": (
+                model.max_output_tokens if model.max_output_tokens is not None else 0
+            ),
         }
     return config
