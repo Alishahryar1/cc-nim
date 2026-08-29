@@ -18,6 +18,7 @@ from free_claude_code.cli.launchers.cline_config import (
 from free_claude_code.cli.launchers.model_catalog import ClientModel
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 
 def _settings(*, token: str = "proxy-token") -> Settings:
@@ -54,13 +55,23 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
                 wire_slug="nvidia_nim/vendor/model",
                 provider_model_ref="nvidia_nim/vendor/model",
                 display_name="Nested model",
-                allows_reasoning=True,
+                supports_reasoning=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
             ),
             ClientModel(
                 wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
                 provider_model_ref="open_router/plain-model",
                 display_name="No-thinking model",
-                allows_reasoning=False,
+                supports_reasoning=False,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ClientModel(
+                wire_slug="future_provider/unknown-model",
+                provider_model_ref="future_provider/unknown-model",
+                display_name="Unknown model",
+                supports_reasoning=None,
             ),
         ),
         proxy_root_url="http://127.0.0.1:9191/",
@@ -102,14 +113,31 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
                 "models": {
                     "nvidia_nim/vendor/model": {
                         "name": "Nested model",
-                        "capabilities": ["streaming", "tools", "reasoning"],
+                        "capabilities": [
+                            "streaming",
+                            "tools",
+                            "reasoning",
+                            "images",
+                        ],
                         "supportsReasoning": True,
+                        "supportsVision": True,
+                        "inputModalities": ["text", "image"],
+                        "outputModalities": ["text"],
                         "apiFormat": "openai-responses",
                     },
                     "claude-3-freecc-no-thinking/open_router/plain-model": {
                         "name": "No-thinking model",
                         "capabilities": ["streaming", "tools"],
                         "supportsReasoning": False,
+                        "supportsVision": False,
+                        "inputModalities": ["text"],
+                        "outputModalities": ["text"],
+                        "apiFormat": "openai-responses",
+                    },
+                    "future_provider/unknown-model": {
+                        "name": "Unknown model",
+                        "capabilities": ["streaming", "tools", "reasoning"],
+                        "supportsReasoning": True,
                         "apiFormat": "openai-responses",
                     },
                 },

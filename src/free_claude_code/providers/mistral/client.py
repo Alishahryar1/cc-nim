@@ -6,6 +6,7 @@ from typing import Any
 from loguru import logger
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -14,6 +15,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
+    OpenAIModelListing,
 )
 
 from .reasoning import (
@@ -27,7 +29,19 @@ _REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="MISTRAL",
     reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
 )
-_PROFILE = OpenAIChatProfile(_REQUEST_POLICY, NO_REASONING)
+_PROFILE = OpenAIChatProfile(
+    _REQUEST_POLICY,
+    NO_REASONING,
+    model_listing=OpenAIModelListing(
+        input_modality_boolean_paths=(
+            (
+                ModelInputModality.TEXT,
+                ("capabilities", "completion_chat"),
+            ),
+            (ModelInputModality.IMAGE, ("capabilities", "vision")),
+        ),
+    ),
+)
 
 
 class MistralProvider(OpenAIChatProvider):

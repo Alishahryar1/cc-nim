@@ -9,8 +9,12 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.model_listing import RequiredPathValues
+from free_claude_code.providers.model_listing import (
+    InputModalityBooleanPaths,
+    RequiredPathValues,
+)
 
 from .base_url import openai_v1_base_url
 from .extra_body import (
@@ -63,6 +67,7 @@ _KIMI_CODE_EFFORTS = (
     (ReasoningEffort.XHIGH, "max"),
     (ReasoningEffort.MAX, "max"),
 )
+_TEXT_INPUT_MODALITIES = frozenset({ModelInputModality.TEXT})
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +99,10 @@ class OpenAIModelListing:
     thinking_tag: str = "reasoning"
     non_thinking_tag: str | None = None
     thinking_boolean_path: tuple[str, ...] | None = None
+    input_modalities_path: tuple[str, ...] | None = None
+    thinking_sequence_path: tuple[str, ...] | None = None
+    fixed_input_modalities: frozenset[ModelInputModality] | None = None
+    input_modality_boolean_paths: InputModalityBooleanPaths = ()
     pagination: OpenAIModelPagination | None = None
 
 
@@ -242,6 +251,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             path="/language-models",
             collection_field="models",
             aliases_field="aliases",
+            input_modalities_path=("input_modalities",),
         ),
     ),
     "qwencloud": OpenAIChatProfile(
@@ -326,6 +336,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             path="/models",
             query_params=(("verbose", "true"),),
             required_path_values=((("architecture", "modality"), ("text->text",)),),
+            fixed_input_modalities=_TEXT_INPUT_MODALITIES,
         ),
     ),
     "chutes": OpenAIChatProfile(
@@ -344,6 +355,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             ),
             exclude_missing_sequence_fields=True,
             tags_field="supported_features",
+            input_modalities_path=("input_modalities",),
         ),
     ),
     "featherless": OpenAIChatProfile(
@@ -367,6 +379,10 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
                 (("features", "tool_use"), (True,)),
                 (("is_gated",), (False,)),
                 (("available_on_current_plan",), (True,)),
+            ),
+            fixed_input_modalities=_TEXT_INPUT_MODALITIES,
+            input_modality_boolean_paths=(
+                (ModelInputModality.IMAGE, ("features", "image_input")),
             ),
             pagination=OpenAIModelPagination(),
         ),
@@ -398,6 +414,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
                 ("output_modalities", "text"),
             ),
             thinking_boolean_path=("capabilities", "reasoning"),
+            input_modalities_path=("input_modalities",),
         ),
         reasoning_delta_field="reasoning",
         reasoning_delta_fallback_field="reasoning_content",
@@ -431,6 +448,15 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
     "mistral_codestral": OpenAIChatProfile(
         _policy("CODESTRAL", ReasoningReplayMode.THINK_TAGS),
         NO_REASONING,
+        model_listing=OpenAIModelListing(
+            input_modality_boolean_paths=(
+                (
+                    ModelInputModality.TEXT,
+                    ("capabilities", "completion_chat"),
+                ),
+                (ModelInputModality.IMAGE, ("capabilities", "vision")),
+            ),
+        ),
     ),
     "vercel": OpenAIChatProfile(
         _policy(
@@ -440,6 +466,10 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
         ),
         ReasoningObject(_ALL_EFFORTS),
+        model_listing=OpenAIModelListing(
+            input_modalities_path=("modalities", "input"),
+            thinking_sequence_path=("supported_parameters",),
+        ),
     ),
     "bedrock": OpenAIChatProfile(
         _policy("BEDROCK", ReasoningReplayMode.THINK_TAGS),
@@ -454,6 +484,9 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
         ),
         NO_REASONING,
+        model_listing=OpenAIModelListing(
+            input_modalities_path=("architecture", "input_modalities"),
+        ),
     ),
     "cohere": OpenAIChatProfile(
         _policy(
@@ -611,6 +644,9 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             _LOW_MEDIUM_HIGH,
             enabled_value="medium",
         ),
+        model_listing=OpenAIModelListing(
+            thinking_boolean_path=("reasoning",),
+        ),
     ),
     "poolside": OpenAIChatProfile(
         _policy(
@@ -638,6 +674,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
                 (("tools_calling",), (True,)),
             ),
             thinking_boolean_path=("reasoning",),
+            input_modalities_path=("modalities", "input"),
         ),
     ),
     "ollama_cloud": OpenAIChatProfile(

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.model_capabilities import ModelInputModality
 from tests.api.support import create_test_app, provider_manager_for_app
 
 
@@ -223,6 +224,72 @@ def test_direct_model_views_exclude_claude_aliases_and_duplicate_variants():
     plain = responses["data"][1]
     assert plain["supportsReasoningEffort"] is False
     assert "reasoningEfforts" not in plain
+
+
+def test_direct_model_views_serialize_known_capabilities_and_omit_unknowns():
+    app = create_test_app(_settings(model_opus=None, model_haiku=None))
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "vision-reasoning",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "text-only",
+                supports_thinking=False,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ProviderModelInfo("unknown"),
+        },
+    )
+    client = TestClient(app)
+
+    messages = {
+        row["provider_model_ref"]: row
+        for row in client.get("/v1/models?view=messages").json()["data"]
+    }
+    responses = {
+        row["provider_model_ref"]: row
+        for row in client.get("/v1/models?view=responses").json()["data"]
+    }
+
+    assert messages["open_router/vision-reasoning"]["supportsReasoning"] is True
+    assert messages["open_router/vision-reasoning"]["inputModalities"] == [
+        "text",
+        "image",
+    ]
+    assert messages["open_router/text-only"]["supportsReasoning"] is False
+    assert messages["open_router/text-only"]["inputModalities"] == ["text"]
+    assert "supportsReasoning" not in messages["open_router/unknown"]
+    assert "inputModalities" not in messages["open_router/unknown"]
+    assert responses["open_router/text-only"]["supportsReasoningEffort"] is False
+    assert "reasoningEfforts" not in responses["open_router/text-only"]
+
+
+def test_claude_model_view_does_not_expose_capability_fields():
+    app = create_test_app(_settings(model_opus=None, model_haiku=None))
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "vision-reasoning",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            )
+        },
+    )
+
+    rows = TestClient(app).get("/v1/models").json()["data"]
+
+    assert all(
+        "supportsReasoning" not in row and "inputModalities" not in row for row in rows
+    )
 
 
 def test_muse_model_catalog_is_the_fixed_responses_projection():

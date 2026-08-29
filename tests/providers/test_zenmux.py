@@ -18,6 +18,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
@@ -392,9 +393,22 @@ async def test_model_catalog_filters_modalities_and_maps_reasoning_capability(
 
     assert model_infos == frozenset(
         {
-            ProviderModelInfo("reasoning-chat", supports_thinking=True),
-            ProviderModelInfo("plain-chat", supports_thinking=False),
-            ProviderModelInfo("unknown-chat"),
+            ProviderModelInfo(
+                "reasoning-chat",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "plain-chat",
+                supports_thinking=False,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ProviderModelInfo(
+                "unknown-chat",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
         }
     )
 
@@ -453,6 +467,7 @@ async def test_model_catalog_uses_documented_endpoint_and_auth() -> None:
             ProviderModelInfo(
                 "deepseek/deepseek-v4-flash-free",
                 supports_thinking=True,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
             )
         }
     )
@@ -481,15 +496,6 @@ async def test_model_catalog_uses_documented_endpoint_and_auth() -> None:
             },
             "output_modalities string array",
         ),
-        (
-            {
-                "id": "bad-reasoning-capability",
-                "input_modalities": ["text"],
-                "output_modalities": ["text"],
-                "capabilities": {"reasoning": "yes"},
-            },
-            "capabilities.reasoning to be boolean",
-        ),
     ],
 )
 @pytest.mark.asyncio
@@ -510,3 +516,35 @@ async def test_model_catalog_rejects_malformed_documented_fields(
         pytest.raises(ModelListResponseError, match=message),
     ):
         await zenmux_provider.list_model_infos()
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_degrades_malformed_optional_reasoning_to_unknown(
+    zenmux_provider: OpenAIChatProvider,
+) -> None:
+    payload = SimpleNamespace(
+        data=[
+            {
+                "id": "bad-reasoning-capability",
+                "input_modalities": ["text"],
+                "output_modalities": ["text"],
+                "capabilities": {"reasoning": "yes"},
+            }
+        ]
+    )
+    with patch.object(
+        zenmux_provider._client.models,
+        "list",
+        new_callable=AsyncMock,
+        return_value=payload,
+    ):
+        infos = await zenmux_provider.list_model_infos()
+
+    assert infos == frozenset(
+        {
+            ProviderModelInfo(
+                "bad-reasoning-capability",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            )
+        }
+    )

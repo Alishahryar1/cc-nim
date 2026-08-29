@@ -1,12 +1,15 @@
 """Tests for Hugging Face Inference Providers."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import HUGGINGFACE_DEFAULT_BASE
 from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
@@ -63,6 +66,38 @@ def test_init_strips_trailing_slash(huggingface_config):
         )
 
     assert provider._base_url == HUGGINGFACE_DEFAULT_BASE
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_extracts_exact_input_modalities(
+    huggingface_provider,
+) -> None:
+    huggingface_provider._client.models.list = AsyncMock(
+        return_value=SimpleNamespace(
+            data=[
+                {
+                    "id": "vision-model",
+                    "architecture": {"input_modalities": ["text", "image", "audio"]},
+                },
+                {
+                    "id": "unknown-model",
+                    "architecture": {"input_modalities": ["image"]},
+                },
+            ]
+        )
+    )
+
+    assert await huggingface_provider.list_model_infos() == frozenset(
+        {
+            ProviderModelInfo(
+                "vision-model",
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo("unknown-model"),
+        }
+    )
 
 
 def test_build_request_body_keeps_max_tokens(huggingface_provider):

@@ -11,6 +11,7 @@ from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKEN
 from free_claude_code.config.provider_catalog import LLM7_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
@@ -69,12 +70,14 @@ def _catalog_model(
     stream: object = True,
     tools_calling: object = True,
     reasoning: bool | None = None,
+    input_modalities: object = ("text",),
 ) -> dict[str, object]:
     model: dict[str, object] = {
         "id": model_id,
         "model_type": model_type,
         "stream": stream,
         "tools_calling": tools_calling,
+        "modalities": {"input": input_modalities},
     }
     if reasoning is not None:
         model["reasoning"] = reasoning
@@ -175,7 +178,11 @@ async def test_filters_catalog_and_adds_live_authoritative_selectors(
     llm7_provider._client.get = AsyncMock(
         return_value={
             "data": [
-                _catalog_model("reasoning-model", reasoning=True),
+                _catalog_model(
+                    "reasoning-model",
+                    reasoning=True,
+                    input_modalities=("text", "image"),
+                ),
                 _catalog_model("plain-model", reasoning=False),
                 _catalog_model("unknown-reasoning-model"),
                 _catalog_model("default", reasoning=True),
@@ -191,10 +198,27 @@ async def test_filters_catalog_and_adds_live_authoritative_selectors(
 
     assert model_infos == frozenset(
         {
-            ProviderModelInfo("reasoning-model", supports_thinking=True),
-            ProviderModelInfo("plain-model", supports_thinking=False),
-            ProviderModelInfo("unknown-reasoning-model"),
-            ProviderModelInfo("default", supports_thinking=True),
+            ProviderModelInfo(
+                "reasoning-model",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "plain-model",
+                supports_thinking=False,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ProviderModelInfo(
+                "unknown-reasoning-model",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ProviderModelInfo(
+                "default",
+                supports_thinking=True,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
             ProviderModelInfo("fast"),
             ProviderModelInfo("pro"),
         }
@@ -232,15 +256,24 @@ async def test_rejects_missing_or_wrongly_typed_required_catalog_metadata(
 
 
 @pytest.mark.asyncio
-async def test_rejects_wrongly_typed_reasoning_metadata(
+async def test_wrongly_typed_optional_reasoning_metadata_is_unknown(
     llm7_provider: OpenAIChatProvider,
 ) -> None:
     item = _catalog_model()
     item["reasoning"] = "true"
     llm7_provider._client.get = AsyncMock(return_value={"data": [item]})
 
-    with pytest.raises(ModelListResponseError, match="reasoning to be boolean"):
-        await llm7_provider.list_model_infos()
+    assert await llm7_provider.list_model_infos() == frozenset(
+        {
+            ProviderModelInfo(
+                _MODEL,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ProviderModelInfo("default"),
+            ProviderModelInfo("fast"),
+            ProviderModelInfo("pro"),
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -278,7 +311,12 @@ async def test_model_catalog_uses_documented_url_and_bearer_auth(
         await llm7_provider.cleanup()
 
     assert model_infos == frozenset(
-        {ProviderModelInfo(_MODEL)}
+        {
+            ProviderModelInfo(
+                _MODEL,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            )
+        }
         | {ProviderModelInfo(selector) for selector in _SELECTOR_IDS}
     )
     assert len(requests) == 1

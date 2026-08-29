@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 from .common import proxy_v1_url
 from .model_catalog import ClientModel
@@ -47,17 +48,7 @@ def build_cline_config(
         "capabilities": ["streaming", "tools"],
     }
     model_entries: JsonObject = {
-        model.wire_slug: {
-            "name": model.display_name,
-            "capabilities": [
-                "streaming",
-                "tools",
-                *(["reasoning"] if model.allows_reasoning else []),
-            ],
-            "supportsReasoning": model.allows_reasoning,
-            "apiFormat": "openai-responses",
-        }
-        for model in models
+        model.wire_slug: _model_entry(model) for model in models
     }
 
     return ClineConfig(
@@ -90,3 +81,36 @@ def build_cline_config(
             },
         },
     )
+
+
+def _model_entry(model: ClientModel) -> JsonObject:
+    supports_reasoning = model.supports_reasoning is not False
+    supports_vision = (
+        model.input_modalities is not None
+        and ModelInputModality.IMAGE in model.input_modalities
+    )
+    capabilities = ["streaming", "tools"]
+    if supports_reasoning:
+        capabilities.append("reasoning")
+    if supports_vision:
+        capabilities.append("images")
+
+    entry: JsonObject = {
+        "name": model.display_name,
+        "capabilities": capabilities,
+        "supportsReasoning": supports_reasoning,
+        "apiFormat": "openai-responses",
+    }
+    if model.input_modalities is not None:
+        entry.update(
+            {
+                "supportsVision": supports_vision,
+                "inputModalities": [
+                    modality.value
+                    for modality in ModelInputModality
+                    if modality in model.input_modalities
+                ],
+                "outputModalities": ["text"],
+            }
+        )
+    return entry

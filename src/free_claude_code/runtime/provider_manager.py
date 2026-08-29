@@ -141,11 +141,11 @@ class ProviderRuntimeManager:
         self._synchronize_model_cache_scope()
         return self._model_cache.cached_model_ids()
 
-    def cached_model_supports_thinking(
+    def cached_model_info(
         self, provider_id: str, model_id: str
-    ) -> bool | None:
+    ) -> ProviderModelInfo | None:
         self._synchronize_model_cache_scope()
-        return self._model_cache.cached_model_supports_thinking(provider_id, model_id)
+        return self._model_cache.cached_model_info(provider_id, model_id)
 
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         self._synchronize_model_cache_scope()

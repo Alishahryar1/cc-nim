@@ -549,6 +549,10 @@ class OpenAIChatProvider(BaseProvider):
             thinking_tag=listing.thinking_tag,
             non_thinking_tag=listing.non_thinking_tag,
             thinking_boolean_path=listing.thinking_boolean_path,
+            input_modalities_path=listing.input_modalities_path,
+            thinking_sequence_path=listing.thinking_sequence_path,
+            fixed_input_modalities=listing.fixed_input_modalities,
+            input_modality_boolean_paths=listing.input_modality_boolean_paths,
         )
         model_infos_by_id = {
             model_info.model_id: model_info for model_info in live_model_infos

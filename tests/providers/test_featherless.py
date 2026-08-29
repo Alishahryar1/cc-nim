@@ -12,6 +12,7 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import FEATHERLESS_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
@@ -59,10 +60,14 @@ def _catalog_model(
     tool_use: object = True,
     gated: object = False,
     available: object = True,
+    image_input: object = False,
 ) -> dict[str, object]:
     return {
         "id": model_id,
-        "features": {"tool_use": tool_use},
+        "features": {
+            "tool_use": tool_use,
+            "image_input": image_input,
+        },
         "is_gated": gated,
         "available_on_current_plan": available,
     }
@@ -244,7 +249,7 @@ async def test_catalog_fetches_all_pages_filters_strictly_and_deduplicates_overl
                 1,
                 2,
                 [
-                    _catalog_model(),
+                    _catalog_model(image_input=True),
                     _catalog_model("gated", gated=True),
                     _catalog_model("unavailable", available=False),
                 ],
@@ -266,8 +271,16 @@ async def test_catalog_fetches_all_pages_filters_strictly_and_deduplicates_overl
 
     assert model_infos == frozenset(
         {
-            ProviderModelInfo(_MODEL),
-            ProviderModelInfo("plain-agent"),
+            ProviderModelInfo(
+                _MODEL,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "plain-agent",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
         }
     )
     assert featherless_provider._client.get.await_count == 2
@@ -334,6 +347,20 @@ async def test_catalog_validates_overlapping_records_before_deduplicating(
 
     with pytest.raises(ModelListResponseError, match=r"features\.tool_use as bool"):
         await featherless_provider.list_model_infos()
+
+
+@pytest.mark.parametrize("image_input", [None, "yes", 1, []])
+@pytest.mark.asyncio
+async def test_catalog_degrades_invalid_optional_image_capability_to_unknown(
+    featherless_provider: OpenAIChatProvider,
+    image_input: object,
+) -> None:
+    model = _catalog_model(image_input=image_input)
+    featherless_provider._client.get = AsyncMock(return_value=_page(1, 1, [model]))
+
+    assert await featherless_provider.list_model_infos() == frozenset(
+        {ProviderModelInfo(_MODEL)}
+    )
 
 
 @pytest.mark.parametrize(
@@ -430,7 +457,16 @@ async def test_catalog_uses_documented_url_query_and_bearer_auth(
         await featherless_provider.cleanup()
 
     assert model_infos == frozenset(
-        {ProviderModelInfo(_MODEL), ProviderModelInfo("second-agent")}
+        {
+            ProviderModelInfo(
+                _MODEL,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+            ProviderModelInfo(
+                "second-agent",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+        }
     )
     assert len(requests) == 2
     assert [request.url.params["page"] for request in requests] == ["1", "2"]

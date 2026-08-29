@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 from .model_catalog import ClientModel
 
@@ -41,11 +42,27 @@ def build_aider_config(
             },
         }
     ]
-    metadata: JsonObject = {
-        f"anthropic/{model.wire_slug}": {
-            "litellm_provider": "anthropic",
-            "mode": "chat",
+    settings.extend(
+        {
+            "name": f"anthropic/{model.wire_slug}",
+            "accepts_settings": (
+                ["reasoning_effort"] if model.supports_reasoning else []
+            ),
         }
         for model in models
+        if model.supports_reasoning is not None
+    )
+    metadata: JsonObject = {
+        f"anthropic/{model.wire_slug}": _model_metadata(model) for model in models
     }
     return AiderConfig(settings=settings, metadata=metadata)
+
+
+def _model_metadata(model: ClientModel) -> JsonObject:
+    metadata: JsonObject = {
+        "litellm_provider": "anthropic",
+        "mode": "chat",
+    }
+    if model.input_modalities is not None:
+        metadata["supports_vision"] = ModelInputModality.IMAGE in model.input_modalities
+    return metadata

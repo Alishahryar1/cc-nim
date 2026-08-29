@@ -33,12 +33,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function modelDefinition(id: string, providerModel: string): ProviderModelConfig {
+function optionalBoolean(value: unknown): boolean | undefined {
+	return typeof value === "boolean" ? value : undefined;
+}
+
+function inputModalities(value: unknown): ("text" | "image")[] | undefined {
+	if (!Array.isArray(value) || value.length === 0) return undefined;
+	if (value.some((item) => item !== "text" && item !== "image")) return undefined;
+	const modalities = (["text", "image"] as const).filter((item) => value.includes(item));
+	return modalities.includes("text") ? modalities : undefined;
+}
+
+function modelDefinition(
+	id: string,
+	providerModel: string,
+	supportsReasoning: boolean | undefined,
+	input: ("text" | "image")[] | undefined,
+): ProviderModelConfig {
 	return {
 		id,
 		name: providerModel,
-		reasoning: id === providerModel,
-		input: ["text"],
+		reasoning: supportsReasoning ?? true,
+		input: input ?? ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: DEFAULT_CONTEXT_WINDOW,
 		maxTokens: DEFAULT_MAX_TOKENS,
@@ -57,7 +73,14 @@ export function projectFccModels(payload: unknown): ProviderModelConfig[] {
 		const providerModel = entry.provider_model_ref.trim();
 		if (!id || !providerModel.includes("/") || seen.has(id)) continue;
 		seen.add(id);
-		models.push(modelDefinition(id, providerModel));
+		models.push(
+			modelDefinition(
+				id,
+				providerModel,
+				optionalBoolean(entry.supportsReasoning),
+				inputModalities(entry.inputModalities),
+			),
+		);
 	}
 
 	if (models.length === 0) {

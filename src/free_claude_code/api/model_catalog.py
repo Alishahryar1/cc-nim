@@ -14,6 +14,7 @@ from free_claude_code.core.gateway_model_ids import (
     gateway_model_id,
     no_thinking_gateway_model_id,
 )
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
 _INFERENCE_IDLE_TIMEOUT_MARGIN_SECONDS = 60
@@ -45,6 +46,12 @@ class ModelResponse(BaseModel):
     )
     supports_reasoning_effort: bool | None = Field(
         default=None, serialization_alias="supportsReasoningEffort"
+    )
+    supports_reasoning: bool | None = Field(
+        default=None, serialization_alias="supportsReasoning"
+    )
+    input_modalities: tuple[ModelInputModality, ...] | None = Field(
+        default=None, serialization_alias="inputModalities"
     )
     reasoning_efforts: tuple[str, ...] | None = Field(
         default=None, serialization_alias="reasoningEfforts"
@@ -110,6 +117,7 @@ SUPPORTED_CLAUDE_MODELS = [
 class _InventoryModel:
     provider_model_ref: str
     supports_thinking: bool | None
+    input_modalities: frozenset[ModelInputModality] | None
 
 
 def build_models_list_response(
@@ -132,14 +140,14 @@ def _build_claude_models_response(
     seen: set[str] = set()
 
     for ref in configured_chat_model_refs(settings):
-        supports_thinking = runtime.cached_model_supports_thinking(
-            ref.provider_id, ref.model_id
-        )
+        model_info = runtime.cached_model_info(ref.provider_id, ref.model_id)
         _append_provider_model_variants(
             models,
             seen,
             ref.model_ref,
-            supports_thinking=supports_thinking,
+            supports_thinking=(
+                model_info.supports_thinking if model_info is not None else None
+            ),
         )
 
     for model_info in runtime.cached_prefixed_model_infos():
@@ -196,6 +204,10 @@ def _build_direct_models_response(
                     "responses" if view is ModelCatalogView.RESPONSES else None
                 ),
                 max_retries=0 if view is ModelCatalogView.RESPONSES else None,
+                supports_reasoning=inventory_model.supports_thinking,
+                input_modalities=_serialize_input_modalities(
+                    inventory_model.input_modalities
+                ),
                 supports_reasoning_effort=(
                     allows_reasoning if view is ModelCatalogView.RESPONSES else None
                 ),
@@ -226,11 +238,15 @@ def _collect_inventory(
         if ref.model_ref in seen:
             continue
         seen.add(ref.model_ref)
+        model_info = runtime.cached_model_info(ref.provider_id, ref.model_id)
         inventory.append(
             _InventoryModel(
                 provider_model_ref=ref.model_ref,
-                supports_thinking=runtime.cached_model_supports_thinking(
-                    ref.provider_id, ref.model_id
+                supports_thinking=(
+                    model_info.supports_thinking if model_info is not None else None
+                ),
+                input_modalities=(
+                    model_info.input_modalities if model_info is not None else None
                 ),
             )
         )
@@ -243,10 +259,19 @@ def _collect_inventory(
             _InventoryModel(
                 provider_model_ref=model_info.model_id,
                 supports_thinking=model_info.supports_thinking,
+                input_modalities=model_info.input_modalities,
             )
         )
 
     return tuple(inventory)
+
+
+def _serialize_input_modalities(
+    modalities: frozenset[ModelInputModality] | None,
+) -> tuple[ModelInputModality, ...] | None:
+    if modalities is None:
+        return None
+    return tuple(modality for modality in ModelInputModality if modality in modalities)
 
 
 def _responses_inference_idle_timeout_seconds(provider_progress_timeout: float) -> int:

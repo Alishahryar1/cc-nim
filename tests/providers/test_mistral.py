@@ -7,8 +7,10 @@ import openai
 import pytest
 from httpx2 import Request, Response
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import MISTRAL_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.providers.mistral import MistralProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
@@ -51,6 +53,69 @@ def test_init(mistral_config):
 
 def test_default_base_url():
     assert MISTRAL_DEFAULT_BASE == "https://api.mistral.ai/v1"
+
+
+@pytest.mark.asyncio
+async def test_model_catalog_extracts_exact_input_modalities(mistral_provider):
+    mistral_provider._client.models.list = AsyncMock(
+        return_value={
+            "data": [
+                {
+                    "id": "vision-model",
+                    "capabilities": {
+                        "completion_chat": True,
+                        "vision": True,
+                    },
+                },
+                {
+                    "id": "text-model",
+                    "capabilities": {
+                        "completion_chat": True,
+                        "vision": False,
+                    },
+                },
+            ]
+        }
+    )
+
+    assert await mistral_provider.list_model_infos() == frozenset(
+        {
+            ProviderModelInfo(
+                "vision-model",
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "text-model",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "capabilities",
+    [
+        None,
+        {},
+        {"completion_chat": True},
+        {"completion_chat": True, "vision": "yes"},
+    ],
+)
+@pytest.mark.asyncio
+async def test_model_catalog_degrades_incomplete_capabilities_to_unknown(
+    mistral_provider,
+    capabilities,
+):
+    model = {"id": "model"}
+    if capabilities is not None:
+        model["capabilities"] = capabilities
+    mistral_provider._client.models.list = AsyncMock(return_value={"data": [model]})
+
+    assert await mistral_provider.list_model_infos() == frozenset(
+        {ProviderModelInfo("model")}
+    )
 
 
 def test_build_request_body_basic(mistral_provider):
