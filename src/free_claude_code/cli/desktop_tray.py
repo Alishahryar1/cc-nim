@@ -37,16 +37,28 @@ class PystrayDesktopTray:
         self._controller.open_admin()
 
     def _check_status(self, _icon: Icon, _item: MenuItem) -> None:
-        self._icon.notify(
-            f"Server is {self._controller.status}.",
-            "Free Claude Code",
-        )
+        self._icon.notify(status_notification(self._controller), "Free Claude Code")
 
     def _restart_server(self, _icon: Icon, _item: MenuItem) -> None:
         self._controller.restart_server()
 
     def _quit(self, _icon: Icon, _item: MenuItem) -> None:
         self._controller.quit()
+
+
+def status_notification(controller: DesktopController) -> str:
+    """Status text for the tray, including the live desktop gateway URL.
+
+    Consumes ``DesktopController.desktop_gateway_url()`` so the desktop
+    surface reports the endpoint the active server generation actually
+    published — the TLS-prefixed HTTPS URL when a front verifies, the
+    plain-HTTP fallback otherwise — instead of only the process state.
+    """
+
+    gateway_url = controller.desktop_gateway_url()
+    if gateway_url is None:
+        return f"Server is {controller.status}."
+    return f"Server is {controller.status}. Gateway: {gateway_url}"
 
 
 def _create_icon() -> Image.Image:

@@ -3,6 +3,8 @@
 import json
 import subprocess
 import sys
+import threading
+import time
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -357,6 +359,8 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(commands.uvicorn, "Config", side_effect=fake_config),
         patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
+        patch.object(commands, "CaddyTlsProxy") as tls_proxy,
+        patch.object(commands, "GATEWAY_HEALTH_UPGRADE_SECONDS", 0.0),
         patch.object(commands, "schedule_open_admin_browser") as schedule_open_admin,
         patch.object(commands, "clear_settings_cache") as clear_settings_cache,
         patch.object(commands, "kill_all_best_effort") as kill_all,
@@ -364,6 +368,11 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         commands.serve()
 
     assert len(servers) == 2
+    # One managed HTTPS front per server generation, each started and
+    # stopped once (the shared mock aggregates both instances' calls).
+    assert tls_proxy.call_count == 2
+    assert tls_proxy.return_value.start.call_count == 2
+    assert tls_proxy.return_value.stop.call_count == 2
     schedule_open_admin.assert_called_once_with(settings)
     clear_settings_cache.assert_called_once()
     kill_all.assert_called_once()
@@ -399,6 +408,8 @@ def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
         patch.object(commands.uvicorn, "Config", side_effect=fake_config),
         patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
+        patch.object(commands, "CaddyTlsProxy") as tls_proxy,
+        patch.object(commands, "GATEWAY_HEALTH_UPGRADE_SECONDS", 0.0),
         patch.object(commands, "schedule_open_admin_browser"),
         patch.object(commands, "clear_settings_cache") as clear_settings_cache,
         patch.object(commands, "kill_all_best_effort") as kill_all,
@@ -406,8 +417,246 @@ def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
         commands.serve()
 
     assert len(servers) == 1
+    # The single generation's HTTPS front is started and stopped exactly once.
+    assert tls_proxy.call_count == 1
+    tls_proxy.return_value.start.assert_called_once_with()
+    tls_proxy.return_value.stop.assert_called_once_with()
     clear_settings_cache.assert_not_called()
     kill_all.assert_called_once()
+
+
+def test_serve_supervisor_orders_tls_front_around_each_generation() -> None:
+    """The managed HTTPS front wraps every server generation.
+
+    Regression guard for the Greptile "managed TLS proxy never enters the
+    lifecycle" finding: each generation constructs its own
+    ``CaddyTlsProxy``, starts it before the server accepts traffic, and
+    stops it when the generation exits — across a normal stop and a
+    restart.
+    """
+    from free_claude_code.cli import commands
+
+    settings = _launcher_settings()
+    get_settings = MagicMock(side_effect=[settings, settings])
+    events: list[str] = []
+    restart_callbacks: list[Callable[[], None]] = []
+
+    def build_asgi_app(_settings: Settings, restart_callback: Callable[[], None]):
+        restart_callbacks.append(restart_callback)
+        return SimpleNamespace(runtime=SimpleNamespace(is_closed=False))
+
+    class FakeTlsProxy:
+        def __init__(self, proxy_settings: Settings) -> None:
+            assert proxy_settings is settings
+            events.append("construct")
+
+        def start(self) -> bool:
+            events.append("start")
+            return True
+
+        def stop(self) -> None:
+            events.append("stop")
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+            self.should_exit = False
+
+        def run(self):
+            events.append("server-run")
+            if len(restart_callbacks) == 1:
+                # First generation: request a restart, then close cleanly.
+                restart_callbacks[-1]()
+                assert self.should_exit is True
+                self.config.app.runtime.is_closed = True
+            # The readiness task probes concurrently with this call; wait
+            # for this generation's upgrade so the ordering stays
+            # deterministic and the upgrade lands inside the serving window.
+            deadline = time.monotonic() + 2.0
+            while (
+                events.count("upgrade") < len(restart_callbacks)
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+
+    def fake_config(app, **kwargs):
+        return SimpleNamespace(app=app, kwargs=kwargs)
+
+    def record_upgrade(*_args: object) -> bool:
+        events.append("upgrade")
+        return True
+
+    with (
+        patch.object(commands, "get_settings", get_settings),
+        patch.object(commands.uvicorn, "Config", side_effect=fake_config),
+        patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
+        patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
+        patch.object(commands, "CaddyTlsProxy", side_effect=FakeTlsProxy),
+        patch.object(commands, "GATEWAY_HEALTH_UPGRADE_SECONDS", 0.5),
+        patch.object(commands, "probe_fcc_front", side_effect=record_upgrade),
+        patch.object(commands, "schedule_open_admin_browser"),
+        patch.object(commands, "clear_settings_cache"),
+        patch.object(commands, "kill_all_best_effort"),
+    ):
+        commands.serve()
+
+    # The readiness task probes concurrently with ``server.run()``, so the
+    # upgrade event can land anywhere inside a generation's serving window.
+    # Assert the structural ordering that must hold instead of a fixed
+    # sequence: each generation constructs then starts its front before the
+    # server runs and stops the front after, and the upgrade lands between
+    # the front's start and stop.
+    constructs = [i for i, event in enumerate(events) if event == "construct"]
+    starts = [i for i, event in enumerate(events) if event == "start"]
+    runs = [i for i, event in enumerate(events) if event == "server-run"]
+    upgrades = [i for i, event in enumerate(events) if event == "upgrade"]
+    stops = [i for i, event in enumerate(events) if event == "stop"]
+    assert len(constructs) == 2
+    assert len(starts) == 2
+    assert len(runs) == 2
+    assert len(upgrades) == 2
+    assert len(stops) == 2
+    for construct, start, run, stop in zip(
+        constructs, starts, runs, stops, strict=True
+    ):
+        assert construct < start < run < stop
+    for start, upgrade, stop in zip(starts, upgrades, stops, strict=True):
+        assert start < upgrade < stop
+
+
+@pytest.mark.parametrize(
+    ("tls_proxy_enabled", "front_started", "probe_verifies", "expected_final"),
+    [
+        # Managed front up and verifying once Uvicorn serves: the generation
+        # starts on the plain-HTTP fallback and upgrades to the TLS-prefixed
+        # URL while the server is still serving.
+        (True, True, True, "https://localhost:18443/claude-desktop"),
+        # Front started but its health probe never verifies: the plain-HTTP
+        # fallback stays for the whole generation.
+        (True, True, False, "http://127.0.0.1:8082/claude-desktop"),
+        # An external reverse proxy already owns the TLS port: managed
+        # startup reports False (its pre-Uvicorn probe fails and the managed
+        # caddy exits on the occupied port), but the readiness task still
+        # runs and upgrades to HTTPS once the external front serves FCC.
+        (True, False, True, "https://localhost:18443/claude-desktop"),
+        # TLS disabled entirely: plain HTTP, and no readiness probing.
+        (False, False, None, "http://127.0.0.1:8082/claude-desktop"),
+    ],
+)
+def test_serve_publishes_desktop_gateway_url_matching_tls_readiness(
+    tls_proxy_enabled: bool,
+    front_started: bool,
+    probe_verifies: bool | None,
+    expected_final: str,
+) -> None:
+    """The supervisor publishes the live desktop-scoped gateway URL.
+
+    End-to-end guard for the Greptile "HTTPS gateway is published after
+    shutdown" and "external front readiness is ignored" findings: the front
+    can only pass FCC's ``/health`` marker probe while Uvicorn serves, so a
+    concurrent readiness task probes during ``server.run()`` whenever a
+    front may own the TLS port — including an external front that made
+    managed startup fail — and the TLS-prefixed URL becomes readable DURING
+    the live serving window, not after it ends. The fallback is preserved
+    when TLS is disabled or the front never verifies. The URL is cleared
+    once the supervisor shuts down so a stopped server never advertises a
+    dead endpoint.
+    """
+    from free_claude_code.cli import commands
+
+    settings = _launcher_settings(port=8082).model_copy(
+        update={
+            "tls_proxy_enabled": tls_proxy_enabled,
+            "tls_proxy_port": 18443,
+            "desktop_gateway_prefix": "claude-desktop",
+        }
+    )
+    published_at_start: list[str | None] = []
+    published_during_run: list[str | None] = []
+    published_at_stop: list[str | None] = []
+    probe_calls: list[str] = []
+    # The front can only pass FCC's /health marker while Uvicorn serves, so
+    # the fake probe only verifies once the fake server is inside ``run()``.
+    serving = threading.Event()
+
+    def build_asgi_app(_settings: Settings, restart_callback: Callable[[], None]):
+        return SimpleNamespace(runtime=SimpleNamespace(is_closed=False))
+
+    def fake_config(app, **kwargs):
+        return SimpleNamespace(app=app, kwargs=kwargs)
+
+    class FakeTlsProxy:
+        def __init__(self, proxy_settings: Settings) -> None:
+            assert proxy_settings is settings
+
+        def start(self) -> bool:
+            return front_started
+
+        def stop(self) -> None:
+            # ``stop()`` runs in the generation's ``finally`` after the
+            # readiness task is joined and before the supervisor clears the
+            # URL, so it observes the final published value.
+            published_at_stop.append(supervisor.desktop_gateway_url())
+
+    supervisor = commands.ServerSupervisor(console_logging=False)
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+            self.should_exit = False
+
+        def run(self):
+            # The readiness task probes concurrently with this call. Record
+            # the URL before the front can verify (still the HTTP fallback),
+            # then open the serving window and require the final URL to
+            # become readable before ``run()`` returns.
+            published_at_start.append(supervisor.desktop_gateway_url())
+            serving.set()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                published_during_run.append(supervisor.desktop_gateway_url())
+                if published_during_run[-1] == expected_final:
+                    break
+                time.sleep(0.01)
+            self.config.app.runtime.is_closed = True
+
+    def fake_probe(*_args: object) -> bool:
+        probe_calls.append("probe")
+        assert probe_verifies is not None
+        return probe_verifies and serving.is_set()
+
+    with (
+        patch.object(commands, "load_server_settings", return_value=settings),
+        patch.object(commands.uvicorn, "Config", side_effect=fake_config),
+        patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
+        patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
+        patch.object(commands, "CaddyTlsProxy", side_effect=FakeTlsProxy),
+        patch.object(commands, "GATEWAY_HEALTH_UPGRADE_SECONDS", 0.5),
+        patch.object(commands, "probe_fcc_front", side_effect=fake_probe),
+        patch.object(commands, "schedule_open_admin_browser"),
+        patch.object(commands, "kill_all_best_effort"),
+    ):
+        assert supervisor.desktop_gateway_url() is None
+        supervisor.run(open_admin_browser=False)
+
+    # Before Uvicorn serves, the front cannot verify FCC's health marker,
+    # so the initial publication is always the plain-HTTP fallback.
+    assert published_at_start == ["http://127.0.0.1:8082/claude-desktop"]
+    # The final URL is readable DURING the live serving window, before
+    # ``server.run()`` returns.
+    assert published_during_run[-1] == expected_final
+    # ...and it stays published until the generation actually stops.
+    assert published_at_stop == [expected_final]
+    if tls_proxy_enabled:
+        # The readiness task probes at least once whenever a front may own
+        # the TLS port — including an external front that made managed
+        # startup fail; a never-healthy front retries until the deadline,
+        # so only assert presence.
+        assert probe_calls
+    else:
+        assert probe_calls == []
+    # Cleared on shutdown so a stopped server advertises nothing.
+    assert supervisor.desktop_gateway_url() is None
 
 
 def test_serve_handles_keyboard_interrupt_without_traceback() -> None:

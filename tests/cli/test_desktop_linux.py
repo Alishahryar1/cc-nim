@@ -3,6 +3,7 @@
 import contextlib
 import sys
 import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -175,6 +176,108 @@ def test_entrypoint_still_rejects_unsupported_platforms(capsys):
     assert "Linux" in capsys.readouterr().err
 
 
+def test_console_tray_consumes_published_gateway_url() -> None:
+    """The tray-less console surface reports the live published gateway URL.
+
+    Regression guard for the Greptile "Claude Desktop gateway is never
+    configured / console overclaims routing" finding: the console tray is a
+    production consumer of ``DesktopController.desktop_gateway_url()``,
+    printing the endpoint the active generation actually published — the
+    TLS-prefixed HTTPS URL when a front verifies, the plain-HTTP fallback
+    otherwise — and re-printing only when the value changes.
+    """
+    from free_claude_code.cli.desktop_console import console_gateway_line
+
+    class PublishingSupervisor:
+        status = ServerStatus.RUNNING
+        gateway: str | None = None
+
+        def schedule_run(self) -> bool:
+            return True
+
+        def run(self, *, open_admin_browser: bool | None = None) -> None:
+            return None
+
+        def request_restart(self) -> bool:
+            return True
+
+        def request_stop(self) -> None:
+            return None
+
+        def desktop_gateway_url(self) -> str | None:
+            return self.gateway
+
+    supervisor = PublishingSupervisor()
+    controller = DesktopController(supervisor, MagicMock(), MagicMock())
+
+    # Before the server publishes a URL, the console prints nothing.
+    assert console_gateway_line(controller) is None
+
+    # Plain-HTTP fallback published: the fallback endpoint is surfaced.
+    supervisor.gateway = "http://127.0.0.1:8082/claude-desktop"
+    assert (
+        console_gateway_line(controller)
+        == "Claude Desktop gateway: http://127.0.0.1:8082/claude-desktop"
+    )
+
+    # HTTPS front verified: the TLS-prefixed endpoint is surfaced.
+    supervisor.gateway = "https://localhost:18443/claude-desktop"
+    assert (
+        console_gateway_line(controller)
+        == "Claude Desktop gateway: https://localhost:18443/claude-desktop"
+    )
+
+
+def test_console_tray_prints_gateway_url_changes_while_running(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The console tray prints each new gateway URL exactly once while live."""
+
+    class PublishingSupervisor:
+        status = ServerStatus.RUNNING
+        gateway: str | None = None
+
+        def schedule_run(self) -> bool:
+            return True
+
+        def run(self, *, open_admin_browser: bool | None = None) -> None:
+            return None
+
+        def request_restart(self) -> bool:
+            return True
+
+        def request_stop(self) -> None:
+            return None
+
+        def desktop_gateway_url(self) -> str | None:
+            return self.gateway
+
+    supervisor = PublishingSupervisor()
+    controller = DesktopController(supervisor, MagicMock(), MagicMock())
+    tray = ConsoleDesktopTray(controller)
+
+    def wait_for_printed(expected: str) -> None:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if expected in capsys.readouterr().out:
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"{expected} was never printed")
+
+    worker = threading.Thread(target=tray.run, daemon=True)
+    worker.start()
+    try:
+        supervisor.gateway = "http://127.0.0.1:8082/claude-desktop"
+        wait_for_printed("http://127.0.0.1:8082/claude-desktop")
+        supervisor.gateway = "https://localhost:18443/claude-desktop"
+        wait_for_printed("https://localhost:18443/claude-desktop")
+    finally:
+        tray.stop()
+        worker.join(timeout=5)
+
+    assert not worker.is_alive()
+
+
 def test_console_tray_lifecycle_drives_controller_to_clean_stop():
     events: list[str] = []
     server_started = threading.Event()
@@ -194,6 +297,9 @@ def test_console_tray_lifecycle_drives_controller_to_clean_stop():
 
         def request_stop(self) -> None:
             events.append("server-stop")
+
+        def desktop_gateway_url(self) -> str | None:
+            return None
 
     controller = DesktopController(
         FakeSupervisor(),

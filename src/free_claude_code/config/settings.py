@@ -703,6 +703,14 @@ class Settings(BaseModel):
         default="freecc",
         validation_alias="ANTHROPIC_AUTH_TOKEN",
     )
+    tls_proxy_enabled: bool = Field(
+        default=True,
+        validation_alias="TLS_PROXY_ENABLED",
+    )
+    tls_proxy_port: int = Field(
+        default=8443,
+        validation_alias="TLS_PROXY_PORT",
+    )
     desktop_gateway_prefix: NonEmptyString = Field(
         default="claude-desktop",
         validation_alias="DESKTOP_GATEWAY_PREFIX",

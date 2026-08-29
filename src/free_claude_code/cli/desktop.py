@@ -46,6 +46,8 @@ class ServerOwner(Protocol):
 
     def request_stop(self) -> None: ...
 
+    def desktop_gateway_url(self) -> str | None: ...
+
 
 class DesktopController:
     """Coordinate one tray loop with one in-process FCC server owner."""
@@ -82,6 +84,18 @@ class DesktopController:
 
     def open_admin(self) -> None:
         self._open_admin()
+
+    def desktop_gateway_url(self) -> str | None:
+        """The live desktop-scoped gateway URL the server is serving.
+
+        Delegates to the server owner so the desktop integration (the
+        Claude Desktop config merge) reads the endpoint the active
+        generation actually published — the TLS-prefixed HTTPS URL when a
+        front is up, the plain-HTTP fallback otherwise — instead of
+        re-deriving it. ``None`` before the server publishes one.
+        """
+
+        return self._supervisor.desktop_gateway_url()
 
     def restart_server(self) -> None:
         """Restart an active server or relaunch one that exited unexpectedly."""

@@ -1,7 +1,9 @@
 """Desktop shell lifecycle and singleton contracts."""
 
 import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
@@ -87,6 +89,9 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
             self.status = ServerStatus.STOPPING
             self.stopped.set()
 
+        def desktop_gateway_url(self) -> str | None:
+            return None
+
     class FakeTray:
         def __init__(self, controller: DesktopController) -> None:
             self.controller = controller
@@ -159,6 +164,9 @@ def test_restart_during_server_startup_is_accepted_without_waiting() -> None:
 
         def request_stop(self) -> None:
             self.release_worker.set()
+
+        def desktop_gateway_url(self) -> str | None:
+            return None
 
     class WaitingTray:
         def __init__(self, _controller: DesktopController) -> None:
@@ -270,3 +278,165 @@ def test_fresh_desktop_launch_uses_console_free_supervisor() -> None:
     assert shell.call_args.args[:2] == (supervisor, tray_factory)
     controller.run.assert_called_once_with()
     instance_lock.release.assert_called_once_with()
+
+
+def test_desktop_controller_exposes_live_gateway_url_from_server() -> None:
+    """The desktop integration reads the gateway URL the server published.
+
+    Regression guard for the Greptile "published desktop gateway URL is
+    never handed to the Claude Desktop integration" finding: the
+    controller surfaces ``ServerOwner.desktop_gateway_url()`` so the
+    config merge consumes the live TLS-prefixed endpoint rather than
+    re-deriving it.
+    """
+
+    class PublishingSupervisor:
+        status = ServerStatus.RUNNING
+        gateway: str | None = None
+
+        def schedule_run(self) -> bool:
+            return True
+
+        def run(self, *, open_admin_browser: bool | None = None) -> None:
+            return None
+
+        def request_restart(self) -> bool:
+            return True
+
+        def request_stop(self) -> None:
+            return None
+
+        def desktop_gateway_url(self) -> str | None:
+            return self.gateway
+
+    supervisor = PublishingSupervisor()
+    controller = DesktopController(supervisor, MagicMock(), MagicMock())
+
+    assert controller.desktop_gateway_url() is None
+    supervisor.gateway = "https://localhost:18443/claude-desktop"
+    assert controller.desktop_gateway_url() == "https://localhost:18443/claude-desktop"
+
+
+def test_tray_status_consumes_published_gateway_url() -> None:
+    """The desktop tray surface reads the supervisor-published gateway URL.
+
+    Regression guard for the Greptile "desktop gateway URL is unconsumed"
+    finding: the tray's status notification is a production consumer of
+    ``DesktopController.desktop_gateway_url()``, reporting the TLS-prefixed
+    HTTPS endpoint when a front verifies and the plain-HTTP fallback
+    otherwise — and only the process state before any URL is published.
+    """
+    from free_claude_code.cli.desktop_tray import status_notification
+
+    class PublishingSupervisor:
+        status = ServerStatus.RUNNING
+        gateway: str | None = None
+
+        def schedule_run(self) -> bool:
+            return True
+
+        def run(self, *, open_admin_browser: bool | None = None) -> None:
+            return None
+
+        def request_restart(self) -> bool:
+            return True
+
+        def request_stop(self) -> None:
+            return None
+
+        def desktop_gateway_url(self) -> str | None:
+            return self.gateway
+
+    supervisor = PublishingSupervisor()
+    controller = DesktopController(supervisor, MagicMock(), MagicMock())
+
+    # Before the server publishes a URL, only the process state is shown.
+    assert status_notification(controller) == "Server is Running."
+
+    # HTTPS front verified: the TLS-prefixed endpoint is surfaced.
+    supervisor.gateway = "https://localhost:18443/claude-desktop"
+    assert (
+        status_notification(controller)
+        == "Server is Running. Gateway: https://localhost:18443/claude-desktop"
+    )
+
+    # Plain-HTTP fallback: the fallback endpoint is surfaced.
+    supervisor.gateway = "http://127.0.0.1:8082/claude-desktop"
+    assert (
+        status_notification(controller)
+        == "Server is Running. Gateway: http://127.0.0.1:8082/claude-desktop"
+    )
+
+
+def test_desktop_quit_stops_the_managed_tls_front() -> None:
+    """The desktop quit path tears down the HTTPS front with the server.
+
+    Regression guard for the Greptile "managed TLS proxy never enters the
+    desktop lifecycle" finding: the desktop shell drives the same
+    ``ServerSupervisor`` generation lifecycle, so quitting the tray must
+    stop the generation's ``CaddyTlsProxy`` after the server exits.
+    """
+    from free_claude_code.cli import commands, desktop
+
+    settings = _settings()
+    events: list[str] = []
+    server_running = threading.Event()
+
+    class FakeTlsProxy:
+        def __init__(self, proxy_settings: Settings) -> None:
+            assert proxy_settings is settings
+            events.append("construct")
+
+        def start(self) -> bool:
+            events.append("start")
+            return True
+
+        def stop(self) -> None:
+            events.append("stop")
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+            self.should_exit = False
+
+        def run(self):
+            events.append("server-run")
+            server_running.set()
+            while not self.should_exit:
+                time.sleep(0.05)
+
+    def fake_config(app, **kwargs):
+        return SimpleNamespace(app=app, kwargs=kwargs)
+
+    class QuittingTray:
+        def __init__(self, controller: DesktopController) -> None:
+            self._controller = controller
+
+        def run(self) -> None:
+            assert server_running.wait(2)
+            self._controller.quit()
+
+        def stop(self) -> None:
+            return None
+
+    supervisor = ServerSupervisor(console_logging=False)
+    with (
+        patch.object(desktop, "load_server_settings", return_value=settings),
+        patch.object(desktop, "get_settings", return_value=settings),
+        patch.object(commands, "get_settings", return_value=settings),
+        patch.object(commands.uvicorn, "Config", side_effect=fake_config),
+        patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
+        patch.object(
+            commands,
+            "build_asgi_app",
+            return_value=SimpleNamespace(runtime=SimpleNamespace(is_closed=False)),
+        ),
+        patch.object(commands, "CaddyTlsProxy", side_effect=FakeTlsProxy),
+        patch.object(commands, "GATEWAY_HEALTH_UPGRADE_SECONDS", 0.5),
+        patch.object(commands, "probe_fcc_front", return_value=True),
+        patch.object(commands, "schedule_open_admin_browser"),
+        patch.object(commands, "kill_all_best_effort"),
+    ):
+        DesktopController(supervisor, QuittingTray, lambda: None).run()
+
+    assert events == ["construct", "start", "server-run", "stop"]
