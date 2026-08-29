@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from free_claude_code.cli import commands
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
 from free_claude_code.cli.desktop import DesktopController
@@ -246,6 +248,7 @@ def test_desktop_attaches_to_terminal_server_instead_of_binding_twice() -> None:
         patch.object(desktop, "load_server_settings", return_value=settings),
         patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
         patch.object(desktop, "preflight_proxy", return_value=None),
+        patch.object(desktop, "verified_https_gateway_url", return_value=None),
         patch.object(desktop, "open_admin_when_ready", return_value=True) as open_admin,
         patch.object(desktop, "ServerSupervisor") as supervisor,
     ):
@@ -256,7 +259,103 @@ def test_desktop_attaches_to_terminal_server_instead_of_binding_twice() -> None:
     instance_lock.release.assert_called_once_with()
 
 
-def test_fresh_desktop_launch_uses_console_free_supervisor() -> None:
+def test_existing_server_with_https_front_gets_routing_merge() -> None:
+    from free_claude_code.cli import desktop
+
+    settings = _settings()
+    instance_lock = MagicMock()
+    instance_lock.acquire.return_value = True
+    verified_url = "https://localhost:8443/claude-desktop"
+
+    with (
+        patch.object(desktop, "load_server_settings", return_value=settings),
+        patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
+        patch.object(desktop, "preflight_proxy", return_value=None),
+        patch.object(
+            desktop, "verified_https_gateway_url", return_value=verified_url
+        ) as verify,
+        patch.object(desktop, "configure_claude_desktop_config") as configure,
+        patch.object(desktop, "open_admin_when_ready", return_value=True),
+        patch.object(desktop, "ServerSupervisor"),
+        patch.object(desktop, "CaddyTlsProxy") as tls_proxy,
+    ):
+        desktop.launch_desktop(MagicMock())
+
+    configure.assert_called_once_with(settings=settings, gateway_base_url=verified_url)
+    # The merge writes the gateway credential, so the gateway must be
+    # re-verified at write time — never merged on faith.
+    verify.assert_called_once_with(settings)
+    tls_proxy.return_value.start.assert_not_called()
+    instance_lock.release.assert_called_once_with()
+
+
+def test_existing_server_without_https_front_is_left_unmerged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from free_claude_code.cli import desktop
+
+    settings = _settings()
+    instance_lock = MagicMock()
+    instance_lock.acquire.return_value = True
+
+    with (
+        patch.object(desktop, "load_server_settings", return_value=settings),
+        patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
+        patch.object(desktop, "preflight_proxy", return_value=None),
+        patch.object(desktop, "verified_https_gateway_url", return_value=None),
+        patch.object(desktop, "configure_claude_desktop_config") as configure,
+        patch.object(desktop, "open_admin_when_ready", return_value=True),
+        patch.object(desktop, "ServerSupervisor"),
+        patch.object(desktop, "CaddyTlsProxy") as tls_proxy,
+    ):
+        desktop.launch_desktop(MagicMock())
+
+    configure.assert_not_called()
+    # This short-lived launch must never spawn a managed front it cannot
+    # stay alive to own: adoption is probe-only, so no child is created
+    # that would outlive the process unmanaged.
+    tls_proxy.return_value.start.assert_not_called()
+    instance_lock.release.assert_called_once_with()
+    # The warning must name the step that actually changes the condition:
+    # relaunching against the same HTTP-only server repeats this branch,
+    # so "then relaunch" would be a dead end.
+    assert any(
+        "stop the running HTTP-only FCC server" in record.message
+        for record in caplog.records
+    )
+
+
+def test_existing_server_with_impersonated_front_is_left_unmerged() -> None:
+    """Regression guard for the Greptile impersonation finding.
+
+    A listener that merely occupies the TLS port (transport alive) but
+    cannot serve this install's identity secret must not receive the
+    gateway credential through the existing-server merge path.
+    """
+
+    from free_claude_code.cli import desktop
+
+    settings = _settings()
+    instance_lock = MagicMock()
+    instance_lock.acquire.return_value = True
+
+    with (
+        patch.object(desktop, "load_server_settings", return_value=settings),
+        patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
+        patch.object(desktop, "preflight_proxy", return_value=None),
+        # Transport may be alive, but identity fails: exactly the impersonator.
+        patch.object(desktop, "verified_https_gateway_url", return_value=None),
+        patch.object(desktop, "configure_claude_desktop_config") as configure,
+        patch.object(desktop, "open_admin_when_ready", return_value=True),
+        patch.object(desktop, "ServerSupervisor"),
+        patch.object(desktop, "CaddyTlsProxy"),
+    ):
+        desktop.launch_desktop(MagicMock())
+
+    configure.assert_not_called()
+
+
+def test_fresh_launch_skips_merge_when_no_https_front_comes_up() -> None:
     from free_claude_code.cli import desktop
 
     settings = _settings()
@@ -269,14 +368,84 @@ def test_fresh_desktop_launch_uses_console_free_supervisor() -> None:
         patch.object(desktop, "load_server_settings", return_value=settings),
         patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
         patch.object(desktop, "preflight_proxy", return_value="connection refused"),
+        patch.object(desktop, "CaddyTlsProxy") as tls_proxy,
+        patch.object(desktop, "verified_https_gateway_url", return_value=None),
+        patch.object(desktop, "configure_claude_desktop_config") as configure,
+        patch.object(desktop, "ServerSupervisor", return_value=supervisor),
+        patch.object(desktop, "DesktopController", return_value=controller),
+    ):
+        tls_proxy.return_value.start.return_value = False
+        desktop.launch_desktop(MagicMock())
+
+    configure.assert_not_called()
+    controller.run.assert_called_once_with()
+    instance_lock.release.assert_called_once_with()
+
+
+def test_fresh_launch_skips_merge_when_front_stops_verifying_after_start() -> None:
+    """Regression guard for the Greptile TOCTOU finding.
+
+    ``start()`` succeeding is not a license to merge: the front can stop
+    verifying between bring-up and the config write, and merging then would
+    fall back to a plain-HTTP gateway URL while still embedding the proxy
+    auth token. The merge must re-verify at write time and skip instead.
+    """
+
+    from free_claude_code.cli import desktop
+
+    settings = _settings()
+    instance_lock = MagicMock()
+    instance_lock.acquire.return_value = True
+    supervisor = MagicMock()
+    controller = MagicMock()
+
+    with (
+        patch.object(desktop, "load_server_settings", return_value=settings),
+        patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
+        patch.object(desktop, "preflight_proxy", return_value="connection refused"),
+        patch.object(desktop, "CaddyTlsProxy") as tls_proxy,
+        patch.object(desktop, "verified_https_gateway_url", return_value=None),
+        patch.object(desktop, "configure_claude_desktop_config") as configure,
+        patch.object(desktop, "ServerSupervisor", return_value=supervisor),
+        patch.object(desktop, "DesktopController", return_value=controller),
+    ):
+        tls_proxy.return_value.start.return_value = True
+        desktop.launch_desktop(MagicMock())
+
+    configure.assert_not_called()
+    controller.run.assert_called_once_with()
+    instance_lock.release.assert_called_once_with()
+
+
+def test_fresh_desktop_launch_uses_console_free_supervisor() -> None:
+    from free_claude_code.cli import desktop
+
+    settings = _settings()
+    instance_lock = MagicMock()
+    instance_lock.acquire.return_value = True
+    supervisor = MagicMock()
+    controller = MagicMock()
+    verified_url = "https://localhost:8443/claude-desktop"
+
+    with (
+        patch.object(desktop, "load_server_settings", return_value=settings),
+        patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
+        patch.object(desktop, "preflight_proxy", return_value="connection refused"),
+        patch.object(desktop, "CaddyTlsProxy") as tls_proxy,
+        patch.object(desktop, "verified_https_gateway_url", return_value=verified_url),
+        patch.object(desktop, "configure_claude_desktop_config") as configure,
         patch.object(desktop, "ServerSupervisor", return_value=supervisor) as owner,
         patch.object(desktop, "DesktopController", return_value=controller) as shell,
     ):
+        tls_proxy.return_value.start.return_value = True
         tray_factory = MagicMock()
         desktop.launch_desktop(tray_factory)
 
     owner.assert_called_once_with(console_logging=False)
     assert shell.call_args.args[:2] == (supervisor, tray_factory)
+    # The routing block must point at the verified HTTPS front, never the
+    # plain-HTTP fallback.
+    configure.assert_called_once_with(settings=settings, gateway_base_url=verified_url)
     controller.run.assert_called_once_with()
     instance_lock.release.assert_called_once_with()
 

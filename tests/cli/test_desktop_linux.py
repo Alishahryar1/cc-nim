@@ -415,3 +415,150 @@ def test_tray_module_imports_without_display():
     finally:
         importlib.reload(module)
     assert reloaded.tray_is_available.__module__ == module.__name__
+
+
+def test_merge_verified_gateway_passes_verified_url_explicitly():
+    from free_claude_code.cli.desktop import _merge_verified_gateway
+
+    settings = MagicMock(name="settings")
+    verified_url = "https://localhost:8443/claude-desktop"
+    with (
+        patch(
+            "free_claude_code.cli.desktop.verified_https_gateway_url",
+            return_value=verified_url,
+        ),
+        patch(
+            "free_claude_code.cli.desktop.configure_claude_desktop_config"
+        ) as configure,
+    ):
+        _merge_verified_gateway(settings)
+
+    configure.assert_called_once_with(settings=settings, gateway_base_url=verified_url)
+
+
+def test_merge_verified_gateway_skips_when_front_unverified():
+    from free_claude_code.cli.desktop import _merge_verified_gateway
+
+    with (
+        patch(
+            "free_claude_code.cli.desktop.verified_https_gateway_url",
+            return_value=None,
+        ),
+        patch(
+            "free_claude_code.cli.desktop.configure_claude_desktop_config"
+        ) as configure,
+    ):
+        _merge_verified_gateway(MagicMock(name="settings"))
+
+    configure.assert_not_called()
+
+
+def test_merge_verified_gateway_swallows_failures():
+    from free_claude_code.cli.desktop import _merge_verified_gateway
+
+    with (
+        patch(
+            "free_claude_code.cli.desktop.verified_https_gateway_url",
+            return_value="https://localhost:8443/claude-desktop",
+        ),
+        patch(
+            "free_claude_code.cli.desktop.configure_claude_desktop_config",
+            side_effect=OSError("disk full"),
+        ),
+    ):
+        _merge_verified_gateway(MagicMock(name="settings"))  # must not raise
+
+
+def test_launch_desktop_merges_claude_desktop_config():
+    from free_claude_code.cli import desktop as desktop_module
+
+    merged: list[object] = []
+
+    def fake_configure(path=None, settings=None, gateway_base_url=None):
+        merged.append(gateway_base_url)
+        return True
+
+    supervisor = MagicMock()
+    supervisor.schedule_run.return_value = True
+    supervisor.status = ServerStatus.STOPPED
+    verified_url = "https://localhost:8443/claude-desktop"
+
+    with (
+        patch.object(desktop_module, "load_server_settings") as load_settings,
+        patch.object(desktop_module.InterprocessFileLock, "acquire", return_value=True),
+        patch.object(desktop_module, "preflight_proxy", return_value=object()),
+        patch.object(desktop_module, "CaddyTlsProxy") as tls_proxy_cls,
+        patch.object(
+            desktop_module, "verified_https_gateway_url", return_value=verified_url
+        ),
+        patch.object(desktop_module, "configure_claude_desktop_config", fake_configure),
+        patch.object(desktop_module, "DesktopController", MagicMock()) as controller,
+    ):
+        load_settings.return_value = MagicMock(name="settings")
+        tls_proxy_cls.return_value.start.return_value = True
+        controller.return_value.run.side_effect = RuntimeError("stop loop")
+
+        with contextlib.suppress(RuntimeError):
+            desktop_module.launch_desktop(MagicMock())
+
+    assert merged == [verified_url]
+    tls_proxy_cls.return_value.start.assert_called_once()
+    tls_proxy_cls.return_value.stop.assert_called_once()
+
+
+def test_tray_launch_item_spawns_claude_desktop_without_notification():
+    from free_claude_code.cli.desktop_tray import PystrayDesktopTray
+
+    controller = MagicMock(spec=DesktopController)
+    with (
+        patch("free_claude_code.cli.desktop_tray._create_icon"),
+        patch("pystray.Icon", MagicMock()),
+        patch(
+            "free_claude_code.cli.desktop_tray.ensure_configured_and_launch"
+        ) as spawn,
+    ):
+        tray = PystrayDesktopTray(controller)
+        tray._launch_claude_desktop(tray._icon, MagicMock(name="item"))
+
+    spawn.assert_called_once()
+
+
+def test_tray_launch_item_notifies_when_binary_missing():
+    from free_claude_code.cli.desktop_tray import PystrayDesktopTray
+
+    controller = MagicMock(spec=DesktopController)
+    with (
+        patch("free_claude_code.cli.desktop_tray._create_icon"),
+        patch("pystray.Icon", MagicMock()),
+        patch(
+            "free_claude_code.cli.desktop_tray.ensure_configured_and_launch",
+            side_effect=FileNotFoundError("claude-desktop"),
+        ),
+    ):
+        tray = PystrayDesktopTray(controller)
+        tray._launch_claude_desktop(tray._icon, MagicMock(name="item"))
+
+    tray._icon.notify.assert_called_once()
+
+
+def test_tray_launch_item_notifies_when_no_https_front():
+    # Regression guard for the Greptile tray-bypass finding: when the
+    # TLS-gated launch refuses (no verified HTTPS front), the tray must
+    # surface the refusal as a notification rather than crash the callback.
+    from free_claude_code.cli.desktop_tray import PystrayDesktopTray
+
+    controller = MagicMock(spec=DesktopController)
+    with (
+        patch("free_claude_code.cli.desktop_tray._create_icon"),
+        patch("pystray.Icon", MagicMock()),
+        patch(
+            "free_claude_code.cli.desktop_tray.ensure_configured_and_launch",
+            side_effect=RuntimeError("no verified FCC HTTPS front"),
+        ),
+    ):
+        tray = PystrayDesktopTray(controller)
+        tray._launch_claude_desktop(tray._icon, MagicMock(name="item"))
+
+    tray._icon.notify.assert_called_once()
+    notified = tray._icon.notify.call_args.args[0]
+    assert "no verified FCC HTTPS front" in notified

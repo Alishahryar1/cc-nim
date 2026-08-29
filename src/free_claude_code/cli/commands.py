@@ -14,6 +14,7 @@ from free_claude_code.cli.process_registry import kill_all_best_effort
 from free_claude_code.cli.tls_proxy import (
     CaddyTlsProxy,
     desktop_gateway_base_url,
+    load_or_create_front_identity,
     probe_fcc_front,
     tls_root_url,
 )
@@ -243,8 +244,8 @@ class ServerSupervisor:
     def _start_gateway_https_readiness(self, settings: Settings) -> threading.Thread:
         """Spawn the readiness task that upgrades the published URL to HTTPS.
 
-        The front can only pass FCC's ``/health`` marker probe while Uvicorn
-        serves, so the probe runs concurrently with ``server.run()`` and the
+        The front can only pass the adoption probe while Uvicorn serves, so
+        the probe runs concurrently with ``server.run()`` and the
         TLS-prefixed URL is published during the live serving window — not
         after it ends. The task is joined before the generation's front is
         stopped, so the HTTPS URL stays published until the generation
@@ -271,11 +272,11 @@ class ServerSupervisor:
         """
 
         root = tls_root_url(settings)
+        identity = load_or_create_front_identity()
         deadline = time.monotonic() + GATEWAY_HEALTH_UPGRADE_SECONDS
         while time.monotonic() < deadline:
-            if probe_fcc_front(root) and self._publish_verified_https_gateway_url(
-                settings, root
-            ):
+            verified = probe_fcc_front(root, identity)
+            if verified and self._publish_verified_https_gateway_url(settings, root):
                 return
             # A probe that verifies the front but fails the persisted
             # config rewrite keeps both surfaces on the consistent

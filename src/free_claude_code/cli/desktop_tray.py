@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from PIL import Image
 
+from free_claude_code.cli.claude_desktop import ensure_configured_and_launch
 from free_claude_code.cli.desktop import DesktopController, launch_desktop
 from free_claude_code.cli.desktop_assets import app_icon_bytes
 
@@ -28,6 +29,7 @@ class PystrayDesktopTray:
             "Free Claude Code",
             Menu(
                 MenuItem("Open Admin", self._open_admin, default=True),
+                MenuItem("Launch Claude Desktop", self._launch_claude_desktop),
                 MenuItem("Check Server Status", self._check_status),
                 MenuItem("Restart Server", self._restart_server),
                 Menu.SEPARATOR,
@@ -43,6 +45,19 @@ class PystrayDesktopTray:
 
     def _open_admin(self, _icon: Icon, _item: MenuItem) -> None:
         self._controller.open_admin()
+
+    def _launch_claude_desktop(self, _icon: Icon, _item: MenuItem) -> None:
+        try:
+            ensure_configured_and_launch()
+        except FileNotFoundError:
+            self._icon.notify(
+                "Claude Desktop binary not found on this system.",
+                "Free Claude Code",
+            )
+        except Exception as exc:
+            self._icon.notify(
+                f"Claude Desktop launch failed: {exc}", "Free Claude Code"
+            )
 
     def _check_status(self, _icon: Icon, _item: MenuItem) -> None:
         self._icon.notify(status_notification(self._controller), "Free Claude Code")

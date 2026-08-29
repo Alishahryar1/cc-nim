@@ -6,8 +6,7 @@ Two responsibilities:
    ``claude_desktop_config.json`` so Claude Desktop's model picker runs
    ``/v1/models`` discovery against the local FCC server. The gateway URL
    and auth key are derived from server settings, never hardcoded.
-   ``unconfigure`` reverses the merge by restoring exactly what configure
-   inserted or overwrote, tracked in an ownership record beside the config.
+   ``unconfigure`` reverses the merge, preserving every other key.
 2. Locate the Claude Desktop binary and spawn it. TLS trust for the local
    FCC front comes from the certificate the install scripts add to the
    per-user NSS store; no process-wide certificate bypass is used.
@@ -20,16 +19,19 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, replace
+import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TypedDict
 
 from loguru import logger
 
-from free_claude_code.cli.tls_proxy import desktop_gateway_base_url
+from free_claude_code.cli.tls_proxy import (
+    desktop_gateway_base_url,
+    verified_https_gateway_url,
+)
 from free_claude_code.config.loader import get_settings
 from free_claude_code.config.settings import Settings
 
@@ -49,6 +51,10 @@ CONFIG_FILENAME = "claude_desktop_config.json"
 # Top-level key flipping Claude Desktop out of first-party Anthropic mode.
 _DISCOVERY_KEY = "modelDiscoveryEnabled"
 _INFERENCE_KEY = "inference"
+
+# Snapshot of the managed surface taken before the first merge, so
+# ``unconfigure`` restores exactly what the user had instead of deleting it.
+_BACKUP_KEY = "fccPriorConfig"
 
 # Per-platform candidate locations beyond PATH. First existing hit wins.
 _BINARY_CANDIDATES: dict[str, tuple[str, ...]] = {
@@ -117,16 +123,25 @@ def load_existing_config(path: Path) -> dict[str, object]:
 
 
 def _save_config(path: Path, data: dict[str, object]) -> None:
-    """Atomically write the merged config; create parent directories as needed.
+    """Atomically write the merged config; create private directories.
 
     The block embeds the gateway auth token, so the file is written with
-    owner-only permissions regardless of the process umask.
+    owner-only permissions and the config directories stay owner-traversable
+    regardless of the process umask. The temporary file is newly allocated
+    with ``O_EXCL`` (never following or reusing a pre-existing path), so an
+    attacker-placed permissive file or symlink at a predictable name can
+    neither read the token nor redirect the write to another file; its mode
+    is forced to owner-only before the atomic replace.
     """
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    descriptor = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _restrict_permissions(path.parent)
+    descriptor, tmp_name = tempfile.mkstemp(
+        prefix=f"{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    tmp_path = Path(tmp_name)
     try:
+        os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(data, indent=2))
     except BaseException:
@@ -135,166 +150,17 @@ def _save_config(path: Path, data: dict[str, object]) -> None:
     tmp_path.replace(path)
 
 
-class _OwnershipEntry(TypedDict):
-    """Pre-merge state of one managed config key."""
+def _restrict_permissions(directory: Path) -> None:
+    """Force an existing directory to owner-only modes.
 
-    present: bool
-    value: object
-
-
-@dataclass(frozen=True, slots=True)
-class _OwnershipRecord:
-    """What ``configure`` inserted or overwrote, for exact restoration.
-
-    The managed inference keys are always tracked individually so values
-    added to ``inference`` after a merge survive unconfiguration.
-    ``inference_written`` snapshots the mapping configure produced; a key
-    whose current value still equals its written value is FCC's to restore,
-    while anything the user changed since the merge is left alone. When the
-    pre-merge ``inference`` entry was not an object, configure replaced it
-    wholesale and ``inference_scalar`` snapshots what it clobbered.
+    ``mkdir(mode=...)`` only applies to directories it creates; a directory
+    that already exists keeps its modes, so tighten it explicitly.
     """
 
-    discovery: _OwnershipEntry
-    inference_existed: bool
-    inference_was_object: bool
-    inference_scalar: object | None
-    inference_keys: dict[str, _OwnershipEntry]
-    inference_written: dict[str, object] = field(default_factory=dict)
-
-
-_RECORD_SUFFIX = ".fcc-merge.json"
-_RECORD_INFERENCE_KEYS = "inferenceKeys"
-_RECORD_INFERENCE_EXISTED = "inferenceExisted"
-_RECORD_INFERENCE_WAS_OBJECT = "inferenceWasObject"
-_RECORD_INFERENCE_SCALAR = "inferenceScalar"
-_RECORD_INFERENCE_WRITTEN = "inferenceWritten"
-
-
-def _record_payload(record: _OwnershipRecord) -> dict[str, object]:
-    """JSON-able sidecar representation of ``record``."""
-
-    return {
-        _DISCOVERY_KEY: record.discovery,
-        _RECORD_INFERENCE_EXISTED: record.inference_existed,
-        _RECORD_INFERENCE_WAS_OBJECT: record.inference_was_object,
-        _RECORD_INFERENCE_KEYS: record.inference_keys,
-        _RECORD_INFERENCE_WRITTEN: record.inference_written,
-        **(
-            {_RECORD_INFERENCE_SCALAR: record.inference_scalar}
-            if record.inference_existed and not record.inference_was_object
-            else {}
-        ),
-    }
-
-
-def _record_path(config_path: Path) -> Path:
-    """Sidecar recording what configure inserted or overwrote."""
-
-    return config_path.with_name(config_path.name + _RECORD_SUFFIX)
-
-
-def _snapshot_entry(mapping: Mapping[str, object], key: str) -> _OwnershipEntry:
-    """Capture the pre-merge state of one key inside ``mapping``."""
-
-    if key in mapping:
-        return {"present": True, "value": mapping[key]}
-    return {"present": False, "value": None}
-
-
-def _ownership_record(
-    data: dict[str, object],
-    managed_keys: Sequence[str],
-) -> _OwnershipRecord:
-    """Snapshot every managed key so unconfigure can restore exactly it."""
-
-    discovery = _snapshot_entry(data, _DISCOVERY_KEY)
-    existed = _INFERENCE_KEY in data
-    raw = data.get(_INFERENCE_KEY)
-    keys = {
-        key: _snapshot_entry(raw if isinstance(raw, dict) else {}, key)
-        for key in managed_keys
-    }
-    if isinstance(raw, dict):
-        return _OwnershipRecord(
-            discovery=discovery,
-            inference_existed=True,
-            inference_was_object=True,
-            inference_scalar=None,
-            inference_keys=keys,
-        )
-    return _OwnershipRecord(
-        discovery=discovery,
-        inference_existed=existed,
-        inference_was_object=False,
-        inference_scalar=raw if existed else None,
-        inference_keys=keys,
-    )
-
-
-def _parse_entry(raw: object) -> _OwnershipEntry | None:
-    """Parse one ownership snapshot; ``None`` when malformed."""
-
-    if not isinstance(raw, dict):
-        return None
-    present = raw.get("present")
-    if not isinstance(present, bool) or (present and "value" not in raw):
-        return None
-    return {"present": present, "value": raw.get("value")}
-
-
-def _load_ownership_record(path: Path) -> _OwnershipRecord | None:
-    """Read the ownership sidecar; ``None`` when missing or malformed."""
-
-    if not path.exists():
-        return None
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(loaded, dict):
-        return None
-
-    discovery = _parse_entry(loaded.get(_DISCOVERY_KEY))
-    if discovery is None:
-        return None
-
-    existed = loaded.get(_RECORD_INFERENCE_EXISTED)
-    was_object = loaded.get(_RECORD_INFERENCE_WAS_OBJECT)
-    if not isinstance(existed, bool) or not isinstance(was_object, bool):
-        return None
-
-    keys_raw = loaded.get(_RECORD_INFERENCE_KEYS)
-    if not isinstance(keys_raw, dict):
-        return None
-    inference_keys: dict[str, _OwnershipEntry] = {}
-    for key, raw in keys_raw.items():
-        parsed = _parse_entry(raw)
-        if not isinstance(key, str) or parsed is None:
-            return None
-        inference_keys[key] = parsed
-
-    written = loaded.get(_RECORD_INFERENCE_WRITTEN)
-    if not isinstance(written, dict):
-        return None
-    normalized_written: dict[str, object] = {
-        str(key): value for key, value in written.items()
-    }
-
-    scalar: object | None = None
-    if existed and not was_object:
-        if _RECORD_INFERENCE_SCALAR not in loaded:
-            return None
-        scalar = loaded[_RECORD_INFERENCE_SCALAR]
-
-    return _OwnershipRecord(
-        discovery=discovery,
-        inference_existed=existed,
-        inference_was_object=was_object,
-        inference_scalar=scalar,
-        inference_keys=inference_keys,
-        inference_written=normalized_written,
-    )
+    current = directory.stat().st_mode
+    target = stat.S_IRWXU
+    if current & 0o777 != target:
+        directory.chmod(target)
 
 
 def configure_claude_desktop_config(
@@ -304,10 +170,15 @@ def configure_claude_desktop_config(
 ) -> bool:
     """Merge the FCC routing block into ``path``. Returns whether anything changed.
 
-    Records the pre-merge values of the managed keys in a sidecar so a later
-    ``unconfigure`` restores exactly them. Returns ``False`` without writing
-    when the existing config is malformed (invalid JSON or non-object root).
-    Creates a new config when absent.
+    Before the first merge the prior presence and values of the managed
+    surface (the discovery flag and the inference keys FCC overwrites) are
+    snapshotted under ``fccPriorConfig``; ``unconfigure`` restores that
+    snapshot so temporarily enabling FCC never destroys the user's previous
+    provider, gateway, credential, or discovery settings. Re-merges keep the
+    original snapshot untouched.
+
+    Returns ``False`` without writing when the existing config is malformed
+    (invalid JSON or non-object root). Creates a new config when absent.
     """
 
     resolved_settings = settings or get_settings()
@@ -315,10 +186,8 @@ def configure_claude_desktop_config(
     config_path = path or _config_path()
     try:
         data: dict[str, object] = load_existing_config(config_path)
-        existed = True
     except FileNotFoundError:
         data = {}
-        existed = False
     except MalformedConfigError as exc:
         logger.warning(
             "Skipping FCC config merge: malformed config at {}: {}",
@@ -327,15 +196,14 @@ def configure_claude_desktop_config(
         )
         return False
 
-    prior = _ownership_record(data, tuple(managed))
-    record_path = _record_path(config_path)
-    previous = (
-        _load_ownership_record(record_path)
-        if existed and record_path.exists()
-        else None
-    )
-
     changed = False
+
+    # The snapshot must observe the config BEFORE the merge touches it, so
+    # capture the discovery flag's prior presence and value first: presence
+    # alone is not enough, since a user who explicitly disabled discovery
+    # must get ``false`` back, not ``true``.
+    had_discovery = _DISCOVERY_KEY in data
+    prior_discovery = data.get(_DISCOVERY_KEY)
 
     if data.get(_DISCOVERY_KEY) is not True:
         data[_DISCOVERY_KEY] = True
@@ -347,18 +215,39 @@ def configure_claude_desktop_config(
         for key, value in inference_raw.items():
             inference_dict[str(key)] = value
 
-    # A non-object ``inference`` after a recorded merge is the user's
-    # wholesale replacement of the FCC block: they swapped the whole
-    # entry for a scalar or null. The merge still writes its managed
-    # mapping (configure's contract is to ensure the block exists), but
-    # ownership must now restore the REPLACEMENT on unconfigure — not the
-    # value from before the first merge, which would discard the user's
-    # later change.
-    replaced_wholesale = (
-        previous is not None
-        and _INFERENCE_KEY in data
-        and not isinstance(inference_raw, dict)
-    )
+    if _BACKUP_KEY not in data:
+        backup: dict[str, object] = {}
+        # Omit the discovery entry when the key was absent so the restore
+        # can tell "was present with this value" from "was not present".
+        if had_discovery:
+            backup["discovery"] = prior_discovery
+        if _INFERENCE_KEY in data:
+            if isinstance(inference_raw, dict):
+                backup["inference"] = {
+                    key: value
+                    for key, value in inference_dict.items()
+                    if key in managed
+                }
+            else:
+                # The original value is not a JSON object; the merge
+                # replaces it wholesale, so record it verbatim for an
+                # exact restore.
+                backup["inferenceRaw"] = inference_raw
+        data[_BACKUP_KEY] = backup
+        changed = True
+    elif not isinstance(inference_raw, dict) and _INFERENCE_KEY in data:
+        # A non-object ``inference`` with a snapshot already recorded is
+        # the user's wholesale replacement of the FCC block (a scalar or
+        # ``null`` in place of the mapping configure wrote). The merge
+        # still writes its managed mapping — configure's contract is to
+        # ensure the block exists — but the snapshot must now restore the
+        # REPLACEMENT on unconfigure; keeping the first-merge value would
+        # silently discard the user's later change.
+        backup = data[_BACKUP_KEY]
+        if isinstance(backup, dict):
+            backup.pop("inference", None)
+            backup["inferenceRaw"] = inference_raw
+            changed = True
 
     for key, value in managed.items():
         if inference_dict.get(key) != value:
@@ -370,109 +259,38 @@ def configure_claude_desktop_config(
         changed = True
 
     if changed:
-        prior = replace(
-            prior,
-            discovery=(
-                previous.discovery
-                if previous is not None and data.get(_DISCOVERY_KEY) is True
-                else prior.discovery
-            ),
-            inference_written=inference_dict,
-            inference_keys=(
-                _absorb_user_edits(previous, tuple(managed), inference_raw)
-                if previous is not None
-                else prior.inference_keys
-            ),
-            # The container provenance (absent / object / scalar origin) is a
-            # fact about the FIRST merge: this merge sees an ``inference``
-            # that configure itself wrote, which would otherwise overwrite
-            # the original origin with ``existed=True, was_object=True`` and
-            # leave unconfigure restoring into an FCC-shaped container the
-            # user never had. A wholesale user replacement is the one
-            # exception: its scalar value is the new origin, so unconfigure
-            # restores the replacement instead of the pre-FCC state.
-            inference_existed=(
-                True
-                if replaced_wholesale
-                else (
-                    previous.inference_existed
-                    if previous is not None
-                    else prior.inference_existed
-                )
-            ),
-            inference_was_object=(
-                False
-                if replaced_wholesale
-                else (
-                    previous.inference_was_object
-                    if previous is not None
-                    else prior.inference_was_object
-                )
-            ),
-            inference_scalar=(
-                inference_raw
-                if replaced_wholesale
-                else (
-                    previous.inference_scalar
-                    if previous is not None
-                    else prior.inference_scalar
-                )
-            ),
-        )
-        _save_config(record_path, _record_payload(prior))
         _save_config(config_path, data)
     return changed
 
 
-def _absorb_user_edits(
-    previous: _OwnershipRecord,
-    managed_keys: Sequence[str],
-    current_raw: object,
-) -> dict[str, _OwnershipEntry]:
-    """Re-target restore values at keys the user edited between merges.
+def unconfigure_claude_desktop_config(
+    path: Path | None = None,
+    settings: Settings | None = None,
+    gateway_base_url: str | None = None,
+) -> bool:
+    """Reverse the merge. Preserves every key outside the FCC-managed surface.
 
-    Starts from the recorded restore targets and updates a key only when its
-    live value differs from both what the last merge wrote and what the
-    record would restore — that combination means a post-merge user edit,
-    and reverting it on unconfigure would discard the user's change. Keys
-    still at their written values keep their original restore targets.
+    When the first merge recorded a ``fccPriorConfig`` snapshot, removal is
+    lossless: every managed key is deleted, then the snapshot's prior
+    presence and values are restored, and only keys FCC originally added
+    stay gone. A non-object ``inference`` value recorded verbatim by the
+    snapshot is restored exactly. Without a snapshot (a config written
+    before backups existed or by hand) ownership is decided by the
+    recorded auth token: it is settings-derived and stable across front
+    state, so when it matches the FCC token the whole block is FCC's and
+    every managed key is removed — even a gateway URL that no longer
+    matches current resolution because the HTTPS front is gone and
+    resolution fell back to plain HTTP — along with the discovery flag.
+    Without that token match only keys whose recorded values exactly
+    match current resolution are removed, so user-owned values that share
+    FCC key names survive, and the discovery flag is preserved because
+    ownership is ambiguous. Returns ``False`` without writing when the
+    existing config is malformed, or silently when the file does not
+    exist.
     """
 
-    current = current_raw if isinstance(current_raw, dict) else {}
-    absorbed = dict(previous.inference_keys)
-    for key in managed_keys:
-        written_value = previous.inference_written.get(key)
-        current_value = current.get(key)
-        if current_value == written_value:
-            continue  # Still FCC's value; nothing user-owned to absorb.
-        restores_absent = key not in absorbed or not absorbed[key]["present"]
-        if restores_absent and key not in current:
-            continue  # Record already removes this key.
-        if (
-            not restores_absent
-            and key in current
-            and absorbed[key]["value"] == current_value
-        ):
-            continue  # Record already restores exactly this user value.
-        absorbed[key] = {
-            "present": key in current,
-            "value": current_value,
-        }
-    return absorbed
-
-
-def unconfigure_claude_desktop_config(path: Path | None = None) -> bool:
-    """Reverse the merge recorded by ``configure`` for ``path``.
-
-    Only the managed surface FCC actually touched is restored: values that
-    existed before configure come back verbatim from the ownership record,
-    keys FCC inserted are removed, and every other key is preserved. With no
-    valid record nothing is owned by FCC, so the config is left untouched
-    and ``False`` is returned. Also returns ``False`` without writing when
-    the existing config or record is malformed, or silently when the file
-    does not exist.
-    """
-
+    resolved_settings = settings or get_settings()
+    managed = fcc_managed_block(resolved_settings, gateway_base_url)
     config_path = path or _config_path()
     if not config_path.exists():
         return False
@@ -486,149 +304,102 @@ def unconfigure_claude_desktop_config(path: Path | None = None) -> bool:
         )
         return False
 
-    record_path = _record_path(config_path)
-    record = _load_ownership_record(record_path)
-    if record is None:
-        logger.warning(
-            "Skipping FCC config unmerge: no FCC ownership record at {}",
-            record_path,
-        )
-        return False
+    backup_raw = data.get(_BACKUP_KEY)
+    # ``None`` means "no snapshot recorded" — an EMPTY snapshot dict is a
+    # real one (nothing prior to restore) and must still take the restore
+    # path so it gets deleted.
+    backup: dict[str, object] | None = None
+    if isinstance(backup_raw, dict):
+        backup = backup_raw
 
     changed = False
 
-    # Configure always writes ``True`` here. A current value of ``True`` is
-    # still FCC's to manage; anything else means the user edited it after the
-    # merge and their choice wins.
-    discovery = record.discovery
-    if discovery["present"]:
-        if (
-            data.get(_DISCOVERY_KEY) is True
-            and data[_DISCOVERY_KEY] != (discovery["value"])
-        ):
-            data[_DISCOVERY_KEY] = discovery["value"]
-            changed = True
-    elif data.get(_DISCOVERY_KEY) is True:
-        del data[_DISCOVERY_KEY]
-        changed = True
+    inference_raw = data.get(_INFERENCE_KEY)
+    inference_dict: dict[str, object] = {}
+    if isinstance(inference_raw, dict):
+        for key, value in inference_raw.items():
+            inference_dict[str(key)] = value
 
-    written = record.inference_written
-    if not record.inference_existed:
-        changed = (
-            _remove_inference_keys(data, record.inference_keys, written) or changed
-        )
-    elif record.inference_was_object:
-        changed = (
-            _restore_inference_keys(data, record.inference_keys, written) or changed
-        )
-    else:
-        # Configure clobbered a non-object entry with its mapping. Per-key
-        # ownership applies exactly as in the object path: a managed key
-        # still holding what configure wrote is FCC's to remove, while a
-        # user-added field (the reason the mapping no longer equals
-        # ``written``) is preserved. Whole-mapping equality would leave
-        # every FCC routing key installed the moment the user adds one
-        # unrelated field.
-        current = _current_inference_object(data)
-        if current is not None:
-            for key in record.inference_keys:
-                if key in current and current[key] == written.get(key):
-                    del current[key]
-                    changed = True
-            if not current:
-                # Nothing user-owned remains in the mapping, so restore the
-                # original scalar (or ``null``) exactly as configure found
-                # it. ``del`` would drop the whole entry instead.
-                data[_INFERENCE_KEY] = record.inference_scalar
+    if backup is not None:
+        # Snapshot path: the merge recorded what FCC replaced, so the
+        # discovery flag and every managed key are FCC's — remove them
+        # all, then restore the snapshot below.
+        if _DISCOVERY_KEY in data:
+            del data[_DISCOVERY_KEY]
+            changed = True
+        for key in managed:
+            if key in inference_dict:
+                del inference_dict[key]
                 changed = True
-            elif changed:
-                data[_INFERENCE_KEY] = current
-    # A non-object current value is a post-merge user replacement; it is no
-    # longer FCC's to touch, so it stays as-is.
+        prior_raw = backup.get("inference")
+        if isinstance(prior_raw, dict):
+            for key, value in prior_raw.items():
+                inference_dict[str(key)] = value
+                changed = True
+    else:
+        # Legacy path (no snapshot): ownership is decided by the recorded
+        # auth token. The discovery flag is removed only once FCC
+        # ownership is established — deleting it first would erase a
+        # user-owned preference from a hand-authored or legacy config.
+        managed_token = managed["inferenceAnthropicApiKey"]
+        fcc_owned = inference_dict.get("inferenceAnthropicApiKey") == managed_token
+        if fcc_owned and _DISCOVERY_KEY in data:
+            del data[_DISCOVERY_KEY]
+            changed = True
+        for key, value in managed.items():
+            recorded = inference_dict.get(key)
+            if recorded is not None and (fcc_owned or recorded == value):
+                del inference_dict[key]
+                changed = True
+
+    if _INFERENCE_KEY in data:
+        if inference_dict:
+            if data[_INFERENCE_KEY] != inference_dict:
+                data[_INFERENCE_KEY] = inference_dict
+                changed = True
+        else:
+            del data[_INFERENCE_KEY]
+            changed = True
+
+    if backup is not None:
+        if "inferenceRaw" in backup:
+            # The original value was not a JSON object; restore it verbatim.
+            data[_INFERENCE_KEY] = backup["inferenceRaw"]
+            changed = True
+        # Restore the original discovery value when the key was present
+        # before the first merge; leave it deleted when it was absent.
+        if "discovery" in backup:
+            data[_DISCOVERY_KEY] = backup["discovery"]
+            changed = True
+        del data[_BACKUP_KEY]
+        changed = True
 
     if changed:
         _save_config(config_path, data)
-        record_path.unlink()
     return changed
 
 
-def _current_inference_object(
-    data: dict[str, object],
-) -> dict[str, object] | None:
-    """The live ``inference`` mapping FCC wrote, or ``None`` once user-owned.
+def report_configure_result(target: Path, changed: bool) -> None:
+    """Report a configure outcome, refusing a malformed-config skip.
 
-    Configure leaves ``inference`` an object; a missing entry or any other
-    JSON value means the user replaced or removed it wholesale and it is no
-    longer FCC's to touch.
+    ``configure_claude_desktop_config`` returns ``False`` for both an
+    idempotent no-op and a malformed-config skip; only the skip leaves
+    Claude Desktop unrouted, so reading the config back distinguishes
+    them. "Already merged" is reserved for a valid config that already
+    carries the routing block; a malformed one exits nonzero.
     """
-
-    raw = data.get(_INFERENCE_KEY)
-    if not isinstance(raw, dict):
-        return None
-    return {str(key): value for key, value in raw.items()}
-
-
-def _restore_inference_keys(
-    data: dict[str, object],
-    owned: dict[str, _OwnershipEntry],
-    written: dict[str, object],
-) -> bool:
-    """Restore or remove only FCC-managed inference keys, keeping the rest.
-
-    A key still holding exactly what configure wrote is FCC's to restore;
-    any other value is a post-merge user edit and wins over the snapshot.
-    """
-
-    current = _current_inference_object(data)
-    if current is None:
-        return False
-
-    changed = False
-    for key, entry in owned.items():
-        if current.get(key) != written.get(key):
-            continue  # user-edited since the merge; leave it alone.
-        if entry["present"]:
-            if key not in current or current[key] != entry["value"]:
-                current[key] = entry["value"]
-                changed = True
-        elif key in current:
-            del current[key]
-            changed = True
-
-    if changed:
-        data[_INFERENCE_KEY] = current
-    return changed
-
-
-def _remove_inference_keys(
-    data: dict[str, object],
-    owned: dict[str, _OwnershipEntry],
-    written: dict[str, object],
-) -> bool:
-    """Remove FCC-inserted inference keys; drop the entry when it empties.
-
-    Used when FCC created ``inference`` itself, so any fields added to it
-    after the merge survive unconfiguration. Keys whose values diverged from
-    what configure wrote are user edits and are kept.
-    """
-
-    current = _current_inference_object(data)
-    if current is None:
-        return False
-
-    changed = False
-    for key in owned:
-        if key in current and current[key] == written.get(key):
-            del current[key]
-            changed = True
 
     if not changed:
-        return False
-    if current:
-        data[_INFERENCE_KEY] = current
-    else:
-        del data[_INFERENCE_KEY]
-    return changed
+        try:
+            load_existing_config(target)
+        except MalformedConfigError as exc:
+            print(
+                f"Refusing to configure Claude Desktop: malformed config at "
+                f"{exc.path}: {exc.reason}. Fix or remove the file and retry.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from None
+    print(f"{'Updated' if changed else 'Already merged'}: {target}")
 
 
 def find_binary() -> str | None:
@@ -665,12 +436,63 @@ def ensure_configured_and_launch(
 ) -> subprocess.Popen[bytes]:
     """Merge the routing block, then spawn Claude Desktop.
 
+    The routing block carries the proxy auth token, so it is only written
+    behind a verified HTTPS front: ``verified_https_gateway_url`` returns
+    ``None`` — never the plain-HTTP fallback — when no front proves it
+    belongs to this FCC install, and the launch is refused instead of
+    pointing the credential at an unverified or cleartext listener.
+
+    The merge result is also verified before spawning: ``configure`` returns
+    ``False`` both when it skips a malformed config and when an earlier merge
+    already matches, so the block is read back and the launch refused unless
+    the routing actually landed. Launching on a skipped (malformed) config
+    would start Claude Desktop without FCC routing.
+
     Raises:
+        RuntimeError: If no verified HTTPS front answers, or the routing
+            block did not land in the config.
         FileNotFoundError: If no Claude Desktop binary can be located.
     """
 
-    configure_claude_desktop_config(settings=settings)
+    resolved = settings or get_settings()
+    gateway_url = verified_https_gateway_url(resolved)
+    if gateway_url is None:
+        raise RuntimeError(
+            "Refusing to launch Claude Desktop: no verified FCC HTTPS front "
+            "is available. Start the FCC desktop host (which manages the "
+            "front) or enable the caddy TLS proxy, then retry."
+        )
+    configure_claude_desktop_config(settings=resolved, gateway_base_url=gateway_url)
+    if not _routing_block_present(gateway_url):
+        raise RuntimeError(
+            "Refusing to launch Claude Desktop: the FCC routing block could "
+            "not be written to the config (it may be malformed). Fix or "
+            "remove the config file and retry."
+        )
     return launch_binary()
+
+
+def _routing_block_present(gateway_url: str) -> bool:
+    """Whether the managed routing block actually landed in the config.
+
+    Distinguishes a successful (possibly idempotent) merge from a skipped
+    malformed config, which ``configure_claude_desktop_config`` reports with
+    the same ``False`` return.
+    """
+
+    try:
+        data = load_existing_config(_config_path())
+    except FileNotFoundError:
+        return False
+    except MalformedConfigError:
+        return False
+    inference = data.get(_INFERENCE_KEY)
+    if not isinstance(inference, dict):
+        return False
+    return (
+        data.get(_DISCOVERY_KEY) is True
+        and inference.get("inferenceGatewayBaseUrl") == gateway_url
+    )
 
 
 def _build_argparser() -> argparse.ArgumentParser:
@@ -712,8 +534,25 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(f"{'Removed FCC block' if changed else 'Nothing to remove'}: {target}")
         return
 
-    changed = configure_claude_desktop_config(args.config_path)
-    print(f"{'Updated' if changed else 'Already merged'}: {target}")
+    # --configure persists the gateway credential, so it only writes
+    # against a verified HTTPS front: without one the URL would fall back
+    # to plain HTTP and persist the reusable proxy token against a
+    # cleartext endpoint. Adoption is probe-only — this command exits
+    # right after writing, so a front it spawned itself would die with it
+    # and leave the config it just wrote pointing at a dead gateway.
+    gateway_url = verified_https_gateway_url(get_settings())
+    if gateway_url is None:
+        print(
+            "Refusing to configure Claude Desktop: no verified FCC HTTPS "
+            "front is available. Enable the caddy TLS proxy (or start the "
+            "FCC desktop host, which manages it) and retry.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    changed = configure_claude_desktop_config(
+        args.config_path, gateway_base_url=gateway_url
+    )
+    report_configure_result(target, changed)
 
 
 if __name__ == "__main__":

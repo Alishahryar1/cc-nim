@@ -4,6 +4,9 @@ import threading
 from collections.abc import Callable
 from typing import Protocol
 
+from loguru import logger
+
+from free_claude_code.cli.claude_desktop import configure_claude_desktop_config
 from free_claude_code.cli.commands import (
     ServerStatus,
     ServerSupervisor,
@@ -12,9 +15,14 @@ from free_claude_code.cli.commands import (
     schedule_open_admin_browser,
 )
 from free_claude_code.cli.launchers.common import preflight_proxy
+from free_claude_code.cli.tls_proxy import (
+    CaddyTlsProxy,
+    verified_https_gateway_url,
+)
 from free_claude_code.config.loader import get_settings
 from free_claude_code.config.paths import config_dir_path
 from free_claude_code.config.server_urls import local_proxy_root_url
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 
@@ -138,10 +146,20 @@ def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
         open_admin_when_ready(settings)
         return
 
+    tls_proxy = CaddyTlsProxy(settings)
     try:
         if preflight_proxy(local_proxy_root_url(settings)) is None:
+            _merge_verified_gateway(settings)
             open_admin_when_ready(settings)
             return
+
+        if tls_proxy.start():
+            _merge_verified_gateway(settings)
+        else:
+            logger.warning(
+                "Skipping Claude Desktop config merge: no HTTPS front is "
+                "available for the desktop gateway.",
+            )
 
         supervisor = ServerSupervisor(console_logging=False)
 
@@ -150,4 +168,38 @@ def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
 
         DesktopController(supervisor, tray_factory, open_current_admin).run()
     finally:
+        tls_proxy.stop()
         instance_lock.release()
+
+
+def _merge_verified_gateway(settings: Settings) -> None:
+    """Merge the routing block only against a currently verified HTTPS front.
+
+    The merge writes the gateway credential, so the gateway URL is re-verified
+    at write time and passed explicitly: a front that verified at startup can
+    stop verifying before the config is written, and the default URL
+    resolution would then silently fall back to a plain-``http://`` gateway
+    while still embedding the reusable proxy token. Requiring a
+    ``verified_https_gateway_url`` result guarantees the block never carries
+    an unverified or cleartext endpoint. Best-effort: a failed merge is
+    logged, never fatal to the desktop lifecycle.
+
+    On the existing-server path this is probe-only adoption — a short-lived
+    launch never spawns its own TLS proxy (it would orphan the child), so a
+    front is only reused if it already proves it belongs to this install.
+    """
+
+    gateway_url = verified_https_gateway_url(settings)
+    if gateway_url is None:
+        logger.warning(
+            "Skipping Claude Desktop config merge: no verified HTTPS front "
+            "is available for the desktop gateway. This short-lived launch "
+            "cannot bring one up without orphaning it, so stop the running "
+            "HTTP-only FCC server first, then start the FCC desktop host "
+            "(which manages the front) or enable the caddy TLS proxy.",
+        )
+        return
+    try:
+        configure_claude_desktop_config(settings=settings, gateway_base_url=gateway_url)
+    except Exception as exc:  # pragma: no cover - defensive; merge already guards
+        logger.warning("Claude Desktop config merge failed: {}", exc)

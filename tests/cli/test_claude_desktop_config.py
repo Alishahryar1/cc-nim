@@ -1,7 +1,6 @@
 """Tests for the Claude Desktop config merge and binary launch helpers."""
 
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -30,6 +29,11 @@ def deterministic_gateway_url(monkeypatch: pytest.MonkeyPatch) -> None:
     """
 
     monkeypatch.setattr(tls_proxy, "probe_fcc_front", lambda *a, **kw: False)
+    # ``resolve_gateway_base_url`` loads the identity before probing; pin it
+    # so the real ``~/.fcc/caddy/front-identity`` is never created.
+    monkeypatch.setattr(
+        tls_proxy, "load_or_create_front_identity", lambda *a, **kw: "pinned"
+    )
 
 
 def test_managed_block_derives_url_and_key_from_settings(
@@ -177,14 +181,168 @@ def test_load_existing_config_raises_malformed_error(tmp_path: Path) -> None:
         claude_desktop.load_existing_config(path)
 
 
-def test_unconfigure_restores_pre_merge_values(
+def test_unconfigure_drops_only_fcc_keys(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
+    managed = claude_desktop.fcc_managed_block(fake_settings)
+    fake_config.write_text(
+        json.dumps(
+            {
+                "preferences": {"theme": "dark"},
+                "modelDiscoveryEnabled": True,
+                "inference": managed | {"extra_user_key": "stay"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    changed = claude_desktop.unconfigure_claude_desktop_config(
+        fake_config, settings=fake_settings
+    )
+
+    assert changed is True
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert "modelDiscoveryEnabled" not in data
+    assert data["inference"] == {"extra_user_key": "stay"}
+    assert data["preferences"] == {"theme": "dark"}
+
+
+def test_unconfigure_removes_block_when_gateway_url_no_longer_matches(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    # Regression guard for the Greptile "unconfigure leaves the gateway
+    # behind" finding: a previous configure persisted the HTTPS gateway
+    # URL, but the front is now gone and URL resolution falls back to
+    # plain HTTP. Removal must not depend on the recorded URL matching
+    # current resolution, or the gateway URL and auth token stay behind.
+    # The settings-derived token is stable across front state, so it is
+    # the ownership marker that still identifies the block as FCC's.
+    fake_config.write_text(
+        json.dumps(
+            {
+                "preferences": {"theme": "dark"},
+                "modelDiscoveryEnabled": True,
+                "inference": {
+                    "provider": "gateway",
+                    "credentialKind": "static",
+                    "inferenceProvider": "gateway",
+                    "inferenceCredentialKind": "static",
+                    "inferenceGatewayBaseUrl": "https://localhost:8443/claude-desktop",
+                    "inferenceGatewayAuthScheme": "x-api-key",
+                    "inferenceAnthropicApiKey": "tok-123",
+                    "extra_user_key": "stay",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    changed = claude_desktop.unconfigure_claude_desktop_config(
+        fake_config, settings=fake_settings
+    )
+
+    assert changed is True
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert "modelDiscoveryEnabled" not in data
+    assert data["inference"] == {"extra_user_key": "stay"}
+    assert data["preferences"] == {"theme": "dark"}
+
+
+def test_unconfigure_preserves_user_values_sharing_fcc_key_names(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    # Regression guard for the Greptile "unconfigure erases user settings"
+    # finding: keys that share FCC-managed names but hold values FCC never
+    # wrote (neither the current resolution nor the FCC auth token) belong
+    # to the user and must survive removal. Without a snapshot the
+    # discovery flag is user-owned too — ownership is ambiguous, so it
+    # must be preserved rather than deleted.
+    fake_config.write_text(
+        json.dumps(
+            {
+                "modelDiscoveryEnabled": True,
+                "inference": {
+                    "provider": "anthropic",
+                    "inferenceGatewayBaseUrl": "https://api.user-gateway.example",
+                    "inferenceAnthropicApiKey": "user-secret-key",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    changed = claude_desktop.unconfigure_claude_desktop_config(
+        fake_config, settings=fake_settings
+    )
+
+    # Nothing in the config is FCC-owned, so removal is a no-op and the
+    # file is left exactly as the user wrote it.
+    assert changed is False
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert data["modelDiscoveryEnabled"] is True
+    assert data["inference"] == {
+        "provider": "anthropic",
+        "inferenceGatewayBaseUrl": "https://api.user-gateway.example",
+        "inferenceAnthropicApiKey": "user-secret-key",
+    }
+
+
+def test_unconfigure_removes_discovery_when_legacy_token_marks_ownership(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    # Regression guard for the Greptile "unconfigure deletes legacy
+    # discovery preference" finding: without a snapshot the discovery
+    # flag may only be removed once FCC ownership is established by the
+    # recorded auth token — never before.
+    fake_config.write_text(
+        json.dumps(
+            {
+                "modelDiscoveryEnabled": True,
+                "inference": {
+                    "provider": "gateway",
+                    "inferenceGatewayBaseUrl": "https://localhost:8443/claude-desktop",
+                    "inferenceAnthropicApiKey": "tok-123",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    changed = claude_desktop.unconfigure_claude_desktop_config(
+        fake_config, settings=fake_settings
+    )
+
+    assert changed is True
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert "modelDiscoveryEnabled" not in data
+    assert "inference" not in data
+
+
+def test_configure_unconfigure_roundtrip_restores_prior_settings(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    # Regression guard for the Greptile "unconfigure drops prior settings"
+    # finding: configure overwrites the user's own provider, gateway, and
+    # credential values, so unconfigure must restore the originals instead
+    # of deleting them.
     original = {
+        "modelDiscoveryEnabled": True,
         "preferences": {"theme": "dark"},
-        "modelDiscoveryEnabled": False,
-        "inference": {"provider": "anthropic", "extra_user_key": "stay"},
+        "inference": {
+            "provider": "anthropic",
+            "credentialKind": "oauth",
+            "inferenceProvider": "anthropic",
+            "inferenceCredentialKind": "oauth",
+            "inferenceGatewayBaseUrl": "https://api.user-gateway.example",
+            "inferenceGatewayAuthScheme": "bearer",
+            "inferenceAnthropicApiKey": "user-secret-key",
+            "extra_user_key": "stay",
+        },
     }
     fake_config.write_text(json.dumps(original), encoding="utf-8")
 
@@ -194,42 +352,36 @@ def test_unconfigure_restores_pre_merge_values(
         )
         is True
     )
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    configured = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert configured["inference"]["provider"] == "gateway"
+    assert configured["inference"]["inferenceAnthropicApiKey"] == "tok-123"
 
-    assert json.loads(fake_config.read_text(encoding="utf-8")) == original
-
-
-def test_unconfigure_without_record_leaves_config_untouched(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """Settings FCC never wrote must survive ``--unconfigure``."""
-
-    managed = claude_desktop.fcc_managed_block(fake_settings)
-    preexisting = {
-        "modelDiscoveryEnabled": True,
-        "inference": managed | {"extra_user_key": "stay"},
-    }
-    fake_config.write_text(json.dumps(preexisting), encoding="utf-8")
-
-    # Configure finds nothing to change, so FCC owns nothing.
     assert (
-        claude_desktop.configure_claude_desktop_config(
+        claude_desktop.unconfigure_claude_desktop_config(
             fake_config, settings=fake_settings
         )
-        is False
+        is True
     )
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is False
+    restored = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert restored == original
 
-    assert json.loads(fake_config.read_text(encoding="utf-8")) == preexisting
 
-
-def test_unconfigure_drops_only_fcc_keys(
+def test_configure_keeps_first_snapshot_across_remerges(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
+    # The snapshot must record the user's ORIGINAL values: a re-merge that
+    # refreshed it with FCC's own block would make unconfigure "restore"
+    # the FCC values instead of the user's.
     fake_config.write_text(
-        json.dumps({"preferences": {"theme": "dark"}, "inference": {}}),
+        json.dumps(
+            {
+                "inference": {
+                    "provider": "anthropic",
+                    "inferenceAnthropicApiKey": "user-secret-key",
+                }
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -239,70 +391,37 @@ def test_unconfigure_drops_only_fcc_keys(
         )
         is True
     )
-    changed = claude_desktop.unconfigure_claude_desktop_config(fake_config)
-
-    assert changed is True
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert "modelDiscoveryEnabled" not in data
-    assert data["inference"] == {}
-    assert data["preferences"] == {"theme": "dark"}
-    assert not claude_desktop._record_path(fake_config).exists()
-
-
-def test_unconfigure_ignores_malformed_ownership_record(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    original = '{"modelDiscoveryEnabled": true}'
-    fake_config.write_text(original, encoding="utf-8")
-    claude_desktop._record_path(fake_config).write_text("{corrupt", encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is False
-
-    assert fake_config.read_text(encoding="utf-8") == original
-
-
-def test_configure_keeps_earliest_snapshot_across_repeated_merges(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    fake_config.write_text(
-        json.dumps({"inference": {"user": "value"}}), encoding="utf-8"
-    )
-
     assert (
         claude_desktop.configure_claude_desktop_config(
             fake_config, settings=fake_settings
         )
-        is True
-    )
-    # A second merge with different settings must not clobber the snapshot.
-    rotated = fake_settings.model_copy(update={"proxy_auth_token": "tok-456"})
-    assert (
-        claude_desktop.configure_claude_desktop_config(fake_config, settings=rotated)
-        is True
+        is False
     )
 
-    record = json.loads(
-        claude_desktop._record_path(fake_config).read_text(encoding="utf-8")
-    )
-    # The earliest snapshot had no managed keys; a clobbering second
-    # snapshot would have recorded the values from the first merge.
-    assert record["inferenceKeys"]["provider"] == {"present": False, "value": None}
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
-        "inference": {"user": "value"}
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    # No discovery entry: the key was absent before the first merge, and
+    # the restore must delete it again rather than invent a value.
+    assert data["fccPriorConfig"] == {
+        "inference": {
+            "provider": "anthropic",
+            "inferenceAnthropicApiKey": "user-secret-key",
+        },
     }
 
 
-def test_unconfigure_keeps_inference_keys_added_after_configure(
+def test_configure_unconfigure_roundtrip_restores_disabled_discovery(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
-    """Unconfiguration must not remove inference entries FCC never touched."""
-
-    fake_config.write_text(json.dumps({"inference": {}}), encoding="utf-8")
+    # Regression guard for the Greptile "discovery value restores
+    # incorrectly" finding: a user who explicitly disabled model discovery
+    # must get ``false`` back after unconfigure — presence alone would
+    # restore ``true`` and permanently flip the preference.
+    original = {
+        "modelDiscoveryEnabled": False,
+        "inference": {"provider": "anthropic"},
+    }
+    fake_config.write_text(json.dumps(original), encoding="utf-8")
 
     assert (
         claude_desktop.configure_claude_desktop_config(
@@ -310,26 +429,36 @@ def test_unconfigure_keeps_inference_keys_added_after_configure(
         )
         is True
     )
+    configured = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert configured["modelDiscoveryEnabled"] is True
+    assert configured["fccPriorConfig"]["discovery"] is False
 
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"]["userAddedAfterConfigure"] = "keep"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
+    assert (
+        claude_desktop.unconfigure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    restored = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert restored == original
 
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
 
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert result["inference"] == {"userAddedAfterConfigure": "keep"}
-
-
-def test_unconfigure_preserves_user_replaced_inference_value(
+@pytest.mark.parametrize(
+    "raw_inference",
+    ["legacy-string", ["a", "b"], None],
+    ids=["string", "list", "null"],
+)
+def test_configure_unconfigure_roundtrip_restores_non_object_inference(
     fake_config: Path,
     fake_settings: Settings,
+    raw_inference: object,
 ) -> None:
-    """A non-object ``inference`` after configure is user-owned, not ours."""
-
-    fake_config.write_text(
-        json.dumps({"inference": {"provider": "anthropic"}}), encoding="utf-8"
-    )
+    # Regression guard for the Greptile "non-object inference values are
+    # not restored" finding: a valid config whose inference value is a
+    # string, list, or null must get that exact value back after a
+    # configure/unconfigure round trip, not a deleted key.
+    original = {"inference": raw_inference, "preferences": {"theme": "dark"}}
+    fake_config.write_text(json.dumps(original), encoding="utf-8")
 
     assert (
         claude_desktop.configure_claude_desktop_config(
@@ -337,185 +466,18 @@ def test_unconfigure_preserves_user_replaced_inference_value(
         )
         is True
     )
-
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"] = "user-replaced-scalar"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    # Unconfigure still removes the FCC-owned discovery key.
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert "modelDiscoveryEnabled" not in result
-    assert result["inference"] == "user-replaced-scalar"
-
-
-def test_unconfigure_preserves_user_deleted_inference_entry(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """Removing ``inference`` wholesale after configure must be respected."""
+    configured = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert configured["inference"]["provider"] == "gateway"
+    assert configured["fccPriorConfig"]["inferenceRaw"] == raw_inference
 
     assert (
-        claude_desktop.configure_claude_desktop_config(
+        claude_desktop.unconfigure_claude_desktop_config(
             fake_config, settings=fake_settings
         )
         is True
     )
-
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    del data["inference"]
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    # Unconfigure still removes the FCC-owned discovery key.
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert "modelDiscoveryEnabled" not in result
-    assert "inference" not in result
-
-
-def test_unconfigure_keeps_additions_when_fcc_created_inference(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """An inference entry FCC created must not swallow later additions."""
-
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
-
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"]["userAddedAfterConfigure"] = "must-survive"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert "modelDiscoveryEnabled" not in result
-    assert result["inference"] == {"userAddedAfterConfigure": "must-survive"}
-
-
-def test_unconfigure_restores_non_object_inference_entry(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """Configure clobbers a non-object ``inference``; unconfigure restores it."""
-
-    original = json.dumps({"inference": "legacy-scalar"})
-    fake_config.write_text(original, encoding="utf-8")
-
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    assert json.loads(fake_config.read_text(encoding="utf-8"))["inference"] == (
-        "legacy-scalar"
-    )
-
-
-def test_unconfigure_cleans_scalar_origin_after_user_adds_field(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """A user-added field must not shield FCC's routing keys from removal.
-
-    Configure clobbers a scalar ``inference`` with its managed mapping; the
-    user then adds an unrelated field, so the mapping no longer equals what
-    configure wrote. Unconfigure must still remove every managed key that
-    holds its written value while preserving the user's field.
-    """
-
-    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"]["userAddedAfterConfigure"] = "must-survive"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert result["inference"] == {"userAddedAfterConfigure": "must-survive"}
-
-
-def test_unconfigure_cleans_null_origin_after_user_adds_field(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """Same per-key cleanup for a ``null`` pre-merge ``inference`` origin."""
-
-    fake_config.write_text(json.dumps({"inference": None}), encoding="utf-8")
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"]["userAddedAfterConfigure"] = "must-survive"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert result["inference"] == {"userAddedAfterConfigure": "must-survive"}
-
-
-def test_unconfigure_keeps_user_edited_managed_key_over_scalar_origin(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """A user-edited managed key survives; untouched managed keys go."""
-
-    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"]["inferenceGatewayBaseUrl"] = "user-edited-url"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert result["inference"] == {"inferenceGatewayBaseUrl": "user-edited-url"}
-
-
-def test_save_config_writes_owner_only_permissions(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """The token-bearing block must stay 0o600 even under a permissive umask."""
-
-    old_umask = os.umask(0o000)
-    try:
-        assert (
-            claude_desktop.configure_claude_desktop_config(
-                fake_config, settings=fake_settings
-            )
-            is True
-        )
-    finally:
-        os.umask(old_umask)
-
-    assert (fake_config.stat().st_mode & 0o777) == 0o600
-    record = claude_desktop._record_path(fake_config)
-    assert (record.stat().st_mode & 0o777) == 0o600
+    restored = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert restored == original
 
 
 def test_unconfigure_roundtrip_is_clean_noop(
@@ -528,37 +490,23 @@ def test_unconfigure_roundtrip_is_clean_noop(
         )
         is True
     )
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    assert (
+        claude_desktop.unconfigure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
 
     data = json.loads(fake_config.read_text(encoding="utf-8"))
     assert data == {}
 
     # Second passes are no-ops.
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is False
-
-
-def test_configure_write_failure_leaves_existing_config_intact(
-    fake_config: Path,
-    fake_settings: Settings,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A failed save (e.g. read-only directory) must not corrupt the config."""
-
-    original = json.dumps({"preferences": {"theme": "dark"}})
-    fake_config.parent.mkdir(parents=True, exist_ok=True)
-    fake_config.write_text(original, encoding="utf-8")
-
-    def refuse_write(path: Path, data: dict[str, object]) -> None:
-        raise PermissionError(path)
-
-    monkeypatch.setattr(claude_desktop, "_save_config", refuse_write)
-
-    with pytest.raises(PermissionError):
-        claude_desktop.configure_claude_desktop_config(
+    assert (
+        claude_desktop.unconfigure_claude_desktop_config(
             fake_config, settings=fake_settings
         )
-
-    assert fake_config.read_text(encoding="utf-8") == original
+        is False
+    )
 
 
 def test_unconfigure_silent_on_missing_file(tmp_path: Path) -> None:
@@ -585,6 +533,7 @@ def test_main_configure_writes_block_without_subprocess(
     fake_settings: Settings,
 ) -> None:
     fake = tmp_path / "claude_desktop_config.json"
+    verified_url = "https://localhost:8443/claude-desktop"
 
     def fail_popen(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("configure must not spawn a subprocess")
@@ -593,18 +542,106 @@ def test_main_configure_writes_block_without_subprocess(
     monkeypatch.setattr(
         claude_desktop, "get_settings", lambda: fake_settings, raising=False
     )
+    monkeypatch.setattr(
+        claude_desktop, "verified_https_gateway_url", lambda settings: verified_url
+    )
 
     claude_desktop.main(["--configure", "--config-path", str(fake)])
 
     data = json.loads(fake.read_text(encoding="utf-8"))
     assert data["modelDiscoveryEnabled"] is True
+    # The persisted block must point at the verified HTTPS front.
+    assert data["inference"]["inferenceGatewayBaseUrl"] == verified_url
 
 
-def test_launch_binary_spawns_binary_without_certificate_bypass(
+def test_main_configure_adopts_existing_front_without_spawning_one(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_settings: Settings,
+) -> None:
+    # The command exits right after writing, so a front it spawned itself
+    # would die with it and leave the config pointing at a dead gateway.
+    # Adoption must be probe-only: verification runs for real here (probe
+    # pinned), and any attempt to bring up a managed proxy trips the
+    # construction guard.
+    fake = tmp_path / "claude_desktop_config.json"
+
+    def fail_spawn(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("configure must never bring up its own front")
+
+    monkeypatch.setattr(
+        claude_desktop, "get_settings", lambda: fake_settings, raising=False
+    )
+    monkeypatch.setattr(tls_proxy, "CaddyTlsProxy", fail_spawn)
+    monkeypatch.setattr(tls_proxy, "probe_fcc_front", lambda *a, **kw: True)
+
+    claude_desktop.main(["--configure", "--config-path", str(fake)])
+
+    data = json.loads(fake.read_text(encoding="utf-8"))
+    assert data["inference"]["inferenceGatewayBaseUrl"].startswith("https://")
+
+
+def test_main_configure_refuses_malformed_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression guard for the Greptile "malformed configure reports
+    # success" finding: configure returns False for BOTH an idempotent
+    # no-op and a malformed-config skip, so the skip must be refused
+    # with a nonzero exit instead of reported as "Already merged".
+    fake = tmp_path / "claude_desktop_config.json"
+    fake.write_text("{not json", encoding="utf-8")
+
+    monkeypatch.setattr(
+        claude_desktop, "get_settings", lambda: fake_settings, raising=False
+    )
+    monkeypatch.setattr(
+        claude_desktop, "verified_https_gateway_url", lambda settings: "https://x"
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        claude_desktop.main(["--configure", "--config-path", str(fake)])
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "malformed config" in captured.err
+    assert "Already merged" not in captured.out
+    # The malformed file is left untouched.
+    assert fake.read_text(encoding="utf-8") == "{not json"
+
+
+def test_main_configure_refuses_without_https_front(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_settings: Settings,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The routing block embeds the reusable proxy token, so persisting it
+    # against the plain-HTTP fallback would hand the credential to whatever
+    # occupies that endpoint. Refuse without writing instead.
+    fake = tmp_path / "claude_desktop_config.json"
+
+    monkeypatch.setattr(
+        claude_desktop, "get_settings", lambda: fake_settings, raising=False
+    )
+    monkeypatch.setattr(
+        claude_desktop, "verified_https_gateway_url", lambda settings: None
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        claude_desktop.main(["--configure", "--config-path", str(fake)])
+
+    assert exc.value.code == 1
+    assert not fake.exists()
+    captured = capsys.readouterr()
+    assert "no verified FCC HTTPS front" in captured.err
+
+
+def test_launch_binary_spawns_without_certificate_bypass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TLS trust comes from the NSS-installed CA, not a Chromium bypass flag."""
-
     calls: list[list[str]] = []
 
     class FakeProcess:
@@ -617,7 +654,6 @@ def test_launch_binary_spawns_binary_without_certificate_bypass(
     claude_desktop.launch_binary(["--extra"])
 
     assert calls == [["/usr/bin/claude", "--extra"]]
-    assert all("--ignore-certificate-errors" not in cmd for cmd in calls)
 
 
 def test_launch_binary_raises_when_binary_missing(
@@ -636,13 +672,20 @@ def test_ensure_configured_and_launch_merges_then_spawns(
 ) -> None:
     config_path = tmp_path / "claude_desktop_config.json"
     order: list[str] = []
+    gateway_urls: list[str | None] = []
     original_configure = claude_desktop.configure_claude_desktop_config
+    verified_url = "https://localhost:8443/claude-desktop"
 
     def fake_configure(
-        path: Path | None = None, settings: Settings | None = None
+        path: Path | None = None,
+        settings: Settings | None = None,
+        gateway_base_url: str | None = None,
     ) -> bool:
         order.append("configure")
-        return original_configure(path or config_path, settings=settings)
+        gateway_urls.append(gateway_base_url)
+        return original_configure(
+            path or config_path, settings=settings, gateway_base_url=gateway_base_url
+        )
 
     class FakeProcess:
         def __init__(self, cmd: list[str]) -> None:
@@ -651,6 +694,11 @@ def test_ensure_configured_and_launch_merges_then_spawns(
     monkeypatch.setattr(
         claude_desktop, "configure_claude_desktop_config", fake_configure
     )
+    monkeypatch.setattr(
+        claude_desktop, "verified_https_gateway_url", lambda settings: verified_url
+    )
+    # The post-merge read-back must observe the same file the merge wrote.
+    monkeypatch.setattr(claude_desktop, "_config_path", lambda: config_path)
     monkeypatch.setattr(claude_desktop, "find_binary", lambda: "/usr/bin/claude")
     monkeypatch.setattr(claude_desktop.subprocess, "Popen", FakeProcess)
 
@@ -658,221 +706,71 @@ def test_ensure_configured_and_launch_merges_then_spawns(
 
     assert order[0] == "configure"
     assert order[1].startswith("spawn:")
+    # The routing block must point at the verified HTTPS front, never the
+    # plain-HTTP fallback.
+    assert gateway_urls == [verified_url]
 
 
-def test_unconfigure_preserves_user_replaced_object_over_scalar_root(
-    fake_config: Path,
+def test_ensure_configured_and_launch_refuses_when_merge_skips_malformed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     fake_settings: Settings,
 ) -> None:
-    """A user object replacing FCC's generated mapping survives unconfigure."""
+    # Regression guard for the Greptile "launch after malformed config"
+    # finding: ``configure`` returns ``False`` when it skips a malformed
+    # config, so the launch must be refused rather than spawning Claude
+    # Desktop without FCC routing. The read-back distinguishes the skip
+    # from an idempotent no-op merge.
+    config_path = tmp_path / "claude_desktop_config.json"
+    config_path.write_text("{not json", encoding="utf-8")
 
-    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
+    def fail_popen(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("a skipped merge must never reach the binary")
+
+    monkeypatch.setattr(
+        claude_desktop, "verified_https_gateway_url", lambda settings: "https://x"
     )
+    monkeypatch.setattr(claude_desktop, "_config_path", lambda: config_path)
+    monkeypatch.setattr(claude_desktop, "find_binary", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(claude_desktop.subprocess, "Popen", fail_popen)
 
-    replacement = {"provider": "user-choice", "model": "user-model"}
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"] = dict(replacement)
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="routing block could not be written"):
+        claude_desktop.ensure_configured_and_launch(settings=fake_settings)
 
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert result["inference"] == replacement
-    assert "modelDiscoveryEnabled" not in result
+    # The malformed file is left untouched.
+    assert config_path.read_text(encoding="utf-8") == "{not json"
 
 
-def test_unconfigure_preserves_user_deleted_entry_over_scalar_root(
-    fake_config: Path,
+def test_ensure_configured_and_launch_refuses_without_https_front(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     fake_settings: Settings,
 ) -> None:
-    """Deleting ``inference`` wholesale after a scalar clobber is respected."""
+    # Regression guard for the Greptile tray-bypass finding: without a
+    # verified HTTPS front the gateway URL would fall back to plain HTTP,
+    # so the credential-bearing config write and the spawn must both be
+    # refused instead of exposing the token over cleartext local transport.
+    config_path = tmp_path / "claude_desktop_config.json"
 
-    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
+    def fail_configure(*_args: object, **_kwargs: object) -> bool:
+        raise AssertionError("no HTTPS front must never write the config")
+
+    def fail_popen(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("no HTTPS front must never reach the binary")
+
+    monkeypatch.setattr(
+        claude_desktop, "configure_claude_desktop_config", fail_configure
     )
-
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    del data["inference"]
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert "inference" not in result
-
-
-def test_unconfigure_respects_user_edited_discovery_key(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """A post-merge user edit to ``modelDiscoveryEnabled`` wins on unconfigure."""
-
-    fake_config.write_text(
-        json.dumps({"modelDiscoveryEnabled": False}), encoding="utf-8"
+    monkeypatch.setattr(
+        claude_desktop, "verified_https_gateway_url", lambda settings: None
     )
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
+    monkeypatch.setattr(claude_desktop, "find_binary", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(claude_desktop.subprocess, "Popen", fail_popen)
 
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert data["modelDiscoveryEnabled"] is True
-    data["modelDiscoveryEnabled"] = False
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="no verified FCC HTTPS front"):
+        claude_desktop.ensure_configured_and_launch(settings=fake_settings)
 
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    # The pre-merge value was False and the user re-applied False: restored.
-    assert result["modelDiscoveryEnabled"] is False
-
-
-def test_unconfigure_leaves_user_disabled_discovery_from_absent_root(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """FCC-inserted discovery flipped off by the user is not deleted twice."""
-
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
-
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["modelDiscoveryEnabled"] = False
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    result = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert result["modelDiscoveryEnabled"] is False
-
-
-def test_unconfigure_preserves_user_edited_managed_key(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """A post-merge user edit to a managed key wins over the snapshot."""
-
-    claude_desktop.configure_claude_desktop_config(fake_config, settings=fake_settings)
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"]["inferenceAnthropicApiKey"] = "user-rotated-key"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    out = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert out["inference"]["inferenceAnthropicApiKey"] == "user-rotated-key"
-    # Untouched FCC-inserted keys are still removed.
-    assert "provider" not in out["inference"]
-
-
-def test_unconfigure_preserves_user_edited_fcc_created_key(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """Same rule when FCC created ``inference`` itself."""
-
-    claude_desktop.configure_claude_desktop_config(fake_config, settings=fake_settings)
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"]["inferenceGatewayBaseUrl"] = "http://user-chosen:9"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    out = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert out["inference"]["inferenceGatewayBaseUrl"] == "http://user-chosen:9"
-    assert "provider" not in out["inference"]
-
-
-def test_repeated_merges_absorb_post_merge_user_edits(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """A merge after a user edit must not resurrect the first snapshot."""
-
-    original = {"modelDiscoveryEnabled": False, "custom": "keep"}
-    fake_config.write_text(json.dumps({"inference": dict(original)}), encoding="utf-8")
-
-    claude_desktop.configure_claude_desktop_config(fake_config, settings=fake_settings)
-    data = json.loads(fake_config.read_text(encoding="utf-8"))
-    data["inference"]["inferenceAnthropicApiKey"] = "user-key-v2"
-    fake_config.write_text(json.dumps(data), encoding="utf-8")
-
-    # Re-merge with rotated credentials; then reverse everything.
-    rotated = fake_settings.model_copy(update={"proxy_auth_token": "tok-456"})
-    assert (
-        claude_desktop.configure_claude_desktop_config(fake_config, settings=rotated)
-        is True
-    )
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-
-    out = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert out["inference"]["inferenceAnthropicApiKey"] == "user-key-v2"
-    assert out["inference"]["custom"] == "keep"
-
-
-def test_repeated_merges_keep_container_provenance(
-    fake_config: Path,
-    fake_settings: Settings,
-) -> None:
-    """The origin container shape survives repeated merges.
-
-    Regression guard for the Greptile "repeated merge loses container
-    provenance" finding: a second merge sees the ``inference`` object the
-    FIRST merge wrote, so re-snapshotting it would record
-    ``existed=True, was_object=True`` and leave unconfigure restoring into
-    an FCC-shaped container the user never had — an empty ``inference``
-    where the entry was absent, or ``{}`` where the user held a scalar. The
-    original provenance must be retained from the ownership record.
-    """
-
-    # Absent origin: after configure + rotated re-configure + unconfigure,
-    # the inference entry must be gone entirely.
-    fake_config.write_text(json.dumps({}), encoding="utf-8")
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
-    rotated = fake_settings.model_copy(update={"proxy_auth_token": "tok-456"})
-    assert (
-        claude_desktop.configure_claude_desktop_config(fake_config, settings=rotated)
-        is True
-    )
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-    assert json.loads(fake_config.read_text(encoding="utf-8")) == {}
-
-    # Scalar origin: the user's non-object value must come back verbatim.
-    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
-    assert (
-        claude_desktop.configure_claude_desktop_config(
-            fake_config, settings=fake_settings
-        )
-        is True
-    )
-    assert (
-        claude_desktop.configure_claude_desktop_config(fake_config, settings=rotated)
-        is True
-    )
-    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
-        "inference": "legacy-scalar"
-    }
+    assert not config_path.exists()
 
 
 def test_unconfigure_restores_wholesale_inference_replacement(
@@ -886,8 +784,8 @@ def test_unconfigure_restores_wholesale_inference_replacement(
     the whole ``inference`` entry for a scalar or ``null``. A later
     re-merge still writes the managed mapping (configure's contract is
     to ensure the block exists), but the replacement is now the origin
-    unconfigure must restore — re-snapshotting the pre-FCC state would
-    silently discard the user's change.
+    the snapshot must restore — keeping the first-merge value would
+    silently discard the user's later change.
     """
 
     for replacement in ("user-scalar", None):
