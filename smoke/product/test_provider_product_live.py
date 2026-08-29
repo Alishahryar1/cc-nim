@@ -7,7 +7,6 @@ from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.stream_contracts import (
     SSEEvent,
-    assert_anthropic_stream_contract,
     parse_sse_lines,
 )
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
@@ -15,6 +14,7 @@ from smoke.lib.e2e import (
     ConversationDriver,
     ProviderMatrixDriver,
     SmokeServerDriver,
+    assert_native_thinking_stream,
     assert_product_stream,
     echo_tool_schema,
     tool_use_blocks,
@@ -135,11 +135,9 @@ def test_mistral_native_reasoning_model_e2e(smoke_config: SmokeConfig) -> None:
     ) as server:
         turn = ConversationDriver(server, smoke_config).stream(payload)
 
-    assert_anthropic_stream_contract(turn.events)
-    event_text = "\n".join(event.raw for event in turn.events)
-    assert "thinking_delta" in event_text, (
-        f"{provider_model.source}={provider_model.full_model} completed without "
-        "native Mistral thinking output"
+    assert_native_thinking_stream(
+        turn.events,
+        context=f"{provider_model.source}={provider_model.full_model}",
     )
 
 
