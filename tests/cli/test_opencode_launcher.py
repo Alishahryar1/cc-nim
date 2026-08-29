@@ -71,6 +71,13 @@ def test_opencode_config_uses_responses_sdk_and_only_known_metadata() -> None:
                 display_name="Unknown model",
                 supports_reasoning=None,
             ),
+            ClientModel(
+                wire_slug="future_provider/output-only",
+                provider_model_ref="future_provider/output-only",
+                display_name="Output-only model",
+                supports_reasoning=None,
+                max_output_tokens=4096,
+            ),
         ),
         proxy_root_url="http://127.0.0.1:9191",
     )
@@ -95,11 +102,16 @@ def test_opencode_config_uses_responses_sdk_and_only_known_metadata() -> None:
             "name": "No-thinking model",
             "reasoning": False,
             "modalities": {"input": ["text"]},
-            "limit": {"context": 65536},
+            "limit": {"context": 65536, "output": 0},
         },
         "future_provider/unknown-model": {
             "name": "Unknown model",
             "reasoning": True,
+        },
+        "future_provider/output-only": {
+            "name": "Output-only model",
+            "reasoning": True,
+            "limit": {"context": 0, "output": 4096},
         },
     }
     assert config.overlay == {
