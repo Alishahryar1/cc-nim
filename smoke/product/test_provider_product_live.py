@@ -7,6 +7,7 @@ from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.stream_contracts import (
     SSEEvent,
+    assert_anthropic_stream_contract,
     parse_sse_lines,
 )
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
@@ -125,7 +126,7 @@ def test_mistral_native_reasoning_model_e2e(smoke_config: SmokeConfig) -> None:
 
     payload = {
         "model": "claude-opus-4-7",
-        "max_tokens": 1024,
+        "max_tokens": 4096,
         "messages": [{"role": "user", "content": "Reply with one short sentence."}],
         "thinking": {"type": "adaptive"},
     }
@@ -134,7 +135,7 @@ def test_mistral_native_reasoning_model_e2e(smoke_config: SmokeConfig) -> None:
     ) as server:
         turn = ConversationDriver(server, smoke_config).stream(payload)
 
-    _assert_provider_product_stream(turn.events)
+    assert_anthropic_stream_contract(turn.events)
     event_text = "\n".join(event.raw for event in turn.events)
     assert "thinking_delta" in event_text, (
         f"{provider_model.source}={provider_model.full_model} completed without "
@@ -195,7 +196,7 @@ def test_provider_codex_responses_text_e2e(
                 json={
                     "model": provider_model.full_model,
                     "input": smoke_config.prompt,
-                    "max_output_tokens": 128,
+                    "max_output_tokens": 1024,
                     "stream": True,
                 },
                 timeout=smoke_config.timeout_s,

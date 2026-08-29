@@ -60,6 +60,9 @@ def test_hermes_config_pins_responses_catalog_and_fallbacks() -> None:
             "name": "Free Claude Code",
             "api": "http://127.0.0.1:9191/v1",
             "key_env": "FCC_HERMES_A1B2C3",
+            "extra_headers": {
+                "Authorization": "Bearer ${FCC_HERMES_A1B2C3}",
+            },
             "transport": "codex_responses",
             "default_model": "claude-3-freecc-no-thinking/open_router/plain-model",
             "models": {
@@ -120,7 +123,7 @@ def test_hermes_config_pins_responses_catalog_and_fallbacks() -> None:
     for task, task_config in auxiliary.items():
         assert isinstance(task_config, dict)
         expected = {
-            "provider": "main",
+            "provider": "custom:fcc-a1b2c3",
             "model": "",
             "base_url": "",
             "api_key": "",

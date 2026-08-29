@@ -302,7 +302,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
             "test_provider_interrupted_tool_turn_resume_e2e",
             "test_gemini_thought_signature_tool_continuation_e2e",
             "test_provider_reasoning_tool_continuation_e2e",
-            "test_nvidia_nim_stepfun_tool_use_e2e",
         ),
         ("tools", "providers"),
         ("configured tool-capable provider",),
