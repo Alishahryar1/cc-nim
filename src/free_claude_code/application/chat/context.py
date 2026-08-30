@@ -364,14 +364,16 @@ class ChatContextBuilder:
             raise ChatValidationError(
                 "The selected model's output reserve leaves no input context."
             )
-        ratio = input_tokens / usable
+        ratio = input_tokens / context_window
         return ChatContextEstimate(
             estimated_input_tokens=input_tokens,
             completion_tokens=output_limit,
             context_window_tokens=context_window,
             usable_input_tokens=usable,
             usage_ratio=ratio,
-            should_auto_compact=ratio > _AUTO_COMPACT_RATIO and can_compact,
+            should_auto_compact=(
+                can_compact and (ratio > _AUTO_COMPACT_RATIO or input_tokens > usable)
+            ),
             can_compact=can_compact,
         )
 

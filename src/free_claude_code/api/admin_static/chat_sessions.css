@@ -13,7 +13,7 @@
 }
 
 .chat-root {
-  padding: 36px 42px 16px;
+  padding: 36px clamp(16px, 3vw, 42px) 16px;
 }
 
 .chat-library-header,
@@ -125,8 +125,6 @@
     "composer";
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   position: relative;
-  max-width: 1120px;
-  margin: 0 auto;
 }
 
 .chat-session-header {
@@ -254,12 +252,12 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 24px max(12px, 7vw) 30px;
+  padding: 24px 0 30px;
   scroll-behavior: auto;
 }
 
 .chat-message {
-  max-width: 780px;
+  max-width: 1120px;
   margin: 0 auto 22px;
   border-radius: var(--radius-lg);
 }
@@ -345,7 +343,7 @@
 }
 
 .chat-compaction {
-  max-width: 780px;
+  max-width: 1120px;
   margin: 0 auto 24px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -376,7 +374,7 @@
 
 .chat-composer {
   grid-area: composer;
-  margin: 8px max(12px, 7vw) 0;
+  margin: 8px 0 0;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
   background: var(--input);
@@ -556,13 +554,13 @@
   }
 
   .chat-transcript {
-    padding-left: 4px;
-    padding-right: 4px;
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .chat-composer {
-    margin-left: 4px;
-    margin-right: 4px;
+    margin-left: 0;
+    margin-right: 0;
   }
 }
 

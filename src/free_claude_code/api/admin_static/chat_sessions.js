@@ -465,7 +465,7 @@
       return;
     }
     const percent = Math.round((context.usage_ratio || 0) * 100);
-    element.textContent = `Context: ${percent}% · ${formatCount(context.estimated_input_tokens)} input + ${formatCount(context.completion_tokens)} output`;
+    element.textContent = `Context: ${percent}% · ${formatCount(context.estimated_input_tokens)} / ${formatCount(context.context_window_tokens)}`;
     element.className = `chat-context-meter${percent >= 85 ? " warn" : ""}`;
   }
 
@@ -529,7 +529,8 @@
     state.turns.forEach((turn, index) => {
       scroller.appendChild(renderUserMessage(turn));
       const replacingLatest =
-        index === state.turns.length - 1 && state.operation?.action === "retry";
+        index === state.turns.length - 1 &&
+        ["retry", "regenerate"].includes(state.operation?.action);
       if (!replacingLatest) scroller.appendChild(renderAssistantMessage(turn));
       if (
         state.compaction &&
@@ -550,7 +551,7 @@
     if (state.compaction && !dividerRendered) {
       scroller.insertBefore(renderCompaction(), scroller.firstChild);
     }
-    if (state.operation?.segments?.length) {
+    if (state.operation && state.operation.action !== "compact") {
       scroller.appendChild(renderLiveAssistant(state.operation));
     }
   }
@@ -619,6 +620,15 @@
   function renderLiveAssistant(operation) {
     const message = node("article", "chat-message assistant-message live-message");
     message.appendChild(node("div", "chat-message-label", "Assistant"));
+    if (!operation.segments.length || operation.status !== "Thinking…") {
+      const status = node(
+        "p",
+        "chat-muted chat-operation-status",
+        operation.status,
+      );
+      status.setAttribute("aria-live", "polite");
+      message.appendChild(status);
+    }
     operation.segments.forEach((segment, ordinal) => {
       const content = node("div", "chat-message-plain");
       content.dataset.liveSegment = String(ordinal);
@@ -898,8 +908,9 @@
     }
     if (state.contextError) return state.contextError;
     if (
-      state.context?.usage_ratio !== null &&
-      state.context?.usage_ratio > 1 &&
+      state.context?.usable_input_tokens !== null &&
+      state.context?.estimated_input_tokens >
+        state.context?.usable_input_tokens &&
       !state.context?.can_compact
     ) {
       return "This message exceeds the model context";
@@ -926,7 +937,12 @@
     send.hidden = Boolean(state.operation);
     stop.hidden = !state.operation;
     textarea.disabled = Boolean(state.operation);
-    status.textContent = state.operation ? state.operation.status : blocked;
+    status.textContent =
+      state.operation?.action === "compact"
+        ? state.operation.status
+        : state.operation
+          ? ""
+          : blocked;
     document
       .querySelectorAll(
         ".chat-controls button, .chat-controls input, .chat-controls select",
@@ -1167,7 +1183,7 @@
     const operation = state.operation;
     if (!operation) return;
     operation.status = "Stopping…";
-    refreshComposerState();
+    renderOperationStructure(operation);
     try {
       await state.api(`/admin/api/chat/sessions/${operation.sessionId}/stop`, {
         method: "POST",
@@ -1262,7 +1278,10 @@
   }
 
   function formatCount(value) {
-    return new Intl.NumberFormat(undefined, { notation: "compact" }).format(value);
+    return new Intl.NumberFormat(undefined, {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
   }
 
   function capitalize(value) {

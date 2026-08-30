@@ -13,6 +13,28 @@ def _new_chat(page: Page, admin_base_url: str) -> None:
     expect(page.get_by_role("textbox", name="Message", exact=True)).to_be_visible()
 
 
+def _hold_next_chat_operation(page: Page, action: str) -> None:
+    page.evaluate(
+        """
+        action => {
+          const originalFetch = window.fetch.bind(window);
+          window.fetch = (...args) => {
+            if (!String(args[0]).endsWith(`/${action}`)) {
+              return originalFetch(...args);
+            }
+            window.fetch = originalFetch;
+            return new Promise((resolve, reject) => {
+              window.__releaseHeldChatRequest = () => {
+                originalFetch(...args).then(resolve, reject);
+              };
+            });
+          };
+        }
+        """,
+        action,
+    )
+
+
 def _select_model(page: Page, model_ref: str) -> None:
     model = page.get_by_role("combobox", name="Selected model")
     model.click()
@@ -121,6 +143,25 @@ def test_chat_model_picker_searches_and_selects_in_one_control(
     expect(page.get_by_role("listbox")).to_be_hidden()
     page.wait_for_timeout(100)
     assert len(model_patches) == 1
+
+
+def test_chat_context_meter_shows_used_over_advertised_context_window(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    _select_model(page, "open_router/vendor/model-b")
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH"
+            and "/admin/api/chat/sessions/" in response.url
+        )
+    ):
+        page.get_by_label("Thinking").select_option("high")
+    page.get_by_role("textbox", name="Message", exact=True).fill("hello")
+
+    meter = page.locator("#chatContextMeter")
+    expect(meter).to_have_text(re.compile(r"^Context: \d+% · \d+ / 100K$"))
 
 
 def test_delayed_older_page_cannot_cross_into_another_chat(
@@ -241,6 +282,38 @@ def test_chat_streams_thinking_and_persists_answer(
     page.reload()
     expect(page.get_by_text("E2E answer")).to_be_visible()
     expect(page.get_by_text("hello", exact=True)).to_be_visible()
+
+
+def test_generation_status_occupies_the_answer_slot(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+
+    _hold_next_chat_operation(page, "send")
+    message.fill("answer in place")
+    page.get_by_role("button", name="Send").click()
+
+    assistant = page.locator(".assistant-message")
+    expect(assistant).to_have_count(1)
+    expect(assistant.get_by_text("Thinking…", exact=True)).to_be_visible()
+    expect(page.locator("#chatComposerStatus")).to_be_empty()
+
+    page.evaluate("() => { window.__releaseHeldChatRequest(); }")
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+
+    _hold_next_chat_operation(page, "regenerate")
+    page.get_by_role("button", name="Regenerate").click()
+
+    expect(assistant).to_have_count(1)
+    expect(assistant.get_by_text("Thinking…", exact=True)).to_be_visible()
+    expect(assistant).not_to_contain_text("E2E answer")
+    expect(page.locator("#chatComposerStatus")).to_be_empty()
+
+    page.evaluate("() => { window.__releaseHeldChatRequest(); }")
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+    expect(assistant).to_contain_text("E2E answer")
 
 
 def test_fragmented_stream_does_not_rebuild_transcript_per_delta(
@@ -590,6 +663,34 @@ def test_chat_composer_is_one_compact_surface_and_grows_to_six_lines(
     assert capped_height == six_line_height
     assert overflow == "auto"
     assert reset_height == two_line_height
+
+
+def test_chat_uses_desktop_width_with_one_responsive_gutter(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    page.set_viewport_size({"width": 1_600, "height": 900})
+    _new_chat(page, admin_base_url)
+
+    layout = page.locator(".chat-session-shell").evaluate(
+        """shell => {
+            const main = document.querySelector(".main").getBoundingClientRect();
+            const shellBox = shell.getBoundingClientRect();
+            const composer = shell.querySelector(".chat-composer").getBoundingClientRect();
+            return {
+                shellShare: shellBox.width / main.width,
+                composerShare: composer.width / main.width,
+                leftGutter: composer.left - shellBox.left,
+                rightGutter: shellBox.right - composer.right,
+            };
+        }"""
+    )
+
+    assert layout["shellShare"] > 0.9
+    assert layout["composerShare"] > 0.9
+    assert layout["leftGutter"] < 0.5
+    assert layout["rightGutter"] < 0.5
+    assert abs(layout["leftGutter"] - layout["rightGutter"]) < 0.5
 
 
 def test_chat_rename_prompt_and_delete(
