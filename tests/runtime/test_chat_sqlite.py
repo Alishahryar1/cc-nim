@@ -115,15 +115,25 @@ async def test_store_persists_generation_segments_and_actual_fallback(tmp_path: 
                 ChatSegment(1, SegmentKind.TEXT, "answer"),
             ),
         )
-        await store.finish_generation(
+        completed = await store.finish_generation(
             generation_id,
             status=GenerationStatus.COMPLETED,
             stop_reason="end_turn",
             error_code=None,
             error_message=None,
         )
+        repeated = await store.finish_generation(
+            generation_id,
+            status=GenerationStatus.STOPPED,
+            stop_reason="stopped",
+            error_code=None,
+            error_message=None,
+        )
 
         stored = (await store.get_transcript(session.id)).turns[0]
+        assert repeated.revision == completed.revision
+        assert stored.generation.status is GenerationStatus.COMPLETED
+        assert stored.generation.stop_reason == "end_turn"
         assert stored.id == turn.id
         assert stored.generation.actual_model == "open_router/fallback"
         assert [segment.text for segment in stored.generation.segments] == [

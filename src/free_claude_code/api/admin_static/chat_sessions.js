@@ -9,11 +9,13 @@
     compaction: null,
     nextBefore: null,
     context: null,
+    contextError: "",
     libraryCursor: null,
     libraryItems: [],
     libraryQuery: "",
     operation: null,
     draft: "",
+    draftSessionId: null,
     routeVersion: 0,
     estimateTimer: null,
   };
@@ -235,14 +237,16 @@
   }
 
   function applyDetail(detail) {
-    if (state.session?.id && state.session.id !== detail.session.id) {
+    if (state.draftSessionId !== detail.session.id) {
       state.draft = "";
+      state.draftSessionId = detail.session.id;
     }
     state.session = detail.session;
     state.turns = detail.turns;
     state.nextBefore = detail.next_before;
     state.compaction = detail.compaction;
     state.context = detail.context;
+    state.contextError = detail.context_error || "";
   }
 
   function renderSession() {
@@ -597,8 +601,8 @@
       renderSession();
       scheduleEstimate(true);
     } catch (error) {
-      setNotice(error.message, "error");
       await reloadSession();
+      setNotice(error.message, "error");
     }
   }
 
@@ -687,18 +691,24 @@
     if (!session || state.operation) return;
     const textarea = document.getElementById("chatComposer");
     try {
-      state.context = await state.api(
+      const context = await state.api(
         `/admin/api/chat/sessions/${session.id}/estimate`,
         {
           method: "POST",
           body: JSON.stringify({ draft: textarea?.value || "" }),
         },
       );
-      if (state.session?.id === session.id) {
-        updateContextMeter();
-        refreshComposerState();
-      }
+      if (state.session?.id !== session.id) return;
+      state.context = context;
+      state.contextError = "";
+      updateContextMeter();
+      refreshComposerState();
     } catch (error) {
+      if (state.session?.id !== session.id) return;
+      state.context = null;
+      state.contextError = error.message;
+      updateContextMeter();
+      refreshComposerState();
       setNotice(error.message, "error");
     }
   }
@@ -721,6 +731,7 @@
     if (option.supports_reasoning === false && state.session.reasoning !== "off") {
       return "This model requires Thinking Off";
     }
+    if (state.contextError) return state.contextError;
     if (
       state.context?.usage_ratio !== null &&
       state.context?.usage_ratio > 1 &&
@@ -758,8 +769,6 @@
     const textarea = document.getElementById("chatComposer");
     const text = textarea?.value || "";
     if (!text.trim() || !state.session) return;
-    textarea.value = "";
-    state.draft = "";
     await runOperation("send", { text });
   }
 
@@ -777,6 +786,7 @@
 
   async function runOperation(action, extra) {
     if (!state.session || state.operation) return;
+    let failure = null;
     const operation = {
       id: crypto.randomUUID(),
       sessionId: state.session.id,
@@ -786,6 +796,7 @@
       sequence: 0,
       status: action === "compact" ? "Compacting…" : "Thinking…",
       userText: extra.text || "",
+      accepted: false,
     };
     state.operation = operation;
     renderSession();
@@ -808,10 +819,15 @@
       if (!response.body) throw new Error("The browser could not open the chat stream.");
       await consumeEvents(response.body, operation);
     } catch (error) {
-      if (error.name !== "AbortError") setNotice(error.message, "error");
+      if (action === "send" && !operation.accepted) {
+        state.draft = operation.userText;
+        state.draftSessionId = operation.sessionId;
+      }
+      if (error.name !== "AbortError") failure = error;
     } finally {
       if (state.operation === operation) state.operation = null;
       if (state.session?.id === operation.sessionId) await reloadSession();
+      if (failure) setNotice(failure.message, "error");
     }
   }
 
@@ -848,7 +864,21 @@
     });
     if (!payload || payload.operation_id !== operation.id) return;
     if (!Number.isFinite(sequence) || sequence <= operation.sequence) return;
-    if (event === "segment.started") {
+    if (
+      state.session?.id === operation.sessionId &&
+      Number.isInteger(payload.revision)
+    ) {
+      state.session.revision = payload.revision;
+    }
+    if (event === "turn.started") {
+      operation.accepted = true;
+      if (operation.action === "send") {
+        state.draft = "";
+        state.draftSessionId = operation.sessionId;
+        const textarea = document.getElementById("chatComposer");
+        if (textarea) textarea.value = "";
+      }
+    } else if (event === "segment.started") {
       operation.segments[payload.ordinal] = { kind: payload.kind, text: "" };
     } else if (event === "segment.delta") {
       const segment = operation.segments[payload.ordinal];

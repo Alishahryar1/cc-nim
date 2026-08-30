@@ -46,6 +46,26 @@ def test_chat_streams_thinking_and_persists_answer(
     expect(page.get_by_text("hello", exact=True)).to_be_visible()
 
 
+def test_rejected_send_preserves_draft_after_stale_revision(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    session_id = page.url.rsplit("/", 1)[-1]
+    renamed = page.request.patch(
+        f"{admin_base_url}/admin/api/chat/sessions/{session_id}",
+        data={"expected_revision": 1, "title": "Changed elsewhere"},
+    )
+    assert renamed.ok
+
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("do not discard this draft")
+    page.get_by_role("button", name="Send").click()
+
+    expect(message).to_have_value("do not discard this draft")
+    expect(page.locator("#chatNotice")).to_contain_text("changed in another tab")
+
+
 def test_chat_stop_then_retry_uses_one_operation_owner(
     page: Page,
     admin_base_url: str,

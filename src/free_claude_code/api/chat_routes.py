@@ -136,13 +136,20 @@ async def get_chat_session(
         before_sequence=None,
         limit=50,
     )
-    estimate = await chat.estimate(session_id, draft="")
+    estimate: ChatContextEstimate | None
+    context_error: str | None = None
+    try:
+        estimate = await chat.estimate(session_id, draft="")
+    except ChatValidationError as exc:
+        estimate = None
+        context_error = str(exc)
     return {
         "session": _session_payload(session),
         "turns": [_turn_payload(turn) for turn in turns],
         "next_before": next_before,
         "compaction": _compaction_payload(compaction),
-        "context": _estimate_payload(estimate),
+        "context": _estimate_payload(estimate) if estimate is not None else None,
+        "context_error": context_error,
     }
 
 

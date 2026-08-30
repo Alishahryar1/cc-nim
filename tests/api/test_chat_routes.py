@@ -16,6 +16,7 @@ from free_claude_code.application.chat import (
     ChatSessionSummary,
     ChatStreamEvent,
     ChatTurn,
+    ChatValidationError,
     GenerationStatus,
     SegmentKind,
 )
@@ -238,6 +239,15 @@ class StubChat:
         return (session_id, operation_id) == (SESSION_ID, OPERATION_ID)
 
 
+class UnestimatableChat(StubChat):
+    async def estimate(self, session_id: str, *, draft: str) -> ChatContextEstimate:
+        assert session_id == SESSION_ID
+        del draft
+        raise ChatValidationError(
+            "This model does not support reasoning. Set thinking to Off."
+        )
+
+
 def _client(chat: StubChat | None = None) -> TestClient:
     return TestClient(
         create_test_app(chat=chat),
@@ -268,6 +278,18 @@ def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
     assert "<strong>safe</strong>" in segment["html"]
     assert "<script>" not in segment["html"]
     assert detail["turns"][0]["generation"]["actual_model"] == ("open_router/fallback")
+
+
+def test_chat_detail_stays_readable_when_context_controls_need_repair():
+    response = _client(UnestimatableChat()).get(
+        f"/admin/api/chat/sessions/{SESSION_ID}"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["context"] is None
+    assert response.json()["context_error"] == (
+        "This model does not support reasoning. Set thinking to Off."
+    )
 
 
 def test_chat_crud_and_prompt_routes_use_application_port():

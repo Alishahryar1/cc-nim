@@ -280,11 +280,14 @@ class ChatService:
             self._deleting.add(session_id)
             active = self._active.get(session_id)
         try:
+            current = await self._store.get_session(session_id)
+            _expect_revision(current, expected_revision)
             if active is not None:
                 await self._cancel_active(active, reason=_CancellationReason.DELETED)
+                current = await self._store.get_session(session_id)
             await self._store.delete_session(
                 session_id,
-                expected_revision=expected_revision,
+                expected_revision=current.revision,
             )
         finally:
             async with self._active_lock:
@@ -783,6 +786,7 @@ class ChatService:
         )
         if active.regeneration:
             session = await self._store.complete_regeneration(generation_id)
+        active.terminal_emitted = True
         await self._emit(
             active,
             "turn.completed",
@@ -792,7 +796,6 @@ class ChatService:
                 "actual_model": active.actual_model,
             },
         )
-        active.terminal_emitted = True
 
     async def _handle_sse_event(
         self,
@@ -1117,8 +1120,6 @@ class ChatService:
 
     async def _handle_cancelled(self, active: _ActiveOperation) -> None:
         reason = active.cancellation_reason or _CancellationReason.STOPPED
-        if reason is _CancellationReason.DELETED:
-            return
         if active.generation_id is not None:
             with contextlib.suppress(Exception):
                 await self._flush_segments(active)
@@ -1139,6 +1140,8 @@ class ChatService:
                         error_code=None,
                         error_message=None,
                     )
+        if reason is _CancellationReason.DELETED:
+            return
         event = (
             "compaction.stopped"
             if active.kind is _OperationKind.COMPACT

@@ -6,6 +6,7 @@ import pytest
 
 from free_claude_code.application.chat import (
     ChatConflictError,
+    ChatNotFoundError,
     ChatService,
     ChatUnavailableError,
     GenerationStatus,
@@ -128,6 +129,48 @@ class FakeChatProvider:
             (request, input_tokens, request_id, response_model, reasoning)
         )
         yield ""
+
+
+class BackpressuredCompletionProvider(FakeChatProvider):
+    async def stream_messages(
+        self,
+        request: MessagesRequest,
+        *,
+        input_tokens: int,
+        request_id: str,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        del request, input_tokens, request_id, response_model, reasoning
+        yield format_sse_event(
+            "message_start",
+            {"type": "message_start", "message": {"content": []}},
+        )
+        yield format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        )
+        for _ in range(125):
+            yield format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "x"},
+                },
+            )
+        yield format_sse_event(
+            "content_block_stop", {"type": "content_block_stop", "index": 0}
+        )
+        yield format_sse_event(
+            "message_delta",
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+        )
+        yield format_sse_event("message_stop", {"type": "message_stop"})
 
 
 class FakeLease:
@@ -292,6 +335,100 @@ async def test_second_operation_on_same_session_is_rejected(tmp_path: Path):
                 text="second",
             )
         await first.aclose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_validates_stale_revision_before_cancelling_active_send(
+    tmp_path: Path,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        operation_id = "3b4390e2-bbd0-499a-94c5-d7813b1d5f75"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="keep running",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        assert (await service.get_session(session.id)).revision > session.revision
+
+        with pytest.raises(ChatConflictError, match="another tab"):
+            await service.delete_session(
+                session.id,
+                expected_revision=session.revision,
+            )
+
+        assert await service.stop(session.id, operation_id=operation_id) is True
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert generation.status is GenerationStatus.STOPPED
+        await stream.aclose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_active_send_finishes_generation_before_removing_session(
+    tmp_path: Path,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, _store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="0162e7e5-aabd-4ffb-ae50-ed864825ec71",
+            text="delete me",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        running = await service.get_session(session.id)
+
+        await service.delete_session(session.id, expected_revision=running.revision)
+
+        with pytest.raises(ChatNotFoundError):
+            await service.get_session(session.id)
+        await stream.aclose()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_after_durable_completion_cannot_downgrade_status(
+    tmp_path: Path,
+):
+    provider = BackpressuredCompletionProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="80354cee-d3b1-4760-963f-9cc7a1558ffc",
+            text="fill the event queue",
+        )
+
+        async def wait_for_completion() -> None:
+            while True:
+                transcript = await store.get_transcript(session.id)
+                if (
+                    transcript.turns
+                    and transcript.turns[0].generation.status
+                    is GenerationStatus.COMPLETED
+                ):
+                    return
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(wait_for_completion(), timeout=1)
+        await stream.aclose()
+
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert generation.status is GenerationStatus.COMPLETED
+        assert generation.stop_reason == "end_turn"
     finally:
         await service.close()
 

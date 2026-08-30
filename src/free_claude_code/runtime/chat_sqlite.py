@@ -533,7 +533,7 @@ class SQLiteChatStore:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT g.visible, t.session_id
+                SELECT g.visible, g.status, t.session_id
                 FROM chat_generations AS g
                 JOIN chat_turns AS t ON t.id = g.turn_id
                 WHERE g.id = ?
@@ -544,13 +544,16 @@ class SQLiteChatStore:
                 raise ChatNotFoundError("Chat generation not found.")
             session_id = _row_str(row, "session_id")
             visible = bool(_row_int(row, "visible"))
+            if _row_str(row, "status") != GenerationStatus.RUNNING.value:
+                connection.rollback()
+                return self._get_session(connection, session_id)
             now = _now_ms()
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE chat_generations
                 SET status = ?, stop_reason = ?, error_code = ?, error_message = ?,
                     finished_at = ?
-                WHERE id = ?
+                WHERE id = ? AND status = ?
                 """,
                 (
                     status.value,
@@ -559,8 +562,12 @@ class SQLiteChatStore:
                     error_message,
                     now,
                     generation_id,
+                    GenerationStatus.RUNNING.value,
                 ),
             )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return self._get_session(connection, session_id)
             if visible:
                 connection.execute(
                     """
