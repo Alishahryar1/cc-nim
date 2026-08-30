@@ -617,8 +617,8 @@ If you configured an alternative provider key (such as `OPENROUTER_API_KEY`) but
 
 1. Open the Admin UI or edit `~/.fcc/.env`.
 2. Update the `MODEL_*` mappings to your active provider (for example, `open_router/openrouter/free`).
-3. Restart FCC:
-   - **Desktop app (macOS/Windows)**: Click the menu-bar/tray icon and select **Restart**, or re-open the app.
+3. Restart FCC to reload the configuration:
+   - **Desktop app (macOS/Windows)**: Click the menu-bar/tray icon and select **Restart** (or select **Quit** and launch Free Claude Code again).
    - **Terminal (`fcc-server`)**: Stop the active server with `Ctrl+C` (or `pkill -f fcc-server`), then start `fcc-server` again.
 
 </details>
