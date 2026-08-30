@@ -798,3 +798,39 @@ def test_repeated_merges_keep_container_provenance(
     assert json.loads(fake_config.read_text(encoding="utf-8")) == {
         "inference": "legacy-scalar"
     }
+
+
+def test_unconfigure_restores_wholesale_inference_replacement(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """A post-merge wholesale ``inference`` replacement survives unconfigure.
+
+    Regression guard for the Greptile "reconfiguration overwrites full
+    inference replacements" finding: after the first merge the user swaps
+    the whole ``inference`` entry for a scalar or ``null``. A later
+    re-merge still writes the managed mapping (configure's contract is
+    to ensure the block exists), but the replacement is now the origin
+    unconfigure must restore — re-snapshotting the pre-FCC state would
+    silently discard the user's change.
+    """
+
+    for replacement in ("user-scalar", None):
+        fake_config.write_text(json.dumps({}), encoding="utf-8")
+        assert (
+            claude_desktop.configure_claude_desktop_config(
+                fake_config, settings=fake_settings
+            )
+            is True
+        )
+        fake_config.write_text(json.dumps({"inference": replacement}), encoding="utf-8")
+        assert (
+            claude_desktop.configure_claude_desktop_config(
+                fake_config, settings=fake_settings
+            )
+            is True
+        )
+        assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+        assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+            "inference": replacement
+        }

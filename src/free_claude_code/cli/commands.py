@@ -288,21 +288,26 @@ class ServerSupervisor:
         with self._lock:
             self._desktop_gateway_url = gateway_url
         logger.info("Claude Desktop gateway: {}", gateway_url)
-        self._repersist_verified_gateway_url(settings, root)
+        self._repersist_verified_gateway_url(settings, gateway_url)
 
-    def _repersist_verified_gateway_url(self, settings: Settings, root: str) -> None:
+    def _repersist_verified_gateway_url(
+        self, settings: Settings, gateway_url: str
+    ) -> None:
         """Rewrite the Claude Desktop routing block onto the verified front.
 
         Runs once per verified readiness upgrade, inside the live serving
-        window. Failures downgrade to a warning: the in-memory publication
-        already succeeded, and a config-merge failure must not take the
-        serving generation down.
+        window. The persisted URL is the desktop-scoped one — the same
+        value published in memory — because Claude Desktop discovers
+        models against the prefix mount that serves picker aliases, not
+        the bare root. Failures downgrade to a warning: the in-memory
+        publication already succeeded, and a config-merge failure must
+        not take the serving generation down.
         """
 
         try:
             merged = configure_claude_desktop_config(
                 settings=settings,
-                gateway_base_url=root,
+                gateway_base_url=gateway_url,
             )
         except OSError as exc:
             logger.warning("Could not re-merge the Claude Desktop config: {}", exc)

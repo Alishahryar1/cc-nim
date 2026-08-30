@@ -347,6 +347,19 @@ def configure_claude_desktop_config(
         for key, value in inference_raw.items():
             inference_dict[str(key)] = value
 
+    # A non-object ``inference`` after a recorded merge is the user's
+    # wholesale replacement of the FCC block: they swapped the whole
+    # entry for a scalar or null. The merge still writes its managed
+    # mapping (configure's contract is to ensure the block exists), but
+    # ownership must now restore the REPLACEMENT on unconfigure — not the
+    # value from before the first merge, which would discard the user's
+    # later change.
+    replaced_wholesale = (
+        previous is not None
+        and _INFERENCE_KEY in data
+        and not isinstance(inference_raw, dict)
+    )
+
     for key, value in managed.items():
         if inference_dict.get(key) != value:
             inference_dict[key] = value
@@ -375,21 +388,35 @@ def configure_claude_desktop_config(
             # that configure itself wrote, which would otherwise overwrite
             # the original origin with ``existed=True, was_object=True`` and
             # leave unconfigure restoring into an FCC-shaped container the
-            # user never had.
+            # user never had. A wholesale user replacement is the one
+            # exception: its scalar value is the new origin, so unconfigure
+            # restores the replacement instead of the pre-FCC state.
             inference_existed=(
-                previous.inference_existed
-                if previous is not None
-                else prior.inference_existed
+                True
+                if replaced_wholesale
+                else (
+                    previous.inference_existed
+                    if previous is not None
+                    else prior.inference_existed
+                )
             ),
             inference_was_object=(
-                previous.inference_was_object
-                if previous is not None
-                else prior.inference_was_object
+                False
+                if replaced_wholesale
+                else (
+                    previous.inference_was_object
+                    if previous is not None
+                    else prior.inference_was_object
+                )
             ),
             inference_scalar=(
-                previous.inference_scalar
-                if previous is not None
-                else prior.inference_scalar
+                inference_raw
+                if replaced_wholesale
+                else (
+                    previous.inference_scalar
+                    if previous is not None
+                    else prior.inference_scalar
+                )
             ),
         )
         _save_config(record_path, _record_payload(prior))

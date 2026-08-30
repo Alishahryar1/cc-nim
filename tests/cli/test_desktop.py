@@ -470,7 +470,7 @@ def test_verified_https_readiness_repersists_desktop_config() -> None:
         )
 
     remerge.assert_called_once_with(
-        settings=settings, gateway_base_url="https://localhost:8444"
+        settings=settings, gateway_base_url="https://localhost:8444/claude-desktop"
     )
 
 
