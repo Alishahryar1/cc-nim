@@ -199,7 +199,8 @@ textarea:focus-visible,
 /* Main Content Area */
 .main {
   min-width: 0;
-  padding: 40px 48px 136px; /* Includes space for the fixed action bar */
+  padding: 40px 48px;
+  padding-bottom: calc(40px + 96px); /* Fixed action bar clearance */
 }
 
 .topbar {
@@ -817,7 +818,8 @@ textarea:focus-visible,
   }
 
   .main {
-    padding: 24px 20px 204px; /* Includes space for the stacked action bar */
+    padding: 24px 20px;
+    padding-bottom: calc(24px + 180px); /* Stacked action bar clearance */
   }
 
   .action-bar {
