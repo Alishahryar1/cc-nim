@@ -337,16 +337,8 @@
     const scroller = node("div", "chat-transcript");
     scroller.id = "chatTranscript";
     scroller.setAttribute("aria-label", "Conversation");
-    const jump = button("Jump to latest", "secondary-button chat-jump", () =>
-      scrollLatest(true),
-    );
-    jump.id = "chatJumpLatest";
-    jump.hidden = true;
-    scroller.addEventListener("scroll", () => {
-      jump.hidden = nearBottom(scroller);
-    });
     const composer = renderComposer();
-    shell.append(header, notice, scroller, jump, composer);
+    shell.append(header, notice, scroller, composer);
     root().replaceChildren(shell);
     renderTranscript();
     refreshComposerState();
@@ -355,7 +347,6 @@
     } else {
       scroller.scrollTop = scrollTop;
     }
-    jump.hidden = nearBottom(scroller);
     syncForeignOperationPoll();
   }
 
