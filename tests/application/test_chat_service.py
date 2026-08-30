@@ -315,6 +315,96 @@ async def test_send_streams_and_persists_interleaved_segments(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_completion_persistence_exhaustion_never_downgrades_to_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        statuses: list[GenerationStatus] = []
+        original_finish_generation = store.finish_generation
+
+        async def unavailable_completion(*args, **kwargs):
+            status = kwargs["status"]
+            statuses.append(status)
+            if len(statuses) <= 2:
+                raise ChatUnavailableError("Chat storage is temporarily unavailable.")
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", unavailable_completion)
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="f69c7c4d-9a46-40f0-b6ad-7f288a2c2dd7",
+            text="finish successfully",
+        )
+
+        assert (await _drain(stream))[-1] == "turn.failed"
+        assert statuses == [GenerationStatus.COMPLETED, GenerationStatus.COMPLETED]
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert generation.status is GenerationStatus.RUNNING
+        assert service.availability() == (
+            False,
+            "Chat storage became unavailable. Restart FCC to repair Chat Sessions.",
+        )
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_regeneration_retries_an_ambiguous_terminal_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        initial = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="e8476211-c6a1-45c4-a463-b7d92bfcc7d8",
+            text="answer once",
+        )
+        assert (await _drain(initial))[-1] == "turn.completed"
+        before = await store.get_transcript(session.id)
+        original_id = before.turns[0].generation.id
+
+        attempts = 0
+        original_finish_regeneration = store.finish_regeneration
+
+        async def ambiguous_finish_regeneration(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            result = await original_finish_regeneration(*args, **kwargs)
+            if attempts == 1:
+                raise ChatUnavailableError("Chat commit result was unavailable.")
+            return result
+
+        monkeypatch.setattr(
+            store,
+            "finish_regeneration",
+            ambiguous_finish_regeneration,
+        )
+        replacement = await service.regenerate(
+            session.id,
+            expected_revision=before.session.revision,
+            operation_id="8a99c4a9-e4f5-4ebd-a8c9-982a9227a557",
+        )
+
+        assert (await _drain(replacement))[-1] == "turn.completed"
+        after = await store.get_transcript(session.id)
+        assert attempts == 2
+        assert after.turns[0].generation.id != original_id
+        assert after.turns[0].generation.status is GenerationStatus.COMPLETED
+        assert service.availability()[0] is True
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_closing_initiating_stream_cancels_and_persists_partial_answer(
     tmp_path: Path,
 ):

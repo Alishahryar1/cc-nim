@@ -212,6 +212,25 @@ def test_known_unsupported_reasoning_is_rejected_but_unknown_is_allowed():
     ).routed.reasoning.requests_reasoning
 
 
+def test_compaction_disables_reasoning_for_known_non_reasoning_model():
+    routed = ChatContextBuilder(
+        FakeRuntime(
+            configured=ProviderModelInfo(
+                "model",
+                supports_thinking=False,
+                max_output_tokens=20_000,
+            )
+        )
+    ).prepare_summary(
+        model_ref="groq/model",
+        source="Summarize this conversation.",
+        output_tokens=4_096,
+    )
+
+    assert routed.reasoning.control is ReasoningControl.OFF
+    assert routed.request.max_tokens == 4_096
+
+
 def test_unknown_context_disables_auto_compaction_without_inventing_a_limit():
     builder = ChatContextBuilder(
         FakeRuntime(configured=ProviderModelInfo("model", context_window_tokens=None))

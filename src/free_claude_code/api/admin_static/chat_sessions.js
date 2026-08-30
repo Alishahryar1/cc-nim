@@ -106,12 +106,16 @@
   async function route(path) {
     stopForeignOperationPoll();
     const version = ++state.routeVersion;
-    const match = path.match(/^\/admin\/chat\/([0-9a-f-]+)$/i);
-    if (!match) {
+    const sessionId = routedSessionId(path);
+    if (!sessionId) {
       await showLibrary(version);
       return;
     }
-    await showSession(match[1], version);
+    await showSession(sessionId, version);
+  }
+
+  function routedSessionId(path) {
+    return path.match(/^\/admin\/chat\/([0-9a-f-]+)$/i)?.[1].toLowerCase() || null;
   }
 
   function renderLoading() {
@@ -752,7 +756,8 @@
       !message ||
       message.type !== "session.deleted" ||
       typeof message.sessionId !== "string" ||
-      state.session?.id !== message.sessionId
+      (state.session?.id !== message.sessionId &&
+        routedSessionId(window.location.pathname) !== message.sessionId)
     )
       return;
     cancelLocalStream();

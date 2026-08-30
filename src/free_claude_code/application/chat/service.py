@@ -75,6 +75,10 @@ class _CancellationReason(StrEnum):
     DELETED = "deleted"
 
 
+class _TerminalPersistenceError(ChatUnavailableError):
+    """A bounded terminal write failed and requires startup repair."""
+
+
 @dataclass(slots=True)
 class _ActiveOperation:
     session_id: str
@@ -844,7 +848,7 @@ class ChatService:
         async def commit_completion() -> ChatSession:
             await self._flush_terminal_segments(active)
             if active.regeneration:
-                return await self._store.finish_regeneration(
+                return await self._finish_regeneration(
                     generation_id, stop_reason=stop_reason
                 )
             return await self._finish_generation(
@@ -1251,6 +1255,22 @@ class ChatService:
         self._emit_terminal_nowait(active, event, {"reason": reason.value})
 
     async def _handle_failure(self, active: _ActiveOperation, exc: Exception) -> None:
+        if isinstance(exc, _TerminalPersistenceError):
+            self._disable_after_terminal_write_failure(active, exc)
+            event = (
+                "compaction.failed"
+                if active.kind is _OperationKind.COMPACT
+                else "turn.failed"
+            )
+            self._emit_terminal_nowait(
+                active,
+                event,
+                {
+                    "code": "chat_storage_unavailable",
+                    "message": _STORAGE_RESTART_MESSAGE,
+                },
+            )
+            return
         code = "chat_error"
         message = "Chat operation failed."
         if isinstance(exc, ExecutionFailure):
@@ -1297,16 +1317,13 @@ class ChatService:
         self._emit_terminal_nowait(active, event, {"code": code, "message": message})
 
     async def _flush_terminal_segments(self, active: _ActiveOperation) -> None:
-        try:
-            await self._flush_segments(active)
-        except ChatUnavailableError:
-            logger.warning(
-                "Retrying transient Chat segment persistence failure: "
-                "session_id={} operation_id={}",
-                active.session_id,
-                active.operation_id,
-            )
-            await self._flush_segments(active)
+        await self._retry_terminal_persistence(
+            lambda: self._flush_segments(active),
+            label=(
+                f"segment flush session_id={active.session_id} "
+                f"operation_id={active.operation_id}"
+            ),
+        )
 
     async def _finish_generation(
         self,
@@ -1317,28 +1334,48 @@ class ChatService:
         error_code: str | None,
         error_message: str | None,
     ) -> ChatSession:
-        try:
-            return await self._store.finish_generation(
+        return await self._retry_terminal_persistence(
+            lambda: self._store.finish_generation(
                 generation_id,
                 status=status,
                 stop_reason=stop_reason,
                 error_code=error_code,
                 error_message=error_message,
-            )
+            ),
+            label=f"generation_id={generation_id} status={status.value}",
+        )
+
+    async def _finish_regeneration(
+        self,
+        generation_id: str,
+        *,
+        stop_reason: str | None,
+    ) -> ChatSession:
+        return await self._retry_terminal_persistence(
+            lambda: self._store.finish_regeneration(
+                generation_id,
+                stop_reason=stop_reason,
+            ),
+            label=f"regeneration_id={generation_id} status=completed",
+        )
+
+    @staticmethod
+    async def _retry_terminal_persistence[T](
+        operation: Callable[[], Awaitable[T]],
+        *,
+        label: str,
+    ) -> T:
+        try:
+            return await operation()
         except ChatUnavailableError:
             logger.warning(
-                "Retrying transient Chat terminal persistence failure: "
-                "generation_id={} status={}",
-                generation_id,
-                status.value,
+                "Retrying transient Chat terminal persistence failure: {}",
+                label,
             )
-            return await self._store.finish_generation(
-                generation_id,
-                status=status,
-                stop_reason=stop_reason,
-                error_code=error_code,
-                error_message=error_message,
-            )
+        try:
+            return await operation()
+        except ChatUnavailableError as exc:
+            raise _TerminalPersistenceError(_STORAGE_RESTART_MESSAGE) from exc
 
     def _disable_after_terminal_write_failure(
         self,

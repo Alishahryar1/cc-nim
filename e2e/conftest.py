@@ -296,6 +296,8 @@ def admin_base_url(
         session_id: str,
     ) -> ChatSessionDetail:
         detail = await original_get_detail(session_id)
+        if "[delay-detail]" in detail.session.title:
+            await asyncio.sleep(0.75)
         if "[delay-older-page]" in detail.session.title and len(detail.turns) > 1:
             return replace(
                 detail,

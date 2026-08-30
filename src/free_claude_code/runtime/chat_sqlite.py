@@ -624,21 +624,27 @@ class SQLiteChatStore:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT g.turn_id, g.status, t.session_id
+                SELECT g.turn_id, g.visible, g.status, t.session_id
                 FROM chat_generations AS g
                 JOIN chat_turns AS t ON t.id = g.turn_id
-                WHERE g.id = ? AND g.visible = 0
+                WHERE g.id = ?
                 """,
                 (generation_id,),
             ).fetchone()
             if row is None:
                 connection.rollback()
                 raise ChatConflictError("Staged regeneration is unavailable.")
+            session_id = _row_str(row, "session_id")
+            if bool(_row_int(row, "visible")):
+                if _row_str(row, "status") == GenerationStatus.COMPLETED.value:
+                    connection.rollback()
+                    return self._get_session(connection, session_id)
+                connection.rollback()
+                raise ChatConflictError("Staged regeneration is unavailable.")
             if _row_str(row, "status") != GenerationStatus.RUNNING.value:
                 connection.rollback()
                 raise ChatConflictError("Staged regeneration is not running.")
             turn_id = _row_str(row, "turn_id")
-            session_id = _row_str(row, "session_id")
             now = _now_ms()
             connection.execute(
                 "UPDATE chat_generations SET visible = 0 WHERE turn_id = ? AND visible = 1",

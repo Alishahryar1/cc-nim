@@ -317,6 +317,44 @@ def test_active_chat_deleted_in_another_tab_returns_to_library(
         other.close()
 
 
+def test_deleted_chat_cannot_render_from_an_inflight_detail_request(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    session_url = page.url
+    title = page.get_by_label("Chat title")
+    title.fill("[delay-detail] delete while loading")
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH"
+            and "/admin/api/chat/sessions/" in response.url
+        )
+    ):
+        title.press("Enter")
+
+    other = page.context.new_page()
+    try:
+        with other.expect_request(
+            lambda request: (
+                request.method == "GET" and "/admin/api/chat/sessions/" in request.url
+            )
+        ):
+            other.goto(session_url)
+
+        page.on("dialog", lambda dialog: dialog.accept())
+        page.get_by_role("button", name="Delete").click()
+        expect(page).to_have_url(f"{admin_base_url}/admin/chat")
+
+        expect(other).to_have_url(f"{admin_base_url}/admin/chat", timeout=3_000)
+        expect(other.get_by_role("button", name="New chat", exact=True)).to_be_visible()
+        expect(other.get_by_role("textbox", name="Message", exact=True)).to_have_count(
+            0
+        )
+    finally:
+        other.close()
+
+
 def test_regeneration_is_visible_and_recovers_in_another_tab(
     page: Page,
     admin_base_url: str,

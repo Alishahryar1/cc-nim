@@ -177,10 +177,16 @@ class ChatContextBuilder:
         output_tokens: int,
     ) -> RoutedMessagesRequest:
         option = self.model(model_ref)
-        total_output = output_tokens + ReasoningEffort.LOW.budget_tokens
+        reasoning = (
+            ReasoningPolicy.off()
+            if option.supports_reasoning is False
+            else ReasoningPolicy.on(effort=ReasoningEffort.LOW)
+        )
+        reasoning_tokens = reasoning.numeric_budget_tokens or 0
+        total_output = output_tokens + reasoning_tokens
         if option.max_output_tokens is not None and option.max_output_tokens > 0:
             total_output = min(total_output, option.max_output_tokens)
-        if total_output <= ReasoningEffort.LOW.budget_tokens:
+        if total_output <= reasoning_tokens:
             raise ChatValidationError(
                 "The selected model cannot reserve enough output for compaction."
             )
@@ -195,7 +201,7 @@ class ChatContextBuilder:
             self._current_settings()
         ).resolve_messages_request_with_policy(
             request,
-            reasoning=ReasoningPolicy.on(effort=ReasoningEffort.LOW),
+            reasoning=reasoning,
         )
 
     def summary_output_tokens(self, option: ChatModelOption) -> int:
