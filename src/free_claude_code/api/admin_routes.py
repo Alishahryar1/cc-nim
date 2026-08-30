@@ -1,9 +1,7 @@
 """Local admin UI routes and APIs."""
 
-import ipaddress
 from collections.abc import Mapping
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -25,6 +23,7 @@ from free_claude_code.config.provider_catalog import (
 from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.core.version import package_version
 
+from .admin_security import require_loopback_admin
 from .dependencies import get_services
 from .ports import ApiServices
 
@@ -32,7 +31,9 @@ router = APIRouter()
 
 STATIC_DIR = Path(__file__).resolve().parent / "admin_static"
 _ADMIN_ASSET_VERSION_PLACEHOLDER = "__FCC_VERSION__"
-_ADMIN_ASSET_FILENAMES = frozenset({"admin.css", "admin.js"})
+_ADMIN_ASSET_FILENAMES = frozenset(
+    {"admin.css", "admin.js", "chat_sessions.css", "chat_sessions.js"}
+)
 LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
@@ -55,37 +56,6 @@ class ConnectedAccountLoginPayload(BaseModel):
     mode: ConnectedAccountLoginMode = ConnectedAccountLoginMode.BROWSER
 
 
-def _is_loopback_host(host: str | None) -> bool:
-    if host is None:
-        return False
-    normalized = host.strip().strip("[]").lower()
-    if normalized == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(normalized).is_loopback
-    except ValueError:
-        return False
-
-
-def _origin_is_local(origin: str | None) -> bool:
-    if not origin:
-        return True
-    parsed = urlsplit(origin)
-    return _is_loopback_host(parsed.hostname)
-
-
-def require_loopback_admin(request: Request) -> None:
-    """Allow admin access only from the local machine."""
-
-    client_host = request.client.host if request.client else None
-    if not _is_loopback_host(client_host):
-        raise HTTPException(status_code=403, detail="Admin UI is local-only")
-
-    origin = request.headers.get("origin")
-    if not _origin_is_local(origin):
-        raise HTTPException(status_code=403, detail="Admin UI is local-only")
-
-
 def _asset_path(filename: str) -> Path:
     path = STATIC_DIR / filename
     if not path.is_file():
@@ -97,7 +67,7 @@ def _asset_response(filename: str) -> FileResponse:
     return FileResponse(_asset_path(filename))
 
 
-def _admin_page_response() -> HTMLResponse:
+def admin_page_response() -> HTMLResponse:
     template = _asset_path("index.html").read_text(encoding="utf-8")
     return HTMLResponse(
         template.replace(_ADMIN_ASSET_VERSION_PLACEHOLDER, package_version())
@@ -107,7 +77,7 @@ def _admin_page_response() -> HTMLResponse:
 @router.get("/admin", include_in_schema=False)
 def admin_page(request: Request):
     require_loopback_admin(request)
-    return _admin_page_response()
+    return admin_page_response()
 
 
 @router.get("/admin/assets/{version}/{filename}", include_in_schema=False)

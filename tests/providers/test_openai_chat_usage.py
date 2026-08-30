@@ -427,7 +427,7 @@ async def test_openai_chat_nonstream_message_uses_final_cache_partition():
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        message, error = await aggregate_anthropic_sse_to_message(
+        message, error, _complete = await aggregate_anthropic_sse_to_message(
             provider.stream_messages(request, input_tokens=7)
         )
 

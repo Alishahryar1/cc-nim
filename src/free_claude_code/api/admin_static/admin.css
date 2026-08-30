@@ -740,6 +740,10 @@ textarea:focus-visible,
   box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.3);
 }
 
+.action-bar[hidden] {
+  display: none;
+}
+
 .action-meta {
   display: flex;
   flex-direction: column;

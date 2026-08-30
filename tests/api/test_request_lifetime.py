@@ -60,6 +60,7 @@ async def _unused_send(_message: Message) -> None:
     [
         _http_scope("/health"),
         _http_scope("/v1/messages", method="OPTIONS"),
+        _http_scope("/admin/api/chat/sessions/session/stop"),
         cast(Scope, {"type": "lifespan", "asgi": {"version": "3.0"}}),
     ],
 )
@@ -92,7 +93,14 @@ async def test_non_inference_scopes_delegate_with_original_callables(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/v1/messages", "/v1/responses"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/messages",
+        "/v1/responses",
+        "/admin/api/chat/sessions/session/send",
+    ],
+)
 async def test_request_body_frames_are_relayed_once_in_order(path: str) -> None:
     frames: asyncio.Queue[Message] = asyncio.Queue()
     receiver_closed = asyncio.Event()
@@ -445,6 +453,7 @@ class _Lease:
 
     def __init__(self, settings: Settings, provider: ProviderPort) -> None:
         self.settings = settings
+        self.model_infos: tuple[ProviderModelInfo, ...] = ()
         self._provider = provider
         self.release_calls = 0
 
@@ -464,7 +473,10 @@ class _Requests:
     def __init__(self, lease: _Lease) -> None:
         self._lease = lease
 
-    async def acquire(self) -> RequestRuntimeLease:
+    async def acquire(
+        self, *, include_model_infos: bool = False
+    ) -> RequestRuntimeLease:
+        assert include_model_infos is False
         return self._lease
 
     def current_settings(self) -> Settings:

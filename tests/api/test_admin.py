@@ -23,7 +23,11 @@ from tests.api.support import create_test_app, provider_manager_for_app, runtime
 
 
 def _local_client(app):
-    return TestClient(app, client=("127.0.0.1", 50000))
+    return TestClient(
+        app,
+        base_url="http://127.0.0.1",
+        client=("127.0.0.1", 50000),
+    )
 
 
 def _set_home(monkeypatch, tmp_path: Path) -> None:
@@ -102,14 +106,23 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert "<p>Server Control · v9.8.7</p>" in response.text
     assert 'href="/admin/assets/9.8.7/admin.css"' in response.text
+    assert 'href="/admin/assets/9.8.7/chat_sessions.css"' in response.text
+    assert 'src="/admin/assets/9.8.7/chat_sessions.js"' in response.text
     assert 'src="/admin/assets/9.8.7/admin.js"' in response.text
     assert 'href="/admin/assets/admin.css"' not in response.text
+    assert 'href="/admin/assets/chat_sessions.css"' not in response.text
+    assert 'src="/admin/assets/chat_sessions.js"' not in response.text
     assert 'src="/admin/assets/admin.js"' not in response.text
 
 
 @pytest.mark.parametrize(
     ("filename", "media_type"),
-    (("admin.css", "text/css"), ("admin.js", "text/javascript")),
+    (
+        ("admin.css", "text/css"),
+        ("admin.js", "text/javascript"),
+        ("chat_sessions.css", "text/css"),
+        ("chat_sessions.js", "text/javascript"),
+    ),
 )
 def test_admin_versioned_assets_serve_packaged_files(
     monkeypatch,
@@ -141,6 +154,8 @@ def test_admin_versioned_assets_serve_packaged_files(
         "/admin",
         f"/admin/assets/{package_version()}/admin.css",
         f"/admin/assets/{package_version()}/admin.js",
+        f"/admin/assets/{package_version()}/chat_sessions.css",
+        f"/admin/assets/{package_version()}/chat_sessions.js",
         "/admin/api/config",
     ),
 )
@@ -182,7 +197,11 @@ def test_admin_http_errors_are_never_cached(
     expected_status,
 ):
     _set_home(monkeypatch, tmp_path)
-    client = TestClient(create_test_app(), client=(client_host, 50000))
+    client = TestClient(
+        create_test_app(),
+        base_url="http://127.0.0.1",
+        client=(client_host, 50000),
+    )
 
     response = client.get(path)
 
@@ -207,6 +226,7 @@ def test_admin_unexpected_errors_are_never_cached(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     client = TestClient(
         create_test_app(),
+        base_url="http://127.0.0.1",
         client=("127.0.0.1", 50000),
         raise_server_exceptions=False,
     )
