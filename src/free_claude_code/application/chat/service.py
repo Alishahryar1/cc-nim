@@ -527,9 +527,17 @@ class ChatService:
         try:
             await action(active)
         except asyncio.CancelledError:
-            await self._handle_cancelled(active)
+            settlement = asyncio.create_task(
+                self._handle_cancelled(active),
+                name=f"fcc-chat-settle-cancelled-{active.operation_id}",
+            )
+            await _await_task_despite_cancellation(settlement)
         except Exception as exc:
-            await self._handle_failure(active, exc)
+            settlement = asyncio.create_task(
+                self._handle_failure(active, exc),
+                name=f"fcc-chat-settle-failed-{active.operation_id}",
+            )
+            await _await_task_despite_cancellation(settlement)
         finally:
             release_task = asyncio.create_task(
                 self._release_active(active),
@@ -573,13 +581,15 @@ class ChatService:
                 )
             _require_request_fits(prepared.estimate)
             generation_id = str(uuid.uuid4())
-            turn = await _commit_generation_start(
+            turn_id = str(uuid.uuid4())
+            await _commit_generation_start(
                 active,
+                store=self._store,
                 generation_id=generation_id,
                 operation=self._store.begin_send(
                     active.session_id,
                     expected_revision=transcript.session.revision,
-                    turn_id=str(uuid.uuid4()),
+                    turn_id=turn_id,
                     generation_id=generation_id,
                     user_text=text,
                     requested_model=transcript.session.model,
@@ -591,7 +601,7 @@ class ChatService:
                 active,
                 "turn.started",
                 {
-                    "turn_id": turn.id,
+                    "turn_id": turn_id,
                     "generation_id": generation_id,
                     "revision": transcript.session.revision + 1,
                 },
@@ -641,8 +651,9 @@ class ChatService:
                 )
             _require_request_fits(prepared.estimate)
             generation_id = latest.generation.id
-            generation = await _commit_generation_start(
+            await _commit_generation_start(
                 active,
+                store=self._store,
                 generation_id=generation_id,
                 operation=self._store.begin_retry(
                     active.session_id,
@@ -657,7 +668,7 @@ class ChatService:
                 "turn.started",
                 {
                     "turn_id": latest.id,
-                    "generation_id": generation.id,
+                    "generation_id": generation_id,
                     "revision": transcript.session.revision + 1,
                 },
             )
@@ -706,8 +717,9 @@ class ChatService:
                 )
             _require_request_fits(prepared.estimate)
             generation_id = str(uuid.uuid4())
-            _turn, generation = await _commit_generation_start(
+            await _commit_generation_start(
                 active,
+                store=self._store,
                 generation_id=generation_id,
                 regeneration=True,
                 operation=self._store.begin_regenerate(
@@ -724,7 +736,7 @@ class ChatService:
                 "turn.started",
                 {
                     "turn_id": latest.id,
-                    "generation_id": generation.id,
+                    "generation_id": generation_id,
                     "revision": transcript.session.revision + 1,
                     "regeneration": True,
                 },
@@ -1474,34 +1486,59 @@ class ChatService:
             )
 
 
-async def _commit_generation_start[T](
+async def _commit_generation_start(
     active: _ActiveOperation,
     *,
+    store: ChatStorePort,
     generation_id: str,
-    operation: Awaitable[T],
+    operation: Awaitable[object],
     regeneration: bool = False,
-) -> T:
+) -> None:
     """Publish durable generation ownership before restoring cancellation."""
 
-    async def run() -> T:
-        return await operation
+    async def run() -> None:
+        await operation
 
     task = asyncio.create_task(
         run(),
         name=f"fcc-chat-generation-start-{generation_id}",
     )
-    result, cancellation = await _await_task_despite_cancellation(task)
+    cancellation = await _wait_task_despite_cancellation(task)
+    try:
+        task.result()
+    except ChatUnavailableError:
+
+        async def reconcile() -> bool:
+            return await store.generation_start_committed(
+                active.session_id,
+                generation_id=generation_id,
+                staged=regeneration,
+            )
+
+        reconciliation_task = asyncio.create_task(
+            reconcile(),
+            name=f"fcc-chat-generation-reconcile-{generation_id}",
+        )
+        try:
+            (
+                committed,
+                reconciliation_cancellation,
+            ) = await _await_task_despite_cancellation(reconciliation_task)
+        except ChatUnavailableError as exc:
+            raise _TerminalPersistenceError(_STORAGE_RESTART_MESSAGE) from exc
+        cancellation = cancellation or reconciliation_cancellation
+        if not committed:
+            raise
     active.generation_id = generation_id
     active.regeneration = regeneration
     if cancellation is not None:
         raise cancellation
-    return result
 
 
-async def _await_task_despite_cancellation[T](
+async def _wait_task_despite_cancellation[T](
     task: asyncio.Task[T],
-) -> tuple[T, asyncio.CancelledError | None]:
-    """Wait for an already-started task before restoring caller cancellation."""
+) -> asyncio.CancelledError | None:
+    """Wait for a child outcome while retaining cancellation for its caller."""
 
     current = asyncio.current_task()
     cancellation: asyncio.CancelledError | None = None
@@ -1513,6 +1550,15 @@ async def _await_task_despite_cancellation[T](
                 cancellation = cancellation or exc
         except Exception:
             break
+    return cancellation
+
+
+async def _await_task_despite_cancellation[T](
+    task: asyncio.Task[T],
+) -> tuple[T, asyncio.CancelledError | None]:
+    """Wait for an already-started task before restoring caller cancellation."""
+
+    cancellation = await _wait_task_despite_cancellation(task)
     result = task.result()
     return result, cancellation
 

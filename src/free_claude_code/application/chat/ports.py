@@ -70,6 +70,14 @@ class ChatStorePort(Protocol):
         limit: int,
     ) -> tuple[tuple[ChatTurn, ...], int | None, ChatCompaction | None]: ...
 
+    async def generation_start_committed(
+        self,
+        session_id: str,
+        *,
+        generation_id: str,
+        staged: bool,
+    ) -> bool: ...
+
     async def begin_send(
         self,
         session_id: str,

@@ -606,6 +606,128 @@ async def test_immediate_stop_before_operation_task_starts_releases_owner(
 
 
 @pytest.mark.asyncio
+async def test_ambiguous_generation_start_adopts_the_committed_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        original_begin_send = store.begin_send
+
+        async def ambiguous_begin_send(*args, **kwargs):
+            await original_begin_send(*args, **kwargs)
+            raise ChatUnavailableError("Chat commit result was unavailable.")
+
+        monkeypatch.setattr(store, "begin_send", ambiguous_begin_send)
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="cc47acc3-d7c2-46d0-a1b6-fe2acda191e4",
+            text="recover the committed start",
+        )
+
+        assert (await _drain(stream))[-1] == "turn.completed"
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert generation.status is GenerationStatus.COMPLETED
+        assert (
+            await service.stop(
+                session.id,
+                operation_id="cc47acc3-d7c2-46d0-a1b6-fe2acda191e4",
+            )
+            is False
+        )
+        assert service.availability()[0] is True
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_cannot_interrupt_failure_terminalization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_flush = asyncio.Event()
+    try:
+
+        async def failing_stream(*args, **kwargs):
+            del args, kwargs
+            yield "".join(
+                (
+                    format_sse_event(
+                        "message_start",
+                        {"type": "message_start", "message": {"content": []}},
+                    ),
+                    format_sse_event(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                    ),
+                    format_sse_event(
+                        "content_block_delta",
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": "partial"},
+                        },
+                    ),
+                    format_sse_event(
+                        "error",
+                        {
+                            "type": "error",
+                            "error": {"message": "provider failed"},
+                        },
+                    ),
+                )
+            )
+
+        monkeypatch.setattr(provider, "stream_messages", failing_stream)
+        entered_flush = asyncio.Event()
+        original_replace_segments = store.replace_generation_segments
+
+        async def blocked_replace_segments(generation_id, segments):
+            entered_flush.set()
+            await release_flush.wait()
+            await original_replace_segments(generation_id, segments)
+
+        monkeypatch.setattr(
+            store,
+            "replace_generation_segments",
+            blocked_replace_segments,
+        )
+        session = await service.create_session()
+        operation_id = "63523531-024d-47f2-a0ce-ff7104d4e3af"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="fail before disconnect",
+        )
+        await asyncio.wait_for(entered_flush.wait(), timeout=1)
+
+        close_task = asyncio.create_task(stream.aclose())
+        await asyncio.sleep(0.05)
+        assert not close_task.done()
+        release_flush.set()
+        await asyncio.wait_for(close_task, timeout=1)
+
+        assert (await _drain(stream))[-1] == "turn.failed"
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert generation.status is GenerationStatus.FAILED
+        assert await service.stop(session.id, operation_id=operation_id) is False
+        assert service.availability()[0] is True
+    finally:
+        release_flush.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_second_operation_on_same_session_is_rejected(tmp_path: Path):
     provider = FakeChatProvider(block_after_delta=True)
     service, _runtime, _store = await _service(tmp_path, provider)

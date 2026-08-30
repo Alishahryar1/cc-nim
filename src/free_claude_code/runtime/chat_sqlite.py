@@ -309,6 +309,33 @@ class SQLiteChatStore:
 
         return await self._run(operation)
 
+    async def generation_start_committed(
+        self,
+        session_id: str,
+        *,
+        generation_id: str,
+        staged: bool,
+    ) -> bool:
+        def operation(connection: sqlite3.Connection) -> bool:
+            row = connection.execute(
+                """
+                SELECT g.visible, g.status
+                FROM chat_generations AS g
+                JOIN chat_turns AS t ON t.id = g.turn_id
+                WHERE g.id = ? AND t.session_id = ?
+                """,
+                (generation_id, session_id),
+            ).fetchone()
+            if row is None:
+                return False
+            expected_visibility = 0 if staged else 1
+            return (
+                _row_int(row, "visible") == expected_visibility
+                and _row_str(row, "status") == GenerationStatus.RUNNING.value
+            )
+
+        return await self._run(operation)
+
     async def begin_send(
         self,
         session_id: str,
@@ -380,8 +407,9 @@ class SQLiteChatStore:
             if cursor.rowcount != 1:
                 connection.rollback()
                 raise ChatConflictError("This chat changed in another tab. Refresh it.")
+            turn = self._turn_by_id(connection, turn_id)
             connection.commit()
-            return self._turn_by_id(connection, turn_id)
+            return turn
 
         return await self._run(operation)
 
@@ -432,8 +460,9 @@ class SQLiteChatStore:
                 ),
             )
             self._bump_session(connection, session_id, expected_revision, now)
+            generation = self._generation_by_id(connection, generation_id)
             connection.commit()
-            return self._generation_by_id(connection, generation_id)
+            return generation
 
         return await self._run(operation)
 
@@ -479,11 +508,10 @@ class SQLiteChatStore:
                 ),
             )
             self._bump_session(connection, session_id, expected_revision, now)
+            turn = self._turn_by_id(connection, turn_id)
+            generation = self._generation_by_id(connection, generation_id)
             connection.commit()
-            return (
-                self._turn_by_id(connection, turn_id),
-                self._generation_by_id(connection, generation_id),
-            )
+            return turn, generation
 
         return await self._run(operation)
 

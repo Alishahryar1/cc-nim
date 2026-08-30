@@ -141,6 +141,16 @@ async def test_store_persists_generation_segments_and_actual_fallback(tmp_path: 
             reasoning=session.reasoning,
             effective_output_limit=4096,
         )
+        assert await store.generation_start_committed(
+            session.id,
+            generation_id=generation_id,
+            staged=False,
+        )
+        assert not await store.generation_start_committed(
+            session.id,
+            generation_id=generation_id,
+            staged=True,
+        )
         await store.set_generation_actual_model(generation_id, "open_router/fallback")
         await store.replace_generation_segments(
             generation_id,
@@ -325,6 +335,16 @@ async def test_regeneration_keeps_visible_answer_until_atomic_swap(tmp_path: Pat
             effective_output_limit=1024,
         )
         assert replacement.id == replacement_id
+        assert await store.generation_start_committed(
+            session.id,
+            generation_id=replacement_id,
+            staged=True,
+        )
+        assert not await store.generation_start_committed(
+            session.id,
+            generation_id=replacement_id,
+            staged=False,
+        )
         assert (await store.get_transcript(session.id)).turns[
             0
         ].generation.id == original_id
