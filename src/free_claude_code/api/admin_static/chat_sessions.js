@@ -465,7 +465,7 @@
       return;
     }
     const percent = Math.round((context.usage_ratio || 0) * 100);
-    element.textContent = `Context: ${percent}% · ${formatCount(context.estimated_input_tokens)} input + ${formatCount(context.completion_tokens)} output`;
+    element.textContent = `Context: ${percent}% · ${formatCount(context.estimated_input_tokens)} / ${formatCount(context.usable_input_tokens)}`;
     element.className = `chat-context-meter${percent >= 85 ? " warn" : ""}`;
   }
 
@@ -1262,7 +1262,10 @@
   }
 
   function formatCount(value) {
-    return new Intl.NumberFormat(undefined, { notation: "compact" }).format(value);
+    return new Intl.NumberFormat(undefined, {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
   }
 
   function capitalize(value) {
