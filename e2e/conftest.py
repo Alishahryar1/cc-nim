@@ -12,16 +12,20 @@ import uvicorn
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.chat import ChatService
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
 from free_claude_code.config.loader import clear_settings_cache, get_settings
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
+from free_claude_code.runtime.asgi import RuntimeASGIApp
+from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 
 
@@ -49,6 +53,7 @@ class _ModelListingProvider(BaseProvider):
         )
         self._model_infos = model_infos
         self._error = error
+        self._slow_used = False
 
     def preflight_messages(
         self,
@@ -83,8 +88,66 @@ class _ModelListingProvider(BaseProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> AsyncIterator[str]:
-        if False:
-            yield ""
+        del input_tokens, request_id, response_model
+        summary = str(request.system).startswith("Summarize")
+        user_content = str(request.messages[-1].content) if request.messages else ""
+        slow = "[slow]" in user_content and not self._slow_used
+        self._slow_used = self._slow_used or slow
+        text = "Earlier details retained." if summary else "E2E answer"
+        frames = [
+            format_sse_event(
+                "message_start",
+                {"type": "message_start", "message": {"content": []}},
+            ),
+            format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "thinking", "thinking": ""},
+                },
+            ),
+            format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "thinking_delta", "thinking": "E2E thought"},
+                },
+            ),
+            format_sse_event(
+                "content_block_stop", {"type": "content_block_stop", "index": 0}
+            ),
+            format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 1,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 1,
+                    "delta": {"type": "text_delta", "text": text},
+                },
+            ),
+        ]
+        for frame in frames:
+            yield frame
+            await asyncio.sleep(0)
+        if slow:
+            await asyncio.Event().wait()
+        yield format_sse_event(
+            "content_block_stop", {"type": "content_block_stop", "index": 1}
+        )
+        yield format_sse_event(
+            "message_delta",
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+        )
+        yield format_sse_event("message_stop", {"type": "message_stop"})
 
     async def stream_responses(
         self,
@@ -97,30 +160,6 @@ class _ModelListingProvider(BaseProvider):
     ) -> AsyncIterator[str]:
         if False:
             yield ""
-
-
-def _close_manager(manager: ProviderRuntimeManager) -> None:
-    """Close async runtime ownership outside Playwright's active sync loop."""
-
-    errors: list[BaseException] = []
-
-    def close() -> None:
-        try:
-            asyncio.run(manager.close())
-        except BaseException as exc:
-            errors.append(exc)
-
-    thread = threading.Thread(
-        target=close,
-        name="fcc-admin-playwright-cleanup",
-        daemon=True,
-    )
-    thread.start()
-    thread.join(timeout=5.0)
-    if thread.is_alive():
-        pytest.fail("Admin browser-test runtime did not close")
-    if errors:
-        raise errors[0]
 
 
 @pytest.fixture
@@ -159,7 +198,12 @@ def admin_base_url(
             frozenset(
                 {
                     ProviderModelInfo("vendor/model-a"),
-                    ProviderModelInfo("vendor/model-b"),
+                    ProviderModelInfo(
+                        "vendor/model-b",
+                        supports_thinking=True,
+                        context_window_tokens=100_000,
+                        max_output_tokens=20_000,
+                    ),
                 }
             )
         ),
@@ -171,13 +215,24 @@ def admin_base_url(
         get_settings(),
         runtime_factory=lambda snapshot: ProviderRuntime(snapshot, dict(providers)),
     )
-    runtime = ApplicationRuntime(manager, transcriber=None)
-    app = create_app(
-        ApiServices(
-            requests=manager,
-            admin=runtime,
-            tasks=runtime,
-        )
+    chat = ChatService(
+        manager,
+        SQLiteChatStore(
+            config_dir / "chat" / "chat.db",
+            config_dir / "chat" / "chat.lock",
+        ),
+    )
+    runtime = ApplicationRuntime(manager, transcriber=None, chat_service=chat)
+    app = RuntimeASGIApp(
+        create_app(
+            ApiServices(
+                requests=manager,
+                admin=runtime,
+                tasks=runtime,
+                chat=chat,
+            )
+        ),
+        runtime,
     )
 
     async def local_provider_result(
@@ -207,7 +262,7 @@ def admin_base_url(
             app,
             log_level="error",
             access_log=False,
-            lifespan="off",
+            lifespan="on",
         )
     )
     thread = threading.Thread(
@@ -231,7 +286,6 @@ def admin_base_url(
         server.should_exit = True
         thread.join(timeout=5.0)
         listener.close()
-        _close_manager(manager)
         clear_settings_cache()
         if thread.is_alive():
             pytest.fail("Admin browser-test server did not stop")

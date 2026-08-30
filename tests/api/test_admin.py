@@ -102,14 +102,23 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert "<p>Server Control · v9.8.7</p>" in response.text
     assert 'href="/admin/assets/9.8.7/admin.css"' in response.text
+    assert 'href="/admin/assets/9.8.7/chat_sessions.css"' in response.text
+    assert 'src="/admin/assets/9.8.7/chat_sessions.js"' in response.text
     assert 'src="/admin/assets/9.8.7/admin.js"' in response.text
     assert 'href="/admin/assets/admin.css"' not in response.text
+    assert 'href="/admin/assets/chat_sessions.css"' not in response.text
+    assert 'src="/admin/assets/chat_sessions.js"' not in response.text
     assert 'src="/admin/assets/admin.js"' not in response.text
 
 
 @pytest.mark.parametrize(
     ("filename", "media_type"),
-    (("admin.css", "text/css"), ("admin.js", "text/javascript")),
+    (
+        ("admin.css", "text/css"),
+        ("admin.js", "text/javascript"),
+        ("chat_sessions.css", "text/css"),
+        ("chat_sessions.js", "text/javascript"),
+    ),
 )
 def test_admin_versioned_assets_serve_packaged_files(
     monkeypatch,
@@ -141,6 +150,8 @@ def test_admin_versioned_assets_serve_packaged_files(
         "/admin",
         f"/admin/assets/{package_version()}/admin.css",
         f"/admin/assets/{package_version()}/admin.js",
+        f"/admin/assets/{package_version()}/chat_sessions.css",
+        f"/admin/assets/{package_version()}/chat_sessions.js",
         "/admin/api/config",
     ),
 )

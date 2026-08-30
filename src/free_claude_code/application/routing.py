@@ -211,6 +211,25 @@ class ModelRouter:
             ),
         )
 
+    def resolve_messages_request_with_policy(
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+    ) -> RoutedMessagesRequest:
+        """Route an application-owned Messages request with resolved intent."""
+
+        resolved = self.resolve(request.model)
+        routed = request.model_copy(
+            update={"model": resolved.primary.provider_model},
+            deep=True,
+        )
+        return RoutedMessagesRequest(
+            request=routed,
+            resolved=resolved,
+            reasoning=reasoning,
+        )
+
     def resolve_token_count_request(
         self, request: TokenCountRequest
     ) -> RoutedTokenCountRequest:

@@ -6,8 +6,13 @@ from pathlib import Path
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.chat import ChatService
 from free_claude_code.config.logging_config import configure_logging
-from free_claude_code.config.paths import server_log_path
+from free_claude_code.config.paths import (
+    chat_database_path,
+    chat_lock_path,
+    server_log_path,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
@@ -23,6 +28,7 @@ from free_claude_code.providers.runtime.factory import create_provider
 
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
+from .chat_sqlite import SQLiteChatStore
 from .codex_catalog import CodexModelCatalogPublisher
 from .provider_manager import ProviderRuntimeManager
 
@@ -54,8 +60,13 @@ def build_asgi_app(
         connected_provider_ids=openai_auth.connected_provider_ids,
         model_catalog_publisher=CodexModelCatalogPublisher(),
     )
+    chat_service = ChatService(
+        provider_manager,
+        SQLiteChatStore(chat_database_path(), chat_lock_path()),
+    )
     runtime = ApplicationRuntime(
         provider_manager,
+        chat_service=chat_service,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth},
@@ -64,6 +75,7 @@ def build_asgi_app(
         requests=provider_manager,
         admin=runtime,
         tasks=runtime,
+        chat=chat_service,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

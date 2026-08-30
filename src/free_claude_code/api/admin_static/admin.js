@@ -4,7 +4,7 @@ const state = {
   modelOptions: [],
   modelComboboxes: new Set(),
   authPollers: new Map(),
-  activeView: "providers",
+  activeView: window.location.pathname.startsWith("/admin/chat") ? "chat" : "providers",
 };
 
 const MASKED_SECRET = "********";
@@ -30,6 +30,13 @@ const VIEW_GROUPS = [
     title: "Messaging",
     sections: ["messaging", "voice"],
     containerId: "messagingSections",
+  },
+  {
+    id: "chat",
+    label: "Chat Sessions",
+    title: "Chat Sessions",
+    sections: [],
+    containerId: "chatRoot",
   },
 ];
 
@@ -94,6 +101,9 @@ async function load() {
   await refreshConnectedAccounts();
   await hydrateModelOptions();
   await refreshLocalStatus();
+  if (window.ChatSessions) {
+    await window.ChatSessions.initialize(api);
+  }
   updateDirtyState();
   showMessage("");
 }
@@ -111,7 +121,7 @@ function renderNav() {
       button.setAttribute("aria-current", "page");
     }
     button.addEventListener("click", () => {
-      setActiveView(view.id, { scroll: true });
+      navigateToView(view.id);
     });
     nav.appendChild(button);
   });
@@ -123,6 +133,11 @@ function setActiveView(viewId, { scroll = false } = {}) {
     VIEW_GROUPS.find((view) => view.id === viewId) || VIEW_GROUPS[0];
   state.activeView = activeView.id;
   byId("pageTitle").textContent = activeView.title;
+  const chatActive = activeView.id === "chat";
+  document.querySelector(".app-shell").classList.toggle("chat-active", chatActive);
+  document.querySelector(".main").classList.toggle("chat-main", chatActive);
+  document.querySelector(".topbar").hidden = chatActive;
+  document.querySelector(".action-bar").hidden = chatActive;
 
   document.querySelectorAll(".nav-link").forEach((link) => {
     const selected = link.dataset.view === activeView.id;
@@ -143,6 +158,20 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+  if (chatActive && window.ChatSessions) {
+    window.ChatSessions.activate(window.location.pathname);
+  }
+}
+
+function navigateToView(viewId) {
+  if (viewId === "chat") {
+    if (window.location.pathname !== "/admin/chat") {
+      window.history.pushState({}, "", "/admin/chat");
+    }
+  } else if (window.location.pathname.startsWith("/admin/chat")) {
+    window.history.pushState({}, "", "/admin");
+  }
+  setActiveView(viewId, { scroll: true });
 }
 
 function renderProviders(providerStatus) {
@@ -1180,6 +1209,13 @@ document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();
   });
+});
+
+window.addEventListener("popstate", () => {
+  const viewId = window.location.pathname.startsWith("/admin/chat")
+    ? "chat"
+    : "providers";
+  setActiveView(viewId, { scroll: false });
 });
 
 load().catch((error) => {

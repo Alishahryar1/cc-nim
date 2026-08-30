@@ -1,0 +1,222 @@
+from free_claude_code.application.chat import (
+    ChatCompaction,
+    ChatGeneration,
+    ChatReasoning,
+    ChatSegment,
+    ChatSession,
+    ChatTranscript,
+    ChatTurn,
+    ChatValidationError,
+    GenerationStatus,
+    SegmentKind,
+)
+from free_claude_code.application.chat.context import ChatContextBuilder
+from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.ports import RequestRuntimeLease
+from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic import ContentBlockText, ContentBlockThinking
+from free_claude_code.core.model_capabilities import ModelInputModality
+from free_claude_code.core.reasoning import ReasoningControl, ReasoningEffort
+
+
+class FakeRuntime:
+    def __init__(
+        self,
+        *,
+        configured: ProviderModelInfo,
+        discovered: tuple[ProviderModelInfo, ...] = (),
+    ) -> None:
+        self.settings = Settings().model_copy(
+            update={
+                "model": "groq/model",
+                "model_fallbacks": None,
+            }
+        )
+        self.configured = configured
+        self.discovered = discovered
+
+    async def acquire(self) -> RequestRuntimeLease:
+        raise AssertionError("Context construction must not acquire a runtime lease")
+
+    def current_settings(self) -> Settings:
+        return self.settings
+
+    def cached_model_info(
+        self, provider_id: str, model_id: str
+    ) -> ProviderModelInfo | None:
+        if provider_id == "groq" and model_id == "model":
+            return self.configured
+        return None
+
+    def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
+        return self.discovered
+
+
+def _transcript(
+    *,
+    reasoning: ChatReasoning = ChatReasoning.HIGH,
+    compaction: ChatCompaction | None = None,
+) -> ChatTranscript:
+    session = ChatSession(
+        id="session",
+        title="Chat",
+        model="groq/model",
+        reasoning=reasoning,
+        revision=1,
+        created_at=1,
+        updated_at=1,
+    )
+    generation = ChatGeneration(
+        id="generation",
+        status=GenerationStatus.COMPLETED,
+        requested_model=session.model,
+        actual_model=session.model,
+        reasoning=reasoning,
+        effective_output_limit=4096,
+        stop_reason="end_turn",
+        error_code=None,
+        error_message=None,
+        started_at=1,
+        finished_at=2,
+        segments=(
+            ChatSegment(0, SegmentKind.THINKING, "private-looking but exposed"),
+            ChatSegment(1, SegmentKind.TEXT, "answer"),
+        ),
+    )
+    return ChatTranscript(
+        session=session,
+        turns=(
+            ChatTurn(
+                id="turn",
+                session_id=session.id,
+                sequence=1,
+                user_text="question",
+                created_at=1,
+                generation=generation,
+            ),
+        ),
+        compaction=compaction,
+    )
+
+
+def test_models_merge_configured_and_discovered_capabilities():
+    runtime = FakeRuntime(
+        configured=ProviderModelInfo(
+            "model",
+            supports_thinking=True,
+            input_modalities=frozenset(
+                {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+            ),
+            context_window_tokens=100_000,
+            max_output_tokens=20_000,
+        ),
+        discovered=(
+            ProviderModelInfo(
+                "groq/discovered",
+                supports_thinking=False,
+                context_window_tokens=32_000,
+            ),
+        ),
+    )
+
+    options = ChatContextBuilder(runtime).models()
+
+    assert [option.model_ref for option in options] == [
+        "groq/discovered",
+        "groq/model",
+    ]
+    assert options[1].input_modalities == frozenset(
+        {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+    )
+
+
+def test_prepare_builds_ordered_messages_and_authoritative_reasoning():
+    runtime = FakeRuntime(
+        configured=ProviderModelInfo(
+            "model",
+            supports_thinking=True,
+            context_window_tokens=100_000,
+            max_output_tokens=20_000,
+        )
+    )
+    prepared = ChatContextBuilder(runtime).prepare(
+        _transcript(),
+        system_prompt="custom",
+        draft="follow up",
+    )
+
+    request = prepared.routed.request
+    assert request.system == "custom"
+    assert [message.role for message in request.messages] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assistant = request.messages[1].content
+    assert isinstance(assistant, list)
+    assert isinstance(assistant[0], ContentBlockThinking)
+    assert isinstance(assistant[1], ContentBlockText)
+    assert prepared.routed.reasoning.control is ReasoningControl.ON
+    assert prepared.routed.reasoning.effort is ReasoningEffort.HIGH
+    assert request.max_tokens == 18_432
+
+
+def test_known_unsupported_reasoning_is_rejected_but_unknown_is_allowed():
+    unsupported = ChatContextBuilder(
+        FakeRuntime(configured=ProviderModelInfo("model", supports_thinking=False))
+    )
+    try:
+        unsupported.prepare(_transcript(), system_prompt="")
+    except ChatValidationError as exc:
+        assert "Thinking" in str(exc) or "thinking" in str(exc)
+    else:
+        raise AssertionError("Known unsupported reasoning was accepted")
+
+    unknown = ChatContextBuilder(
+        FakeRuntime(configured=ProviderModelInfo("model", supports_thinking=None))
+    )
+    assert unknown.prepare(
+        _transcript(), system_prompt=""
+    ).routed.reasoning.requests_reasoning
+
+
+def test_unknown_context_disables_auto_compaction_without_inventing_a_limit():
+    builder = ChatContextBuilder(
+        FakeRuntime(configured=ProviderModelInfo("model", context_window_tokens=None))
+    )
+    estimate = builder.prepare(_transcript(), system_prompt="").estimate
+
+    assert estimate.context_window_tokens is None
+    assert estimate.usage_ratio is None
+    assert estimate.should_auto_compact is False
+
+
+def test_existing_compaction_replaces_only_covered_context():
+    runtime = FakeRuntime(
+        configured=ProviderModelInfo("model", context_window_tokens=100_000)
+    )
+    transcript = _transcript(
+        reasoning=ChatReasoning.OFF,
+        compaction=ChatCompaction(
+            session_id="session",
+            covered_through_sequence=1,
+            summary="durable summary",
+            estimated_tokens=10,
+            requested_model="groq/model",
+            actual_model="groq/model",
+            updated_at=2,
+        ),
+    )
+    request = (
+        ChatContextBuilder(runtime)
+        .prepare(
+            transcript,
+            system_prompt="",
+            draft="new message",
+        )
+        .routed.request
+    )
+
+    assert len(request.messages) == 2
+    assert "durable summary" in str(request.messages[0].content)
+    assert request.messages[1].content == "new message"

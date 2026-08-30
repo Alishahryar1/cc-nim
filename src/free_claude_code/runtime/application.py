@@ -13,6 +13,7 @@ from loguru import logger
 import free_claude_code.cli.managed as cli_managed
 import free_claude_code.messaging.session as messaging_session
 import free_claude_code.messaging.workflow as messaging_workflow_module
+from free_claude_code.application.chat import ChatService
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
     ConnectedAccountPort,
@@ -102,10 +103,12 @@ class ApplicationRuntime:
         provider_manager: ProviderRuntimeManager,
         *,
         transcriber: Transcriber | None,
+        chat_service: ChatService | None = None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
     ) -> None:
         self.provider_manager = provider_manager
+        self._chat_service = chat_service
         self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._connected_accounts = dict(connected_accounts or {})
@@ -142,6 +145,8 @@ class ApplicationRuntime:
         try:
             await self.provider_manager.warm_referenced_model_cache()
             self.provider_manager.start_model_list_refresh()
+            if self._chat_service is not None:
+                await self._chat_service.start()
             await self._start_messaging_if_configured()
             logging.getLogger("uvicorn.error").info(
                 "Admin UI: %s (local-only)",
@@ -436,9 +441,15 @@ class ApplicationRuntime:
     async def _close_owned_resources(self) -> bool:
         if not await self._cleanup_messaging():
             return False
+        verbose = self.settings.log_api_error_tracebacks
+        if self._chat_service is not None and not await best_effort(
+            "chat_service.close",
+            self._chat_service.close(),
+            log_verbose_errors=verbose,
+        ):
+            return False
         if not await self._cleanup_transcriber():
             return False
-        verbose = self.settings.log_api_error_tracebacks
         if not self._provider_manager_closed:
             self._provider_manager_closed = await best_effort(
                 "provider_manager.close",
