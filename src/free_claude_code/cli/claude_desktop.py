@@ -175,10 +175,14 @@ def configure_claude_desktop_config(
     snapshotted under ``fccPriorConfig``; ``unconfigure`` restores that
     snapshot so temporarily enabling FCC never destroys the user's previous
     provider, gateway, credential, or discovery settings. Re-merges keep the
-    original user-state entries untouched, but absorb the user's post-merge
-    edits as the new restore targets and refresh the snapshot's record of
-    the exact block FCC writes so ownership stays correct when the proxy
-    token or gateway URL rotated between configures.
+    original user-state entries untouched, absorb the user's post-merge edits
+    to managed inference keys as the new restore targets, and refresh the
+    snapshot's record of the exact block FCC writes so ownership stays
+    correct when the proxy token or gateway URL rotated between configures.
+    The discovery flag's target is frozen: configure always writes ``True``,
+    so a current ``True`` cannot be attributed and an intermediate user
+    flip must not become the restore target or it would discard the user's
+    final re-enable on unconfigure.
 
     Returns ``False`` without writing when the existing config is malformed
     (invalid JSON or non-object root). Creates a new config when absent.
@@ -283,19 +287,21 @@ def configure_claude_desktop_config(
         if absorbed != prior_inference:
             backup["inference"] = absorbed
             changed = True
-        # The discovery flag mirrors that rule: configure always writes
-        # ``True``, so a current value that is neither ``True`` nor the
-        # recorded target is the user's post-merge flip, and it becomes
-        # restore target before this merge overwrites it — even when the
-        # key was ABSENT before the first merge (the original state was
-        # "absent", the user's chosen state is now ``False``). A current
-        # ``True`` is indistinguishable from configure's own write, so the
-        # recorded target stands.
-        recorded_discovery = backup.get("discovery")
+        # The discovery flag is frozen, not absorbed: configure always
+        # writes ``True``, so a current ``True`` is byte-identical to
+        # configure's own write and no file state can tell "the user just
+        # re-enabled it" from "configure wrote it". Absorbing an
+        # intermediate user flip (say ``False``) as the restore target would
+        # then discard the user's FINAL re-enable on unconfigure, restoring
+        # the stale intermediate instead. So the recorded target only ever
+        # changes when there was none — the key was absent before the
+        # first merge and the user has since made an explicit choice, whose
+        # current value is by definition theirs (configure had nothing to
+        # write over it that the user kept).
         if (
-            prior_discovery is not True
+            "discovery" not in backup
             and prior_discovery is not None
-            and prior_discovery != recorded_discovery
+            and prior_discovery is not True
         ):
             backup["discovery"] = prior_discovery
             changed = True

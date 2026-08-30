@@ -1156,16 +1156,17 @@ def test_remerge_keeps_frozen_snapshot_without_user_edits(
     assert json.loads(fake_config.read_text(encoding="utf-8")) == original
 
 
-def test_remerge_absorbs_user_disabled_discovery(
+def test_remerge_keeps_user_disabled_discovery(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
-    """A post-merge discovery flip to ``False`` becomes the restore target.
+    """A post-merge discovery flip to ``False`` survives unconfigure.
 
-    Configure always writes ``True``, so a current ``False`` can only be
-    the user's choice — including when the key was absent before the
-    first merge, whose original state was "absent" but whose chosen state
-    is now explicitly ``False``.
+    The discovery target is frozen, not absorbed: the key was absent
+    before the first merge, and the user's explicit post-merge ``False``
+    must still win on removal. Since a current ``False`` is never
+    FCC-owned (configure always writes ``True``), unconfigure simply
+    keeps it.
     """
 
     fake_config.write_text(
@@ -1189,6 +1190,51 @@ def test_remerge_absorbs_user_disabled_discovery(
     assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
     assert json.loads(fake_config.read_text(encoding="utf-8")) == {
         "modelDiscoveryEnabled": False,
+        "inference": {"provider": "p"},
+    }
+
+
+def test_unconfigure_keeps_user_final_discovery_reenable(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """The user's final discovery re-enable survives unconfigure.
+
+    Regression guard for the Greptile "discovery ownership loses the final
+    user preference" finding: the user disables discovery, a re-merge runs,
+    and then the user re-enables it before uninstalling. Absorbing the
+    intermediate ``False`` as the restore target would make unconfigure
+    discard the user's final ``True`` and restore the stale intermediate.
+    The discovery target is frozen instead, so the final ``True`` —
+    indistinguishable from configure's own always-``True`` write — keeps
+    the recorded original, which here is the user's own ``True``.
+    """
+
+    fake_config.write_text(
+        json.dumps({"modelDiscoveryEnabled": True, "inference": {"provider": "p"}}),
+        encoding="utf-8",
+    )
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    for value in (False, "merge", True):
+        if value == "merge":
+            assert (
+                claude_desktop.configure_claude_desktop_config(
+                    fake_config, settings=fake_settings
+                )
+                is True
+            )
+            continue
+        current = json.loads(fake_config.read_text(encoding="utf-8"))
+        current["modelDiscoveryEnabled"] = value
+        fake_config.write_text(json.dumps(current), encoding="utf-8")
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+        "modelDiscoveryEnabled": True,
         "inference": {"provider": "p"},
     }
 
