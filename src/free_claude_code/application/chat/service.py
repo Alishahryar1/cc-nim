@@ -1323,14 +1323,23 @@ class ChatService:
         if active.cancellation_reason is None:
             active.cancellation_reason = reason
             task.cancel()
-        _result, cancellation = await _await_task_despite_cancellation(task)
+        cancellation: asyncio.CancelledError | None = None
+        try:
+            _result, cancellation = await _await_task_despite_cancellation(task)
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+        finally:
+            await self._release_active(active)
         if cancellation is not None:
             raise cancellation
 
     async def _release_active(self, active: _ActiveOperation) -> None:
         async with self._active_lock:
-            if self._active.get(active.session_id) is active:
-                self._active.pop(active.session_id, None)
+            if self._active.get(active.session_id) is not active:
+                return
+            self._active.pop(active.session_id, None)
         _make_queue_room(active.queue)
         active.queue.put_nowait(None)
 

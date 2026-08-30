@@ -344,6 +344,36 @@ async def test_closing_initiating_stream_cancels_and_persists_partial_answer(
 
 
 @pytest.mark.asyncio
+async def test_immediate_stop_before_operation_task_starts_releases_owner(
+    tmp_path: Path,
+):
+    provider = FakeChatProvider()
+    service, _runtime, _store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        operation_id = "2029b65e-f4d9-4b80-8c6a-563a32fb8b8f"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="stop before start",
+        )
+
+        assert await service.stop(session.id, operation_id=operation_id) is True
+        assert await _drain(stream) == []
+
+        replacement = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="4b50506e-92bf-46ba-aa35-333dc0946e14",
+            text="still usable",
+        )
+        assert (await _drain(replacement))[-1] == "turn.completed"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_second_operation_on_same_session_is_rejected(tmp_path: Path):
     provider = FakeChatProvider(block_after_delta=True)
     service, _runtime, _store = await _service(tmp_path, provider)
