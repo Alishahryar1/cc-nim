@@ -191,6 +191,27 @@ def test_unknown_context_disables_auto_compaction_without_inventing_a_limit():
     assert estimate.should_auto_compact is False
 
 
+def test_known_context_reserves_input_when_output_cap_is_unknown():
+    builder = ChatContextBuilder(
+        FakeRuntime(
+            configured=ProviderModelInfo(
+                "model",
+                context_window_tokens=16_384,
+                max_output_tokens=None,
+            )
+        )
+    )
+
+    prepared = builder.prepare(
+        _transcript(reasoning=ChatReasoning.OFF),
+        system_prompt="",
+        draft="hello",
+    )
+
+    assert prepared.routed.request.max_tokens == 15_360
+    assert prepared.estimate.usable_input_tokens == 1_024
+
+
 def test_existing_compaction_replaces_only_covered_context():
     runtime = FakeRuntime(
         configured=ProviderModelInfo("model", context_window_tokens=100_000)

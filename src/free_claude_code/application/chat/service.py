@@ -824,16 +824,17 @@ class ChatService:
 
         async def commit_completion() -> ChatSession:
             await self._flush_segments(active)
-            session = await self._store.finish_generation(
+            if active.regeneration:
+                return await self._store.finish_regeneration(
+                    generation_id, stop_reason=stop_reason
+                )
+            return await self._store.finish_generation(
                 generation_id,
                 status=GenerationStatus.COMPLETED,
                 stop_reason=stop_reason,
                 error_code=None,
                 error_message=None,
             )
-            if active.regeneration:
-                session = await self._store.complete_regeneration(generation_id)
-            return session
 
         commit_task = asyncio.create_task(
             commit_completion(),

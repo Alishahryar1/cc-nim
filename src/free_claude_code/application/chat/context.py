@@ -30,6 +30,7 @@ from .models import (
 
 _VISIBLE_ANSWER_TOKENS = 16_384
 _MINIMUM_VISIBLE_ANSWER_TOKENS = 1_024
+_MINIMUM_INPUT_TOKENS = 1_024
 _AUTO_COMPACT_RATIO = 0.85
 _COMPACT_TARGET_RATIO = 0.60
 _SUMMARY_SYSTEM_PROMPT = """Summarize the earlier conversation for another assistant.
@@ -295,6 +296,14 @@ class ChatContextBuilder:
         desired = _VISIBLE_ANSWER_TOKENS + reasoning_tokens
         if option.max_output_tokens is not None and option.max_output_tokens > 0:
             desired = min(desired, option.max_output_tokens)
+        if (
+            option.context_window_tokens is not None
+            and option.context_window_tokens > 0
+        ):
+            desired = min(
+                desired,
+                option.context_window_tokens - _MINIMUM_INPUT_TOKENS,
+            )
         if desired - reasoning_tokens < _MINIMUM_VISIBLE_ANSWER_TOKENS:
             raise ChatValidationError(
                 "The selected model cannot fit this thinking level. Lower thinking."

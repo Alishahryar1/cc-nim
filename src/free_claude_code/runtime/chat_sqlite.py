@@ -551,6 +551,11 @@ class SQLiteChatStore:
                 raise ChatNotFoundError("Chat generation not found.")
             session_id = _row_str(row, "session_id")
             visible = bool(_row_int(row, "visible"))
+            if not visible:
+                connection.rollback()
+                raise ChatConflictError(
+                    "Staged regenerations must finish through finish_regeneration."
+                )
             if _row_str(row, "status") != GenerationStatus.RUNNING.value:
                 connection.rollback()
                 return self._get_session(connection, session_id)
@@ -575,14 +580,13 @@ class SQLiteChatStore:
             if cursor.rowcount != 1:
                 connection.rollback()
                 return self._get_session(connection, session_id)
-            if visible:
-                connection.execute(
-                    """
-                    UPDATE chat_sessions
-                    SET revision = revision + 1, updated_at = ? WHERE id = ?
-                    """,
-                    (now, session_id),
-                )
+            connection.execute(
+                """
+                UPDATE chat_sessions
+                SET revision = revision + 1, updated_at = ? WHERE id = ?
+                """,
+                (now, session_id),
+            )
             connection.commit()
             return self._get_session(connection, session_id)
 
@@ -602,7 +606,9 @@ class SQLiteChatStore:
 
         await self._run(operation)
 
-    async def complete_regeneration(self, generation_id: str) -> ChatSession:
+    async def finish_regeneration(
+        self, generation_id: str, *, stop_reason: str | None
+    ) -> ChatSession:
         def operation(connection: sqlite3.Connection) -> ChatSession:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -614,8 +620,12 @@ class SQLiteChatStore:
                 """,
                 (generation_id,),
             ).fetchone()
-            if row is None or _row_str(row, "status") != GenerationStatus.COMPLETED:
-                raise ChatConflictError("Regenerated answer is not complete.")
+            if row is None:
+                connection.rollback()
+                raise ChatConflictError("Staged regeneration is unavailable.")
+            if _row_str(row, "status") != GenerationStatus.RUNNING.value:
+                connection.rollback()
+                raise ChatConflictError("Staged regeneration is not running.")
             turn_id = _row_str(row, "turn_id")
             session_id = _row_str(row, "session_id")
             now = _now_ms()
@@ -624,8 +634,19 @@ class SQLiteChatStore:
                 (turn_id,),
             )
             connection.execute(
-                "UPDATE chat_generations SET visible = 1 WHERE id = ?",
-                (generation_id,),
+                """
+                UPDATE chat_generations
+                SET visible = 1, status = ?, stop_reason = ?, error_code = NULL,
+                    error_message = NULL, finished_at = ?
+                WHERE id = ? AND visible = 0 AND status = ?
+                """,
+                (
+                    GenerationStatus.COMPLETED.value,
+                    stop_reason,
+                    now,
+                    generation_id,
+                    GenerationStatus.RUNNING.value,
+                ),
             )
             connection.execute(
                 "DELETE FROM chat_generations WHERE turn_id = ? AND id != ?",
@@ -754,7 +775,7 @@ class SQLiteChatStore:
         connection.execute(
             """
             DELETE FROM chat_generations
-            WHERE visible = 0 AND status = 'running'
+            WHERE visible = 0
             """
         )
         affected = connection.execute(
