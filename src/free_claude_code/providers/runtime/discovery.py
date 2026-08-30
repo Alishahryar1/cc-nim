@@ -27,7 +27,7 @@ from .model_cache import ProviderModelCache
 ProviderResolver = Callable[[str], BaseProvider]
 
 # A local provider that is actually running answers over loopback in milliseconds.
-OPPORTUNISTIC_LOCAL_DISCOVERY_TIMEOUT_SECONDS = 5.0
+LOCAL_DISCOVERY_TIMEOUT_SECONDS = 5.0
 
 
 def _provider_query_failure_reason(exc: BaseException, settings: Settings) -> str:
@@ -109,6 +109,7 @@ class ProviderModelDiscovery:
         self, provider_ids: tuple[str, ...]
     ) -> ProviderModelRefreshResult:
         failed_provider_ids: list[str] = []
+        local_ids = self._local_provider_ids()
         opportunistic_ids = self._opportunistic_local_ids()
         tasks: dict[str, asyncio.Task[frozenset[ProviderModelInfo]]] = {}
         for provider_id in provider_ids:
@@ -120,13 +121,14 @@ class ProviderModelDiscovery:
                 )
                 continue
             query = provider.list_model_infos()
-            if provider_id in opportunistic_ids:
+            if provider_id in local_ids:
                 # Provider retry policy assumes a transient upstream fault. A local
                 # endpoint nobody is running refuses instantly and stays refused, so
-                # cap the whole opportunistic query instead of paying that backoff.
-                query = asyncio.wait_for(
-                    query, OPPORTUNISTIC_LOCAL_DISCOVERY_TIMEOUT_SECONDS
-                )
+                # cap the query instead of paying that backoff. This bounds every
+                # local provider: a configured endpoint that is down must surface
+                # its failure promptly rather than hold the refresh open, so the
+                # deadline is independent of whether the failure gets reported.
+                query = asyncio.wait_for(query, LOCAL_DISCOVERY_TIMEOUT_SECONDS)
             tasks[provider_id] = asyncio.create_task(query)
 
         refreshed_provider_ids: list[str] = []
@@ -153,6 +155,15 @@ class ProviderModelDiscovery:
         return ProviderModelRefreshResult(
             refreshed_provider_ids=tuple(refreshed_provider_ids),
             failed_provider_ids=tuple(failed_provider_ids),
+        )
+
+    def _local_provider_ids(self) -> frozenset[str]:
+        """Return every local provider, whose endpoint is reachable or not at all."""
+
+        return frozenset(
+            provider_id
+            for provider_id, descriptor in PROVIDER_CATALOG.items()
+            if descriptor.local
         )
 
     def _opportunistic_local_ids(self) -> frozenset[str]:

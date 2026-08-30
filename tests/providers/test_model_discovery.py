@@ -22,7 +22,7 @@ from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from free_claude_code.providers.runtime import ProviderRuntime
+from free_claude_code.providers.runtime import ProviderRuntime, discovery
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 from tests.providers.support import (
@@ -345,12 +345,14 @@ class FakeProvider(BaseProvider):
         error: BaseException | None = None,
         started: asyncio.Event | None = None,
         peer_started: asyncio.Event | None = None,
+        stall: float | None = None,
     ):
         super().__init__(
             make_provider_config(api_key="test", base_url="https://test.invalid")
         )
         self._model_infos = model_infos
         self._error = error
+        self._stall = stall
         self._started = started
         self._peer_started = peer_started
         self.cleaned = False
@@ -386,6 +388,8 @@ class FakeProvider(BaseProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         await self._before_model_list()
+        if self._stall is not None:
+            await asyncio.sleep(self._stall)
         return self._model_infos
 
     async def stream_messages(
@@ -625,6 +629,24 @@ async def test_runtime_refresh_model_list_cache_reports_a_relocated_local_failur
     runtime = _manager(settings, _offline_local_providers())
 
     result = await runtime.refresh_model_list_cache()
+
+    assert result.failed_provider_ids == ("ollama",)
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_bounds_a_relocated_local_endpoint() -> (
+    None
+):
+    # Reporting a configured endpoint's failure and bounding how long it may take
+    # are separate concerns. A local host that hangs must not hold the refresh open
+    # for the provider's full retry backoff just because its failure is reported.
+    settings = _settings(ollama_base_url="http://gpu-box:11434")
+    providers = _offline_local_providers()
+    providers["ollama"] = FakeProvider(stall=30.0)
+    runtime = _manager(settings, providers)
+
+    with patch.object(discovery, "LOCAL_DISCOVERY_TIMEOUT_SECONDS", 0.01):
+        result = await asyncio.wait_for(runtime.refresh_model_list_cache(), 5.0)
 
     assert result.failed_provider_ids == ("ollama",)
 
