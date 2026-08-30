@@ -23,7 +23,11 @@ from tests.api.support import create_test_app, provider_manager_for_app, runtime
 
 
 def _local_client(app):
-    return TestClient(app, client=("127.0.0.1", 50000))
+    return TestClient(
+        app,
+        base_url="http://127.0.0.1",
+        client=("127.0.0.1", 50000),
+    )
 
 
 def _set_home(monkeypatch, tmp_path: Path) -> None:
@@ -193,7 +197,11 @@ def test_admin_http_errors_are_never_cached(
     expected_status,
 ):
     _set_home(monkeypatch, tmp_path)
-    client = TestClient(create_test_app(), client=(client_host, 50000))
+    client = TestClient(
+        create_test_app(),
+        base_url="http://127.0.0.1",
+        client=(client_host, 50000),
+    )
 
     response = client.get(path)
 
@@ -218,6 +226,7 @@ def test_admin_unexpected_errors_are_never_cached(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     client = TestClient(
         create_test_app(),
+        base_url="http://127.0.0.1",
         client=("127.0.0.1", 50000),
         raise_server_exceptions=False,
     )

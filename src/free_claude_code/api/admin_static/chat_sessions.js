@@ -18,6 +18,7 @@
     draftSessionId: null,
     routeVersion: 0,
     estimateTimer: null,
+    foreignPollTimer: null,
   };
 
   const root = () => document.getElementById("chatRoot");
@@ -71,6 +72,7 @@
   }
 
   async function route(path) {
+    stopForeignOperationPoll();
     const version = ++state.routeVersion;
     const match = path.match(/^\/admin\/chat\/([0-9a-f-]+)$/i);
     if (!match) {
@@ -249,7 +251,7 @@
     state.contextError = detail.context_error || "";
   }
 
-  function renderSession() {
+  function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
     const session = state.session;
     if (!session) return;
     const shell = node("div", "chat-session-shell");
@@ -273,7 +275,20 @@
     root().replaceChildren(shell);
     renderTranscript();
     refreshComposerState();
-    scrollLatest(false);
+    if (followLatest) {
+      scrollLatest(false);
+    } else {
+      scroller.scrollTop = scrollTop;
+    }
+    syncForeignOperationPoll();
+  }
+
+  function renderSessionPreservingScroll() {
+    const scroller = document.getElementById("chatTranscript");
+    renderSession({
+      followLatest: !scroller || nearBottom(scroller),
+      scrollTop: scroller?.scrollTop || 0,
+    });
   }
 
   function renderSessionHeader(session) {
@@ -598,7 +613,7 @@
         },
       );
       state.session = session;
-      renderSession();
+      renderSessionPreservingScroll();
       scheduleEstimate(true);
     } catch (error) {
       await reloadSession();
@@ -654,6 +669,7 @@
         );
         state.bootstrap.preferences = preferences;
         dialog.close();
+        scheduleEstimate(true);
       } catch (error) {
         setNotice(error.message, "error");
       }
@@ -799,7 +815,7 @@
       accepted: false,
     };
     state.operation = operation;
-    renderSession();
+    renderSessionPreservingScroll();
     try {
       const response = await fetch(
         `/admin/api/chat/sessions/${operation.sessionId}/${action}`,
@@ -834,16 +850,31 @@
   async function consumeEvents(body, operation) {
     const reader = body.getReader();
     const decoder = new TextDecoder();
-    let buffer = "";
+    const frameParts = [];
+    let boundaryTail = "";
     try {
       while (true) {
         const { done, value } = await reader.read();
-        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-        const frames = buffer.split(/\r?\n\r?\n/);
-        buffer = frames.pop() || "";
-        frames.forEach((frame) => applyStreamFrame(frame, operation));
+        const chunk = decoder.decode(value || new Uint8Array(), { stream: !done });
+        const probe = boundaryTail + chunk;
+        const boundary = /\r?\n\r?\n/g;
+        const prefixLength = boundaryTail.length;
+        let chunkStart = 0;
+        for (const match of probe.matchAll(boundary)) {
+          const chunkEnd = match.index + match[0].length - prefixLength;
+          frameParts.push(chunk.slice(chunkStart, chunkEnd));
+          applyStreamFrame(frameParts.join(""), operation);
+          frameParts.length = 0;
+          chunkStart = chunkEnd;
+        }
+        const remainder = chunk.slice(chunkStart);
+        if (remainder) frameParts.push(remainder);
+        boundaryTail = chunkStart
+          ? remainder.slice(-3)
+          : (boundaryTail + chunk).slice(-3);
         if (done) {
-          if (buffer.trim()) applyStreamFrame(buffer, operation);
+          const finalFrame = frameParts.join("");
+          if (finalFrame.trim()) applyStreamFrame(finalFrame, operation);
           return;
         }
       }
@@ -927,10 +958,36 @@
       const detail = await state.api(`/admin/api/chat/sessions/${id}`);
       if (state.session?.id !== id) return;
       applyDetail(detail);
-      renderSession();
+      renderSessionPreservingScroll();
     } catch (error) {
       setNotice(error.message, "error");
     }
+  }
+
+  function stopForeignOperationPoll() {
+    window.clearTimeout(state.foreignPollTimer);
+    state.foreignPollTimer = null;
+  }
+
+  function syncForeignOperationPoll() {
+    stopForeignOperationPoll();
+    const latest = state.turns[state.turns.length - 1];
+    const chatView = root()?.closest(".admin-view");
+    if (
+      !state.session ||
+      state.operation ||
+      latest?.generation?.status !== "running" ||
+      chatView?.hidden
+    ) {
+      return;
+    }
+    const sessionId = state.session.id;
+    state.foreignPollTimer = window.setTimeout(async () => {
+      state.foreignPollTimer = null;
+      if (state.session?.id !== sessionId || state.operation) return;
+      await reloadSession();
+      syncForeignOperationPoll();
+    }, 750);
   }
 
   async function responseError(response) {

@@ -204,6 +204,12 @@ def admin_base_url(
                         context_window_tokens=100_000,
                         max_output_tokens=20_000,
                     ),
+                    ProviderModelInfo(
+                        "vendor/small-context",
+                        supports_thinking=True,
+                        context_window_tokens=8_192,
+                        max_output_tokens=4_096,
+                    ),
                 }
             )
         ),

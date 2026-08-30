@@ -251,6 +251,7 @@ class UnestimatableChat(StubChat):
 def _client(chat: StubChat | None = None) -> TestClient:
     return TestClient(
         create_test_app(chat=chat),
+        base_url="http://127.0.0.1",
         client=("127.0.0.1", 50000),
     )
 
@@ -348,6 +349,13 @@ def test_chat_routes_apply_loopback_and_origin_protection():
         local.get(
             "/admin/api/chat/bootstrap",
             headers={"Origin": "https://example.com"},
+        ).status_code
+        == 403
+    )
+    assert (
+        local.get(
+            "/admin/api/chat/bootstrap",
+            headers={"Host": "attacker.example:8000"},
         ).status_code
         == 403
     )

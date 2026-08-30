@@ -527,17 +527,20 @@ class ChatService:
                 )
             _require_request_fits(prepared.estimate)
             generation_id = str(uuid.uuid4())
-            turn = await self._store.begin_send(
-                active.session_id,
-                expected_revision=transcript.session.revision,
-                turn_id=str(uuid.uuid4()),
+            turn = await _commit_generation_start(
+                active,
                 generation_id=generation_id,
-                user_text=text,
-                requested_model=transcript.session.model,
-                reasoning=transcript.session.reasoning,
-                effective_output_limit=prepared.routed.request.max_tokens or 1,
+                operation=self._store.begin_send(
+                    active.session_id,
+                    expected_revision=transcript.session.revision,
+                    turn_id=str(uuid.uuid4()),
+                    generation_id=generation_id,
+                    user_text=text,
+                    requested_model=transcript.session.model,
+                    reasoning=transcript.session.reasoning,
+                    effective_output_limit=prepared.routed.request.max_tokens or 1,
+                ),
             )
-            active.generation_id = generation_id
             await self._emit(
                 active,
                 "turn.started",
@@ -587,14 +590,18 @@ class ChatService:
                     exclude_generation_id=latest.generation.id,
                 )
             _require_request_fits(prepared.estimate)
-            generation = await self._store.begin_retry(
-                active.session_id,
-                expected_revision=transcript.session.revision,
-                requested_model=transcript.session.model,
-                reasoning=transcript.session.reasoning,
-                effective_output_limit=prepared.routed.request.max_tokens or 1,
+            generation_id = latest.generation.id
+            generation = await _commit_generation_start(
+                active,
+                generation_id=generation_id,
+                operation=self._store.begin_retry(
+                    active.session_id,
+                    expected_revision=transcript.session.revision,
+                    requested_model=transcript.session.model,
+                    reasoning=transcript.session.reasoning,
+                    effective_output_limit=prepared.routed.request.max_tokens or 1,
+                ),
             )
-            active.generation_id = generation.id
             await self._emit(
                 active,
                 "turn.started",
@@ -645,16 +652,19 @@ class ChatService:
                 )
             _require_request_fits(prepared.estimate)
             generation_id = str(uuid.uuid4())
-            _turn, generation = await self._store.begin_regenerate(
-                active.session_id,
-                expected_revision=transcript.session.revision,
+            _turn, generation = await _commit_generation_start(
+                active,
                 generation_id=generation_id,
-                requested_model=transcript.session.model,
-                reasoning=transcript.session.reasoning,
-                effective_output_limit=prepared.routed.request.max_tokens or 1,
+                regeneration=True,
+                operation=self._store.begin_regenerate(
+                    active.session_id,
+                    expected_revision=transcript.session.revision,
+                    generation_id=generation_id,
+                    requested_model=transcript.session.model,
+                    reasoning=transcript.session.reasoning,
+                    effective_output_limit=prepared.routed.request.max_tokens or 1,
+                ),
             )
-            active.generation_id = generation.id
-            active.regeneration = True
             await self._emit(
                 active,
                 "turn.started",
@@ -1255,6 +1265,41 @@ class ChatService:
             raise ChatUnavailableError(
                 self._unavailable_message or "Chat Sessions is unavailable."
             )
+
+
+async def _commit_generation_start[T](
+    active: _ActiveOperation,
+    *,
+    generation_id: str,
+    operation: Awaitable[T],
+    regeneration: bool = False,
+) -> T:
+    """Publish durable generation ownership before restoring cancellation."""
+
+    async def run() -> T:
+        return await operation
+
+    task = asyncio.create_task(
+        run(),
+        name=f"fcc-chat-generation-start-{generation_id}",
+    )
+    current = asyncio.current_task()
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if current is not None and current.cancelling():
+                cancellation = cancellation or exc
+        except Exception:
+            break
+
+    result = task.result()
+    active.generation_id = generation_id
+    active.regeneration = regeneration
+    if cancellation is not None:
+        raise cancellation
+    return result
 
 
 def _latest_turn(transcript: ChatTranscript) -> ChatTurn:

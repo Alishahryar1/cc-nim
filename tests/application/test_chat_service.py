@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -394,6 +395,68 @@ async def test_delete_active_send_finishes_generation_before_removing_session(
             await service.get_session(session.id)
         await stream.aclose()
     finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_waits_for_generation_start_commit_before_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    blocker: sqlite3.Connection | None = None
+    try:
+        session = await service.create_session()
+        initial_stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="7f4c7a3f-c06e-42c3-9887-f748dc5aa518",
+            text="partial answer",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        assert await service.stop(
+            session.id,
+            operation_id="7f4c7a3f-c06e-42c3-9887-f748dc5aa518",
+        )
+        await initial_stream.aclose()
+
+        entered = asyncio.Event()
+        original_begin_retry = store.begin_retry
+
+        async def observed_begin_retry(*args, **kwargs):
+            entered.set()
+            return await original_begin_retry(*args, **kwargs)
+
+        monkeypatch.setattr(store, "begin_retry", observed_begin_retry)
+        blocker = sqlite3.connect(tmp_path / "chat.db", isolation_level=None)
+        blocker.execute("PRAGMA journal_mode = WAL")
+        blocker.execute("BEGIN IMMEDIATE")
+
+        current = await service.get_session(session.id)
+        retry_stream = await service.retry(
+            session.id,
+            expected_revision=current.revision,
+            operation_id="38dcb3e5-04b7-4ecf-bc8b-7c72550839b0",
+        )
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        await asyncio.sleep(0.05)
+
+        close_task = asyncio.create_task(retry_stream.aclose())
+        await asyncio.sleep(0.05)
+        waited_for_commit = not close_task.done()
+        blocker.commit()
+        blocker.close()
+        blocker = None
+        await asyncio.wait_for(close_task, timeout=1)
+
+        generation = (await store.get_transcript(session.id)).turns[-1].generation
+        assert waited_for_commit
+        assert generation.status is GenerationStatus.STOPPED
+    finally:
+        if blocker is not None:
+            blocker.rollback()
+            blocker.close()
         await service.close()
 
 

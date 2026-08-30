@@ -83,6 +83,49 @@ def test_chat_stop_then_retry_uses_one_operation_owner(
     expect(page.get_by_text("E2E answer")).to_be_visible()
 
 
+def test_chat_opened_in_another_tab_recovers_when_operation_stops(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    page.get_by_role("textbox", name="Message", exact=True).fill("[slow] wait")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+
+    other = page.context.new_page()
+    try:
+        other.goto(page.url)
+        expect(other.locator("#chatComposerStatus")).to_contain_text(
+            "running in another tab"
+        )
+        page.get_by_role("button", name="Stop").click()
+        expect(page.get_by_role("button", name="Retry")).to_be_visible()
+        expect(other.get_by_role("button", name="Retry")).to_be_visible(timeout=3_000)
+    finally:
+        other.close()
+
+
+def test_terminal_refresh_preserves_reader_scroll_position(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    long_message = "[slow]\n" + "\n".join(
+        f"line {index}: keep reading here" for index in range(100)
+    )
+    page.get_by_role("textbox", name="Message", exact=True).fill(long_message)
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+    scroller = page.locator("#chatTranscript")
+    assert scroller.evaluate("node => node.scrollHeight > node.clientHeight")
+    scroller.evaluate("node => { node.scrollTop = 0; }")
+
+    page.get_by_role("button", name="Stop").click()
+
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+    assert scroller.evaluate("node => node.scrollTop") < 10
+
+
 def test_chat_rename_prompt_and_delete(
     page: Page,
     admin_base_url: str,
@@ -108,6 +151,32 @@ def test_chat_rename_prompt_and_delete(
     page.get_by_role("button", name="Delete").click()
     expect(page).to_have_url(f"{admin_base_url}/admin/chat")
     expect(page.locator(".chat-session-card")).to_have_count(0)
+
+
+def test_reset_system_prompt_refreshes_context_and_unblocks_send(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    page.get_by_label("Selected model").select_option(
+        "open_router/vendor/small-context"
+    )
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("send after reset")
+
+    page.get_by_role("button", name="System prompt").click()
+    prompt = page.get_by_role("dialog").get_by_label("System prompt")
+    prompt.fill("oversized prompt " * 5_000)
+    page.get_by_role("dialog").get_by_role("button", name="Save").click()
+    expect(page.get_by_role("button", name="Send")).to_be_disabled()
+    expect(page.locator("#chatComposerStatus")).to_contain_text(
+        "exceeds the model context"
+    )
+
+    page.get_by_role("button", name="System prompt").click()
+    page.get_by_role("dialog").get_by_role("button", name="Reset to default").click()
+
+    expect(page.get_by_role("button", name="Send")).to_be_enabled(timeout=3_000)
 
 
 def test_chat_remains_usable_at_narrow_viewport(
