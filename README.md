@@ -602,10 +602,10 @@ node -v
 <details>
 <summary><strong>macOS / Linux: <code>~/.zshrc: Permission denied</code> during installation</strong></summary>
 
-If your shell configuration was previously created or edited with `sudo` permissions, reset file ownership to your user:
+If your shell configuration was previously created or modified by root/sudo, reset ownership to your current user:
 
 ```bash
-cp ~/.zshrc ~/.zshrc.tmp && rm -f ~/.zshrc && mv ~/.zshrc.tmp ~/.zshrc
+sudo chown "$USER" ~/.zshrc
 ```
 
 </details>
@@ -617,7 +617,9 @@ If you configured an alternative provider key (such as `OPENROUTER_API_KEY`) but
 
 1. Open the Admin UI or edit `~/.fcc/.env`.
 2. Update the `MODEL_*` mappings to your active provider (for example, `open_router/openrouter/free`).
-3. Restart FCC (`fcc-server` or the desktop app).
+3. Restart FCC:
+   - **Desktop app (macOS/Windows)**: Click the menu-bar/tray icon and select **Restart**, or re-open the app.
+   - **Terminal (`fcc-server`)**: Stop the active server with `Ctrl+C` (or `pkill -f fcc-server`), then start `fcc-server` again.
 
 </details>
 
