@@ -111,6 +111,7 @@ async def test_user_title_new_chat_is_not_replaced_on_first_turn(tmp_path: Path)
             expected_revision=renamed.revision,
             turn_id=_id(),
             generation_id=_id(),
+            operation_id=_id(),
             user_text="First question",
             requested_model=session.model,
             reasoning=session.reasoning,
@@ -131,16 +132,19 @@ async def test_store_persists_generation_segments_and_actual_fallback(tmp_path: 
             session_id=_id(), model="groq/requested", reasoning=ChatReasoning.HIGH
         )
         generation_id = _id()
+        operation_id = _id()
         turn = await store.begin_send(
             session.id,
             expected_revision=session.revision,
             turn_id=_id(),
             generation_id=generation_id,
+            operation_id=operation_id,
             user_text="Explain this",
             requested_model=session.model,
             reasoning=session.reasoning,
             effective_output_limit=4096,
         )
+        assert turn.operation_id == operation_id
         assert await store.generation_start_committed(
             session.id,
             generation_id=generation_id,
@@ -207,6 +211,7 @@ async def test_transcript_reads_one_revision_snapshot(
             expected_revision=session.revision,
             turn_id=_id(),
             generation_id=generation_id,
+            operation_id=_id(),
             user_text="Keep one coherent snapshot",
             requested_model=session.model,
             reasoning=session.reasoning,
@@ -265,6 +270,7 @@ async def test_retry_reuses_generation_and_replaces_partial_output(tmp_path: Pat
             expected_revision=session.revision,
             turn_id=_id(),
             generation_id=generation_id,
+            operation_id=_id(),
             user_text="hello",
             requested_model=session.model,
             reasoning=session.reasoning,
@@ -310,6 +316,7 @@ async def test_regeneration_keeps_visible_answer_until_atomic_swap(tmp_path: Pat
             expected_revision=session.revision,
             turn_id=_id(),
             generation_id=original_id,
+            operation_id=_id(),
             user_text="hello",
             requested_model=session.model,
             reasoning=session.reasoning,
@@ -385,6 +392,7 @@ async def test_startup_recovers_visible_and_discards_staged_running_generations(
         expected_revision=session.revision,
         turn_id=_id(),
         generation_id=original_id,
+        operation_id=_id(),
         user_text="hello",
         requested_model=session.model,
         reasoning=session.reasoning,
@@ -417,6 +425,7 @@ async def test_startup_discards_uncommitted_regeneration_and_keeps_visible_answe
         expected_revision=session.revision,
         turn_id=_id(),
         generation_id=original_id,
+        operation_id=_id(),
         user_text="hello",
         requested_model=session.model,
         reasoning=session.reasoning,
@@ -469,6 +478,7 @@ async def test_startup_discards_terminal_staged_regeneration(tmp_path: Path):
         expected_revision=session.revision,
         turn_id=_id(),
         generation_id=original_id,
+        operation_id=_id(),
         user_text="hello",
         requested_model=session.model,
         reasoning=session.reasoning,

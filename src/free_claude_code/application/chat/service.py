@@ -591,6 +591,7 @@ class ChatService:
                     expected_revision=transcript.session.revision,
                     turn_id=turn_id,
                     generation_id=generation_id,
+                    operation_id=active.operation_id,
                     user_text=text,
                     requested_model=transcript.session.model,
                     reasoning=transcript.session.reasoning,
@@ -1074,15 +1075,24 @@ class ChatService:
             )
             covered = later[0].sequence
 
+        async def commit_compaction() -> ChatCompaction:
+            return await self._retry_terminal_persistence(
+                lambda: self._store.upsert_compaction(
+                    transcript.session.id,
+                    covered_through_sequence=covered,
+                    summary=summary,
+                    estimated_tokens=estimate_text_tokens(summary),
+                    requested_model=transcript.session.model,
+                    actual_model=actual_model,
+                ),
+                label=(
+                    f"compaction session_id={transcript.session.id} "
+                    f"covered_through_sequence={covered}"
+                ),
+            )
+
         commit_task = asyncio.create_task(
-            self._store.upsert_compaction(
-                transcript.session.id,
-                covered_through_sequence=covered,
-                summary=summary,
-                estimated_tokens=estimate_text_tokens(summary),
-                requested_model=transcript.session.model,
-                actual_model=actual_model,
-            ),
+            commit_compaction(),
             name=f"fcc-chat-compaction-commit-{transcript.session.id}",
         )
         compaction, cancellation = await _await_task_despite_cancellation(commit_task)
@@ -1219,10 +1229,10 @@ class ChatService:
         reason = active.cancellation_reason or _CancellationReason.STOPPED
         if active.generation_id is not None:
             try:
-                await self._flush_terminal_segments(active)
                 if active.regeneration:
-                    await self._store.discard_generation(active.generation_id)
+                    await self._discard_regeneration(active.generation_id)
                 else:
+                    await self._flush_terminal_segments(active)
                     status = (
                         GenerationStatus.INTERRUPTED
                         if reason is _CancellationReason.INTERRUPTED
@@ -1303,10 +1313,10 @@ class ChatService:
             )
         if active.generation_id is not None:
             try:
-                await self._flush_terminal_segments(active)
                 if active.regeneration:
-                    await self._store.discard_generation(active.generation_id)
+                    await self._discard_regeneration(active.generation_id)
                 else:
+                    await self._flush_terminal_segments(active)
                     await self._finish_generation(
                         active.generation_id,
                         status=GenerationStatus.FAILED,
@@ -1369,6 +1379,12 @@ class ChatService:
                 stop_reason=stop_reason,
             ),
             label=f"regeneration_id={generation_id} status=completed",
+        )
+
+    async def _discard_regeneration(self, generation_id: str) -> None:
+        await self._retry_terminal_persistence(
+            lambda: self._store.discard_generation(generation_id),
+            label=f"regeneration_id={generation_id} status=discarded",
         )
 
     @staticmethod

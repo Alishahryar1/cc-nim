@@ -19,6 +19,7 @@
     operation: null,
     draft: "",
     draftSessionId: null,
+    draftOperationId: null,
     routeVersion: 0,
     estimateTimer: null,
     estimateVersion: 0,
@@ -307,6 +308,13 @@
     if (state.draftSessionId !== detail.session.id) {
       state.draft = "";
       state.draftSessionId = detail.session.id;
+      state.draftOperationId = null;
+    } else if (
+      state.draftOperationId &&
+      detail.turns.some((turn) => turn.operation_id === state.draftOperationId)
+    ) {
+      state.draft = "";
+      state.draftOperationId = null;
     }
     state.session = detail.session;
     state.turns = detail.turns;
@@ -491,6 +499,7 @@
     textarea.setAttribute("aria-label", "Message");
     textarea.addEventListener("input", () => {
       state.draft = textarea.value;
+      state.draftOperationId = null;
       refreshComposerState();
       scheduleEstimate();
     });
@@ -976,6 +985,9 @@
       failureMessage: "",
       renderFrame: null,
     };
+    if (action === "send") {
+      state.draftOperationId = operation.id;
+    }
     state.operation = operation;
     renderSessionPreservingScroll();
     try {
@@ -1003,6 +1015,7 @@
       if (action === "send" && !operation.accepted) {
         state.draft = operation.userText;
         state.draftSessionId = operation.sessionId;
+        state.draftOperationId = operation.id;
       }
       if (error.name !== "AbortError") failure = error;
     } finally {
@@ -1073,6 +1086,7 @@
       if (operation.action === "send") {
         state.draft = "";
         state.draftSessionId = operation.sessionId;
+        state.draftOperationId = null;
         const textarea = document.getElementById("chatComposer");
         if (textarea) textarea.value = "";
       }

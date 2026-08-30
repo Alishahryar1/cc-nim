@@ -85,6 +85,7 @@ class ChatStorePort(Protocol):
         expected_revision: int,
         turn_id: str,
         generation_id: str,
+        operation_id: str,
         user_text: str,
         requested_model: str,
         reasoning: ChatReasoning,

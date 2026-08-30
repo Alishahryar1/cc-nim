@@ -262,18 +262,17 @@ def admin_base_url(
         get_settings(),
         runtime_factory=lambda snapshot: ProviderRuntime(snapshot, dict(providers)),
     )
-    chat = ChatService(
-        manager,
-        SQLiteChatStore(
-            config_dir / "chat" / "chat.db",
-            config_dir / "chat" / "chat.lock",
-        ),
+    chat_store = SQLiteChatStore(
+        config_dir / "chat" / "chat.db",
+        config_dir / "chat" / "chat.lock",
     )
+    chat = ChatService(manager, chat_store)
     original_estimate = chat.estimate
     original_get_detail = chat.get_detail
     original_get_turn_page = chat.get_turn_page
     original_list_sessions = chat.list_sessions
     original_update_session = chat.update_session
+    original_begin_send = chat_store.begin_send
     delayed_estimate_seen = False
 
     async def estimate_with_delayed_first_result(
@@ -360,6 +359,14 @@ def admin_base_url(
         return result
 
     monkeypatch.setattr(chat, "update_session", update_session_with_delayed_result)
+
+    async def begin_send_with_delayed_ack(*args, **kwargs):
+        result = await original_begin_send(*args, **kwargs)
+        if kwargs.get("user_text") == "[delay-send-ack] keep one draft":
+            await asyncio.sleep(0.75)
+        return result
+
+    monkeypatch.setattr(chat_store, "begin_send", begin_send_with_delayed_ack)
     runtime = ApplicationRuntime(manager, transcriber=None, chat_service=chat)
     app = RuntimeASGIApp(
         create_app(

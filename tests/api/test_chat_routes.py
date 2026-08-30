@@ -82,6 +82,7 @@ class StubChat:
         self.turn = ChatTurn(
             id="turn",
             session_id=SESSION_ID,
+            operation_id="operation",
             sequence=1,
             user_text="hello",
             created_at=1,
@@ -311,6 +312,7 @@ def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
     assert "<strong>safe</strong>" in segment["html"]
     assert "<script>" not in segment["html"]
     assert detail["turns"][0]["generation"]["actual_model"] == ("open_router/fallback")
+    assert detail["turns"][0]["operation_id"] == "operation"
     assert detail["active_operation"] is True
 
 

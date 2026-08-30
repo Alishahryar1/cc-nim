@@ -251,6 +251,34 @@ def test_rejected_send_preserves_draft_after_stale_revision(
     expect(page.locator("#chatNotice")).to_contain_text("changed in another tab")
 
 
+def test_committed_send_does_not_restore_draft_when_stream_ack_is_lost(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    session_id = page.url.rsplit("/", 1)[-1]
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("[delay-send-ack] keep one draft")
+    page.get_by_role("button", name="Send").click()
+
+    turn_url = f"{admin_base_url}/admin/api/chat/sessions/{session_id}"
+    for _attempt in range(50):
+        detail = page.request.get(turn_url).json()
+        if detail["turns"]:
+            break
+        page.wait_for_timeout(20)
+    else:
+        raise AssertionError("The delayed send did not commit its turn.")
+
+    page.get_by_role("button", name="Stop").click()
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+
+    expect(page.get_by_role("textbox", name="Message", exact=True)).to_have_value("")
+    expect(
+        page.get_by_text("[delay-send-ack] keep one draft", exact=True)
+    ).to_be_visible()
+
+
 def test_chat_stop_then_retry_uses_one_operation_owner(
     page: Page,
     admin_base_url: str,

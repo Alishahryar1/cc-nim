@@ -92,6 +92,7 @@ def _transcript(
             ChatTurn(
                 id="turn",
                 session_id=session.id,
+                operation_id="operation",
                 sequence=1,
                 user_text="question",
                 created_at=1,

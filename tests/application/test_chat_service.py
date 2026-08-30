@@ -405,6 +405,71 @@ async def test_regeneration_retries_an_ambiguous_terminal_commit(
 
 
 @pytest.mark.asyncio
+async def test_stopped_regeneration_retries_an_ambiguous_discard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        initial = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="14e14878-842d-425a-952c-4e9f105760c0",
+            text="keep the original answer",
+        )
+        assert (await _drain(initial))[-1] == "turn.completed"
+        before = await store.get_transcript(session.id)
+        original_generation = before.turns[0].generation
+
+        discard_attempts = 0
+        segment_writes = 0
+        original_discard_generation = store.discard_generation
+        original_replace_segments = store.replace_generation_segments
+
+        async def ambiguous_discard(*args, **kwargs):
+            nonlocal discard_attempts
+            discard_attempts += 1
+            await original_discard_generation(*args, **kwargs)
+            if discard_attempts == 1:
+                raise ChatUnavailableError("Chat commit result was unavailable.")
+
+        async def observed_replace_segments(*args, **kwargs):
+            nonlocal segment_writes
+            segment_writes += 1
+            return await original_replace_segments(*args, **kwargs)
+
+        monkeypatch.setattr(store, "discard_generation", ambiguous_discard)
+        monkeypatch.setattr(
+            store, "replace_generation_segments", observed_replace_segments
+        )
+        provider.started.clear()
+        provider.block_after_delta = True
+        replacement = await service.regenerate(
+            session.id,
+            expected_revision=before.session.revision,
+            operation_id="19cbb991-38ff-4cd2-a20e-f94783f78003",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        writes_before_stop = segment_writes
+
+        assert await service.stop(
+            session.id,
+            operation_id="19cbb991-38ff-4cd2-a20e-f94783f78003",
+        )
+        assert (await _drain(replacement))[-1] == "turn.stopped"
+
+        after = await store.get_transcript(session.id)
+        assert discard_attempts == 2
+        assert segment_writes == writes_before_stop
+        assert after.turns[0].generation == original_generation
+        assert service.availability()[0] is True
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_closing_initiating_stream_cancels_and_persists_partial_answer(
     tmp_path: Path,
 ):
@@ -1202,6 +1267,57 @@ async def test_stop_during_compaction_commit_waits_and_reports_completion(
         if blocker is not None:
             blocker.rollback()
             blocker.close()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_compaction_retries_an_ambiguous_commit_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        for operation_id, text in (
+            ("110ce497-5d5f-4659-b2c7-7ae4bf362900", "first"),
+            ("64de0c33-c956-4ac2-b172-9f9fc5caf13b", "second"),
+        ):
+            stream = await service.send(
+                session.id,
+                expected_revision=session.revision,
+                operation_id=operation_id,
+                text=text,
+            )
+            assert (await _drain(stream))[-1] == "turn.completed"
+            session = await service.get_session(session.id)
+
+        revision_before_compaction = session.revision
+        attempts = 0
+        original_upsert_compaction = store.upsert_compaction
+
+        async def ambiguous_upsert_compaction(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            result = await original_upsert_compaction(*args, **kwargs)
+            if attempts == 1:
+                raise ChatUnavailableError("Chat commit result was unavailable.")
+            return result
+
+        monkeypatch.setattr(store, "upsert_compaction", ambiguous_upsert_compaction)
+        compact = await service.compact(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="861cba8a-fca4-47eb-84cb-de1a7059714c",
+        )
+
+        assert (await _drain(compact))[-1] == "compaction.completed"
+        transcript = await store.get_transcript(session.id)
+        assert attempts == 2
+        assert transcript.compaction is not None
+        assert transcript.session.revision == revision_before_compaction + 1
+        assert service.availability()[0] is True
+    finally:
         await service.close()
 
 

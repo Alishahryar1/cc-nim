@@ -343,6 +343,7 @@ class SQLiteChatStore:
         expected_revision: int,
         turn_id: str,
         generation_id: str,
+        operation_id: str,
         user_text: str,
         requested_model: str,
         reasoning: ChatReasoning,
@@ -372,10 +373,11 @@ class SQLiteChatStore:
                 title = _title_from_text(user_text)
             connection.execute(
                 """
-                INSERT INTO chat_turns (id, session_id, sequence, user_text, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO chat_turns (
+                    id, session_id, operation_id, sequence, user_text, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (turn_id, session_id, sequence, user_text, now),
+                (turn_id, session_id, operation_id, sequence, user_text, now),
             )
             connection.execute(
                 """
@@ -634,13 +636,20 @@ class SQLiteChatStore:
     async def discard_generation(self, generation_id: str) -> None:
         def operation(connection: sqlite3.Connection) -> None:
             connection.execute("BEGIN IMMEDIATE")
-            cursor = connection.execute(
-                "DELETE FROM chat_generations WHERE id = ? AND visible = 0",
+            row = connection.execute(
+                "SELECT visible FROM chat_generations WHERE id = ?",
                 (generation_id,),
-            )
-            if cursor.rowcount != 1:
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                return
+            if _row_int(row, "visible") != 0:
                 connection.rollback()
                 raise ChatConflictError("Visible answers cannot be discarded.")
+            connection.execute(
+                "DELETE FROM chat_generations WHERE id = ?",
+                (generation_id,),
+            )
             connection.commit()
 
         await self._run(operation)
@@ -722,6 +731,16 @@ class SQLiteChatStore:
         def operation(connection: sqlite3.Connection) -> ChatCompaction:
             connection.execute("BEGIN IMMEDIATE")
             self._get_session(connection, session_id)
+            current = self._get_compaction(connection, session_id)
+            if current is not None and (
+                current.covered_through_sequence == covered_through_sequence
+                and current.summary == summary
+                and current.estimated_tokens == estimated_tokens
+                and current.requested_model == requested_model
+                and current.actual_model == actual_model
+            ):
+                connection.rollback()
+                return current
             now = _now_ms()
             connection.execute(
                 """
@@ -754,10 +773,11 @@ class SQLiteChatStore:
                 """,
                 (now, session_id),
             )
-            connection.commit()
             compaction = self._get_compaction(connection, session_id)
             if compaction is None:
+                connection.rollback()
                 raise ChatUnavailableError("Could not persist chat compaction.")
+            connection.commit()
             return compaction
 
         return await self._run(operation)
@@ -910,6 +930,7 @@ class SQLiteChatStore:
         return ChatTurn(
             id=_row_str(row, "id"),
             session_id=_row_str(row, "session_id"),
+            operation_id=_row_str(row, "operation_id"),
             sequence=_row_int(row, "sequence"),
             user_text=_row_str(row, "user_text"),
             created_at=_row_int(row, "created_at"),
@@ -1106,6 +1127,7 @@ CREATE INDEX IF NOT EXISTS chat_sessions_updated_idx
 CREATE TABLE IF NOT EXISTS chat_turns (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    operation_id TEXT NOT NULL,
     sequence INTEGER NOT NULL CHECK (sequence > 0),
     user_text TEXT NOT NULL,
     created_at INTEGER NOT NULL,

@@ -442,6 +442,7 @@ def _turn_payload(turn: ChatTurn) -> JsonObject:
     return {
         "id": turn.id,
         "session_id": turn.session_id,
+        "operation_id": turn.operation_id,
         "sequence": turn.sequence,
         "user_text": turn.user_text,
         "created_at": turn.created_at,

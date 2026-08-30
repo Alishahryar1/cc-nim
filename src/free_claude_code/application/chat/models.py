@@ -112,6 +112,7 @@ class ChatGeneration:
 class ChatTurn:
     id: str
     session_id: str
+    operation_id: str
     sequence: int
     user_text: str
     created_at: int
