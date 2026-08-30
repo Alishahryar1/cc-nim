@@ -473,7 +473,7 @@
     const wrapper = node("div", "chat-composer");
     const textarea = node("textarea");
     textarea.id = "chatComposer";
-    textarea.rows = 3;
+    textarea.rows = 2;
     textarea.placeholder = "Message this model";
     textarea.value = state.draft;
     textarea.setAttribute("aria-label", "Message");
@@ -501,6 +501,13 @@
     actions.append(status, send, stop);
     wrapper.append(textarea, actions);
     return wrapper;
+  }
+
+  function resizeComposer(textarea) {
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+    textarea.style.overflowY =
+      textarea.scrollHeight > textarea.clientHeight ? "auto" : "hidden";
   }
 
   function renderTranscript() {
@@ -907,6 +914,7 @@
     const compact = document.getElementById("chatCompact");
     const status = document.getElementById("chatComposerStatus");
     if (!textarea || !send || !stop || !status) return;
+    resizeComposer(textarea);
     const blocked = sendBlockReason();
     const latest = state.turns[state.turns.length - 1];
     const busy = Boolean(
