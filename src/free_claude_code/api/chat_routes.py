@@ -6,7 +6,6 @@ import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from free_claude_code.application.chat import (
@@ -31,6 +30,7 @@ from .admin_security import require_loopback_admin
 from .chat_markdown import render_chat_markdown
 from .dependencies import get_services
 from .ports import ApiServices
+from .response_streams import ManagedStreamingResponse
 
 router = APIRouter()
 
@@ -325,8 +325,8 @@ def _chat(services: ApiServices) -> ChatApplicationPort:
     return services.chat
 
 
-def _stream_response(stream: ChatOperationStream) -> StreamingResponse:
-    return StreamingResponse(
+def _stream_response(stream: ChatOperationStream) -> ManagedStreamingResponse:
+    response = ManagedStreamingResponse(
         _stream_events(stream),
         media_type="text/event-stream",
         headers={
@@ -336,6 +336,8 @@ def _stream_response(stream: ChatOperationStream) -> StreamingResponse:
             "X-Content-Type-Options": "nosniff",
         },
     )
+    response.bind_release(stream.aclose)
+    return response
 
 
 async def _stream_events(stream: ChatOperationStream) -> AsyncIterator[str]:

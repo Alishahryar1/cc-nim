@@ -13,6 +13,9 @@
     libraryCursor: null,
     libraryItems: [],
     libraryQuery: "",
+    libraryRequestVersion: 0,
+    libraryLoadMore: null,
+    olderLoad: null,
     operation: null,
     draft: "",
     draftSessionId: null,
@@ -155,23 +158,47 @@
   async function loadLibrary(reset, version) {
     const list = document.getElementById("chatSessionList");
     if (!list) return;
+    const query = state.libraryQuery;
+    const cursor = reset ? null : state.libraryCursor;
+    if (!reset && (!cursor || state.libraryLoadMore)) return;
+    const requestVersion = reset
+      ? ++state.libraryRequestVersion
+      : state.libraryRequestVersion;
+    const loadMore = reset ? null : {};
     if (reset) {
       state.libraryItems = [];
       state.libraryCursor = null;
+      state.libraryLoadMore = null;
       list.replaceChildren(node("div", "chat-empty", "Loading chats…"));
+    } else {
+      state.libraryLoadMore = loadMore;
+      const more = document.getElementById("chatLoadMore");
+      if (more) more.disabled = true;
     }
-    const params = new URLSearchParams({ query: state.libraryQuery, limit: "25" });
-    if (!reset && state.libraryCursor) params.set("cursor", state.libraryCursor);
+    const params = new URLSearchParams({ query, limit: "25" });
+    if (cursor) params.set("cursor", cursor);
+    const isCurrent = () =>
+      version === state.routeVersion &&
+      requestVersion === state.libraryRequestVersion &&
+      !state.session &&
+      query === state.libraryQuery &&
+      (reset || state.libraryCursor === cursor);
     try {
       const page = await state.api(`/admin/api/chat/sessions?${params}`);
-      if (version !== state.routeVersion || state.session) return;
+      if (!isCurrent()) return;
       state.libraryItems = reset
         ? page.sessions
         : [...state.libraryItems, ...page.sessions];
       state.libraryCursor = page.next_cursor;
       renderLibraryItems();
     } catch (error) {
-      setNotice(error.message, "error");
+      if (isCurrent()) setNotice(error.message, "error");
+    } finally {
+      if (loadMore && state.libraryLoadMore === loadMore) {
+        state.libraryLoadMore = null;
+        const more = document.getElementById("chatLoadMore");
+        if (more) more.disabled = false;
+      }
     }
   }
 
@@ -197,7 +224,10 @@
       list.appendChild(item);
     });
     const more = document.getElementById("chatLoadMore");
-    if (more) more.hidden = !state.libraryCursor;
+    if (more) {
+      more.hidden = !state.libraryCursor;
+      more.disabled = Boolean(state.libraryLoadMore);
+    }
   }
 
   async function createSession() {
@@ -590,18 +620,43 @@
   async function loadOlder() {
     const scroller = document.getElementById("chatTranscript");
     if (!scroller || !state.nextBefore || !state.session) return;
+    const sessionId = state.session.id;
+    const revision = state.session.revision;
+    const before = state.nextBefore;
+    const routeVersion = state.routeVersion;
+    if (
+      state.olderLoad?.sessionId === sessionId &&
+      state.olderLoad.before === before
+    )
+      return;
+    const request = { sessionId, before };
+    state.olderLoad = request;
+    const button = scroller.querySelector(".chat-older");
+    if (button) button.disabled = true;
     const oldHeight = scroller.scrollHeight;
+    const isCurrent = () =>
+      routeVersion === state.routeVersion &&
+      state.session?.id === sessionId &&
+      state.session.revision === revision &&
+      state.nextBefore === before &&
+      document.getElementById("chatTranscript") === scroller;
     try {
       const page = await state.api(
-        `/admin/api/chat/sessions/${state.session.id}/turns?before=${state.nextBefore}&limit=50`,
+        `/admin/api/chat/sessions/${sessionId}/turns?before=${before}&limit=50`,
       );
+      if (!isCurrent()) return;
       state.turns = [...page.turns, ...state.turns];
       state.nextBefore = page.next_before;
       state.compaction = page.compaction;
       renderTranscript();
       scroller.scrollTop += scroller.scrollHeight - oldHeight;
     } catch (error) {
-      setNotice(error.message, "error");
+      if (isCurrent()) setNotice(error.message, "error");
+    } finally {
+      if (state.olderLoad === request) {
+        state.olderLoad = null;
+        if (button?.isConnected) button.disabled = false;
+      }
     }
   }
 

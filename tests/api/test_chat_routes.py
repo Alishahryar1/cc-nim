@@ -1,9 +1,14 @@
+import asyncio
 import base64
 from collections.abc import AsyncIterator
 from dataclasses import replace
+from typing import cast
 
+import pytest
 from fastapi.testclient import TestClient
+from starlette.types import Message, Scope
 
+from free_claude_code.api.chat_routes import _stream_response
 from free_claude_code.application.chat import (
     ChatCompaction,
     ChatContextEstimate,
@@ -362,6 +367,46 @@ def test_chat_stream_serializes_events_and_closes_operation():
     assert "event: turn.completed" in response.text
     assert "id: 1" in response.text
     assert chat.last_stream is not None and chat.last_stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_closes_when_cancelled_before_body_iteration():
+    stream = StubStream()
+    response = _stream_response(stream)
+    response_started = asyncio.Event()
+
+    async def receive() -> Message:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: Message) -> None:
+        assert message["type"] == "http.response.start"
+        response_started.set()
+        await asyncio.Event().wait()
+
+    scope = cast(
+        Scope,
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": f"/admin/api/chat/sessions/{SESSION_ID}/send",
+            "raw_path": b"/admin/api/chat/sessions/send",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 50000),
+            "server": ("127.0.0.1", 8000),
+        },
+    )
+    response_task = asyncio.create_task(response(scope, receive, send))
+    await asyncio.wait_for(response_started.wait(), timeout=1)
+    response_task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await response_task
+    assert stream.closed is True
 
 
 def test_chat_routes_apply_loopback_and_origin_protection():

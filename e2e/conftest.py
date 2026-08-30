@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,8 @@ from free_claude_code.application.chat import (
     ChatContextEstimate,
     ChatReasoning,
     ChatService,
+    ChatSessionDetail,
+    ChatSessionPage,
 )
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config import env_migrations, paths
@@ -240,6 +243,9 @@ def admin_base_url(
         ),
     )
     original_estimate = chat.estimate
+    original_get_detail = chat.get_detail
+    original_get_turn_page = chat.get_turn_page
+    original_list_sessions = chat.list_sessions
     original_update_session = chat.update_session
     delayed_estimate_seen = False
 
@@ -258,6 +264,52 @@ def admin_base_url(
                 await asyncio.sleep(0.75)
 
     monkeypatch.setattr(chat, "estimate", estimate_with_delayed_first_result)
+
+    async def get_detail_with_test_pagination(
+        session_id: str,
+    ) -> ChatSessionDetail:
+        detail = await original_get_detail(session_id)
+        if "[delay-older-page]" in detail.session.title and len(detail.turns) > 1:
+            return replace(
+                detail,
+                turns=detail.turns[-1:],
+                next_before=detail.turns[-1].sequence,
+            )
+        return detail
+
+    async def get_turn_page_with_delayed_result(
+        session_id: str,
+        *,
+        before_sequence: int | None,
+        limit: int,
+    ):
+        result = await original_get_turn_page(
+            session_id,
+            before_sequence=before_sequence,
+            limit=limit,
+        )
+        if before_sequence is not None:
+            session = await chat.get_session(session_id)
+            if "[delay-older-page]" in session.title:
+                await asyncio.sleep(0.75)
+        return result
+
+    async def list_sessions_with_delayed_result(
+        *,
+        query: str,
+        cursor: tuple[int, str] | None,
+        limit: int,
+    ) -> ChatSessionPage:
+        result = await original_list_sessions(query=query, cursor=cursor, limit=limit)
+        if query == "race-old":
+            await asyncio.sleep(0.75)
+        elif cursor is not None:
+            await asyncio.sleep(0.5)
+        return result
+
+    monkeypatch.setattr(chat, "get_detail", get_detail_with_test_pagination)
+    monkeypatch.setattr(chat, "get_turn_page", get_turn_page_with_delayed_result)
+    monkeypatch.setattr(chat, "list_sessions", list_sessions_with_delayed_result)
 
     async def update_session_with_delayed_result(
         session_id: str,

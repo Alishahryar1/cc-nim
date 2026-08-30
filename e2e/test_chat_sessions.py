@@ -28,6 +28,108 @@ def test_chat_navigation_create_and_browser_history(
     expect(page.get_by_role("button", name="New chat", exact=True)).to_be_visible()
 
 
+def test_delayed_older_page_cannot_cross_into_another_chat(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("A OLD LEAK")
+    page.get_by_role("button", name="Send").click()
+    expect(page.locator(".assistant-message")).to_have_count(1)
+    message.fill("A latest")
+    page.get_by_role("button", name="Send").click()
+    expect(page.locator(".assistant-message")).to_have_count(2)
+    title = page.get_by_label("Chat title")
+    title.fill("[delay-older-page] Chat A")
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH"
+            and "/admin/api/chat/sessions/" in response.url
+        )
+    ):
+        title.press("Enter")
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.get_by_role("button", name="New chat", exact=True).click()
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("B only")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_text("B only", exact=True)).to_be_visible()
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.locator(".chat-session-card", has_text="[delay-older-page] Chat A").click()
+    load_older = page.get_by_role("button", name="Load older messages")
+    expect(load_older).to_be_visible()
+    with page.expect_request(lambda request: "/turns?before=" in request.url):
+        load_older.click()
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.locator(".chat-session-card", has_text="B only").click()
+    expect(page.get_by_text("B only", exact=True)).to_be_visible()
+    page.wait_for_timeout(1_000)
+    expect(page.get_by_text("A OLD LEAK", exact=True)).to_have_count(0)
+
+
+def test_out_of_order_library_search_keeps_latest_results(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    page.goto(f"{admin_base_url}/admin")
+    for title in ("race-old result", "race-new result"):
+        session = page.request.post(
+            f"{admin_base_url}/admin/api/chat/sessions",
+            data={},
+        ).json()
+        renamed = page.request.patch(
+            f"{admin_base_url}/admin/api/chat/sessions/{session['id']}",
+            data={"expected_revision": session["revision"], "title": title},
+        )
+        assert renamed.ok
+    page.get_by_role("button", name="Chat Sessions").click()
+    expect(page.locator(".chat-session-card")).to_have_count(2)
+
+    search = page.get_by_role("searchbox", name="Search chats")
+    with page.expect_request(lambda request: "query=race-old" in request.url):
+        search.fill("race-old")
+    with page.expect_response(lambda response: "query=race-new" in response.url):
+        search.fill("race-new")
+
+    expect(
+        page.locator(".chat-session-card", has_text="race-new result")
+    ).to_be_visible()
+    page.wait_for_timeout(1_000)
+    expect(
+        page.locator(".chat-session-card", has_text="race-new result")
+    ).to_be_visible()
+    expect(
+        page.locator(".chat-session-card", has_text="race-old result")
+    ).to_have_count(0)
+
+
+def test_double_load_more_appends_each_session_once(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    page.goto(f"{admin_base_url}/admin")
+    for _index in range(26):
+        created = page.request.post(
+            f"{admin_base_url}/admin/api/chat/sessions",
+            data={},
+        )
+        assert created.ok
+    page.get_by_role("button", name="Chat Sessions").click()
+    expect(page.locator(".chat-session-card")).to_have_count(25)
+    more = page.get_by_role("button", name="Load more")
+    expect(more).to_be_visible()
+
+    more.evaluate("button => { button.click(); button.click(); }")
+
+    expect(page.locator(".chat-session-card")).to_have_count(26, timeout=3_000)
+    page.wait_for_timeout(750)
+    expect(page.locator(".chat-session-card")).to_have_count(26)
+
+
 def test_chat_streams_thinking_and_persists_answer(
     page: Page,
     admin_base_url: str,
