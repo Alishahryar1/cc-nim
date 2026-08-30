@@ -24,6 +24,7 @@
     estimateVersion: 0,
     foreignPollTimer: null,
     serverOperationActive: false,
+    eventChannel: null,
   };
 
   const root = () => document.getElementById("chatRoot");
@@ -53,6 +54,10 @@
   async function initialize(api) {
     if (state.initialized) return;
     state.api = api;
+    if (typeof window.BroadcastChannel === "function") {
+      state.eventChannel = new BroadcastChannel("fcc-chat-sessions");
+      state.eventChannel.addEventListener("message", handleCrossTabEvent);
+    }
     state.initialized = true;
     if (chatIsVisible()) {
       await activate(window.location.pathname);
@@ -614,16 +619,19 @@
   function renderLiveAssistant(operation) {
     const message = node("article", "chat-message assistant-message live-message");
     message.appendChild(node("div", "chat-message-label", "Assistant"));
-    operation.segments.forEach((segment) => {
+    operation.segments.forEach((segment, ordinal) => {
+      const content = node("div", "chat-message-plain");
+      content.dataset.liveSegment = String(ordinal);
+      content.appendChild(document.createTextNode(segment.text));
       if (segment.kind === "thinking") {
         const details = document.createElement("details");
         details.className = "chat-thinking";
         details.open = true;
         details.appendChild(node("summary", "", "Thinking"));
-        details.appendChild(node("div", "chat-message-plain", segment.text));
+        details.appendChild(content);
         message.appendChild(details);
       } else {
-        message.appendChild(node("div", "chat-message-plain", segment.text));
+        message.appendChild(content);
       }
     });
     return message;
@@ -719,11 +727,13 @@
   async function deleteSession() {
     if (!state.session) return;
     if (!window.confirm(`Permanently delete “${state.session.title}”?`)) return;
+    const sessionId = state.session.id;
     try {
-      await state.api(`/admin/api/chat/sessions/${state.session.id}`, {
+      await state.api(`/admin/api/chat/sessions/${sessionId}`, {
         method: "DELETE",
         body: JSON.stringify({ expected_revision: state.session.revision }),
       });
+      state.eventChannel?.postMessage({ type: "session.deleted", sessionId });
       goLibrary();
     } catch (error) {
       setNotice(error.message, "error");
@@ -733,6 +743,20 @@
   function goLibrary() {
     cancelLocalStream();
     window.history.pushState({}, "", "/admin/chat");
+    route(window.location.pathname);
+  }
+
+  function handleCrossTabEvent(event) {
+    const message = event.data;
+    if (
+      !message ||
+      message.type !== "session.deleted" ||
+      typeof message.sessionId !== "string" ||
+      state.session?.id !== message.sessionId
+    )
+      return;
+    cancelLocalStream();
+    window.history.replaceState({}, "", "/admin/chat");
     route(window.location.pathname);
   }
 
@@ -945,6 +969,7 @@
       userText: extra.text || "",
       accepted: false,
       failureMessage: "",
+      renderFrame: null,
     };
     state.operation = operation;
     renderSessionPreservingScroll();
@@ -976,6 +1001,7 @@
       }
       if (error.name !== "AbortError") failure = error;
     } finally {
+      cancelOperationRender(operation);
       if (state.operation === operation) state.operation = null;
       if (state.session?.id === operation.sessionId) await reloadSession();
       if (failure) setNotice(failure.message, "error");
@@ -1036,6 +1062,7 @@
     ) {
       state.session.revision = payload.revision;
     }
+    let liveDelta = false;
     if (event === "turn.started") {
       operation.accepted = true;
       if (operation.action === "send") {
@@ -1045,10 +1072,17 @@
         if (textarea) textarea.value = "";
       }
     } else if (event === "segment.started") {
-      operation.segments[payload.ordinal] = { kind: payload.kind, text: "" };
+      operation.segments[payload.ordinal] = {
+        kind: payload.kind,
+        text: "",
+        pending: [],
+      };
     } else if (event === "segment.delta") {
       const segment = operation.segments[payload.ordinal];
-      if (segment) segment.text += payload.delta;
+      if (segment) {
+        segment.pending.push(payload.delta);
+        liveDelta = true;
+      }
     } else if (event === "compaction.completed") {
       operation.status = "Compacted";
     } else if (event === "compaction.failed") {
@@ -1063,6 +1097,56 @@
       operation.status = "Stopped";
     }
     operation.sequence = sequence;
+    if (liveDelta) {
+      scheduleLiveRender(operation);
+      return;
+    }
+    renderOperationStructure(operation);
+  }
+
+  function commitPendingDeltas(operation) {
+    const updates = [];
+    operation.segments.forEach((segment, ordinal) => {
+      if (!segment?.pending.length) return;
+      const delta = segment.pending.join("");
+      segment.pending.length = 0;
+      segment.text += delta;
+      updates.push({ ordinal, delta });
+    });
+    return updates;
+  }
+
+  function cancelOperationRender(operation) {
+    if (operation.renderFrame === null) return;
+    window.cancelAnimationFrame(operation.renderFrame);
+    operation.renderFrame = null;
+  }
+
+  function scheduleLiveRender(operation) {
+    if (operation.renderFrame !== null) return;
+    operation.renderFrame = window.requestAnimationFrame(() => {
+      operation.renderFrame = null;
+      if (state.operation !== operation) return;
+      const scroller = document.getElementById("chatTranscript");
+      const shouldFollow = scroller ? nearBottom(scroller) : true;
+      commitPendingDeltas(operation).forEach(({ ordinal, delta }) => {
+        const content = scroller?.querySelector(
+          `[data-live-segment="${ordinal}"]`,
+        );
+        const text = content?.firstChild;
+        if (text?.nodeType === Node.TEXT_NODE) {
+          text.appendData(delta);
+        } else if (content) {
+          content.textContent = operation.segments[ordinal].text;
+        }
+      });
+      if (shouldFollow) scrollLatest(false);
+    });
+  }
+
+  function renderOperationStructure(operation) {
+    cancelOperationRender(operation);
+    commitPendingDeltas(operation);
     const scroller = document.getElementById("chatTranscript");
     const shouldFollow = scroller ? nearBottom(scroller) : true;
     renderTranscript();
@@ -1087,6 +1171,7 @@
 
   function cancelLocalStream() {
     if (!state.operation) return;
+    cancelOperationRender(state.operation);
     state.operation.controller.abort();
     state.operation = null;
   }
@@ -1100,6 +1185,12 @@
       applyDetail(detail);
       renderSessionPreservingScroll();
     } catch (error) {
+      if (error.status === 404 && state.session?.id === id) {
+        cancelLocalStream();
+        window.history.replaceState({}, "", "/admin/chat");
+        await route(window.location.pathname);
+        return;
+      }
       setNotice(error.message, "error");
     }
   }

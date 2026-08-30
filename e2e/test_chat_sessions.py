@@ -199,6 +199,38 @@ def test_chat_streams_thinking_and_persists_answer(
     expect(page.get_by_text("hello", exact=True)).to_be_visible()
 
 
+def test_fragmented_stream_does_not_rebuild_transcript_per_delta(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    page.evaluate(
+        """
+        () => {
+          const original = Element.prototype.replaceChildren;
+          window.__chatTranscriptRenderCount = 0;
+          Element.prototype.replaceChildren = function (...children) {
+            if (this.id === "chatTranscript") {
+              window.__chatTranscriptRenderCount += 1;
+            }
+            return original.apply(this, children);
+          };
+        }
+        """
+    )
+
+    page.get_by_role("textbox", name="Message", exact=True).fill("[fragmented]")
+    page.get_by_role("button", name="Send").click()
+
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible(timeout=10_000)
+    expect(page.locator(".assistant-message .chat-markdown").last).to_contain_text(
+        "abcd" * 20
+    )
+    render_count = page.evaluate("window.__chatTranscriptRenderCount")
+    assert isinstance(render_count, int)
+    assert render_count < 100
+
+
 def test_rejected_send_preserves_draft_after_stale_revision(
     page: Page,
     admin_base_url: str,
@@ -254,6 +286,33 @@ def test_chat_opened_in_another_tab_recovers_when_operation_stops(
         page.get_by_role("button", name="Stop").click()
         expect(page.get_by_role("button", name="Retry")).to_be_visible()
         expect(other.get_by_role("button", name="Retry")).to_be_visible(timeout=3_000)
+    finally:
+        other.close()
+
+
+def test_active_chat_deleted_in_another_tab_returns_to_library(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    session_url = page.url
+    page.get_by_role("textbox", name="Message", exact=True).fill("[slow] delete me")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+
+    other = page.context.new_page()
+    try:
+        other.goto(session_url)
+        expect(other.locator("#chatComposerStatus")).to_contain_text(
+            "running in another tab"
+        )
+        other.on("dialog", lambda dialog: dialog.accept())
+        other.get_by_role("button", name="Delete").click()
+        expect(other).to_have_url(f"{admin_base_url}/admin/chat")
+
+        expect(page).to_have_url(f"{admin_base_url}/admin/chat", timeout=3_000)
+        expect(page.get_by_role("button", name="New chat", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Stop")).to_have_count(0)
     finally:
         other.close()
 

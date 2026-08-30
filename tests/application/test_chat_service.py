@@ -394,6 +394,49 @@ async def test_stop_retries_transient_terminal_persistence_failure(
 
 
 @pytest.mark.asyncio
+async def test_stop_retries_transient_terminal_segment_flush(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        operation_id = "242841f6-d826-48b5-9ed7-bf073b17840e"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="preserve the final partial segment",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+
+        attempts = 0
+        original_replace_segments = store.replace_generation_segments
+
+        async def flaky_replace_segments(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ChatUnavailableError("Chat storage is temporarily unavailable.")
+            return await original_replace_segments(*args, **kwargs)
+
+        monkeypatch.setattr(
+            store, "replace_generation_segments", flaky_replace_segments
+        )
+
+        assert await service.stop(session.id, operation_id=operation_id) is True
+        assert (await _drain(stream))[-1] == "turn.stopped"
+
+        generation = (await store.get_transcript(session.id)).turns[-1].generation
+        assert attempts == 2
+        assert generation.status is GenerationStatus.STOPPED
+        assert generation.segments[-1].text == "answer"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_terminal_persistence_failure_disables_chat_instead_of_lying(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

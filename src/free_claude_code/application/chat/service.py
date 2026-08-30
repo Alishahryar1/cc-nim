@@ -842,7 +842,7 @@ class ChatService:
             raise ChatValidationError("The provider stream ended before completing.")
 
         async def commit_completion() -> ChatSession:
-            await self._flush_segments(active)
+            await self._flush_terminal_segments(active)
             if active.regeneration:
                 return await self._store.finish_regeneration(
                     generation_id, stop_reason=stop_reason
@@ -1202,18 +1202,16 @@ class ChatService:
     async def _handle_cancelled(self, active: _ActiveOperation) -> None:
         reason = active.cancellation_reason or _CancellationReason.STOPPED
         if active.generation_id is not None:
-            with contextlib.suppress(Exception):
-                await self._flush_segments(active)
-            if active.regeneration:
-                with contextlib.suppress(Exception):
+            try:
+                await self._flush_terminal_segments(active)
+                if active.regeneration:
                     await self._store.discard_generation(active.generation_id)
-            else:
-                status = (
-                    GenerationStatus.INTERRUPTED
-                    if reason is _CancellationReason.INTERRUPTED
-                    else GenerationStatus.STOPPED
-                )
-                try:
+                else:
+                    status = (
+                        GenerationStatus.INTERRUPTED
+                        if reason is _CancellationReason.INTERRUPTED
+                        else GenerationStatus.STOPPED
+                    )
                     await self._finish_generation(
                         active.generation_id,
                         status=status,
@@ -1221,28 +1219,28 @@ class ChatService:
                         error_code=None,
                         error_message=None,
                     )
-                except Exception as exc:
-                    if reason is _CancellationReason.INTERRUPTED:
-                        logger.warning(
-                            "Chat shutdown could not persist terminal state: "
-                            "session_id={} operation_id={} exc_type={}",
-                            active.session_id,
-                            active.operation_id,
-                            type(exc).__name__,
-                        )
-                        return
-                    self._disable_after_terminal_write_failure(active, exc)
-                    if reason is _CancellationReason.DELETED:
-                        raise
-                    self._emit_terminal_nowait(
-                        active,
-                        "turn.failed",
-                        {
-                            "code": "chat_storage_unavailable",
-                            "message": _STORAGE_RESTART_MESSAGE,
-                        },
+            except Exception as exc:
+                if reason is _CancellationReason.INTERRUPTED:
+                    logger.warning(
+                        "Chat shutdown could not persist terminal state: "
+                        "session_id={} operation_id={} exc_type={}",
+                        active.session_id,
+                        active.operation_id,
+                        type(exc).__name__,
                     )
                     return
+                self._disable_after_terminal_write_failure(active, exc)
+                if reason is _CancellationReason.DELETED:
+                    raise
+                self._emit_terminal_nowait(
+                    active,
+                    "turn.failed",
+                    {
+                        "code": "chat_storage_unavailable",
+                        "message": _STORAGE_RESTART_MESSAGE,
+                    },
+                )
+                return
         if reason is _CancellationReason.DELETED:
             return
         event = (
@@ -1272,13 +1270,11 @@ class ChatService:
                 type(exc).__name__,
             )
         if active.generation_id is not None:
-            with contextlib.suppress(Exception):
-                await self._flush_segments(active)
-            if active.regeneration:
-                with contextlib.suppress(Exception):
+            try:
+                await self._flush_terminal_segments(active)
+                if active.regeneration:
                     await self._store.discard_generation(active.generation_id)
-            else:
-                try:
+                else:
                     await self._finish_generation(
                         active.generation_id,
                         status=GenerationStatus.FAILED,
@@ -1286,19 +1282,31 @@ class ChatService:
                         error_code=code,
                         error_message=message,
                     )
-                except Exception as persistence_exc:
-                    self._disable_after_terminal_write_failure(
-                        active,
-                        persistence_exc,
-                    )
-                    code = "chat_storage_unavailable"
-                    message = _STORAGE_RESTART_MESSAGE
+            except Exception as persistence_exc:
+                self._disable_after_terminal_write_failure(
+                    active,
+                    persistence_exc,
+                )
+                code = "chat_storage_unavailable"
+                message = _STORAGE_RESTART_MESSAGE
         event = (
             "compaction.failed"
             if active.kind is _OperationKind.COMPACT
             else "turn.failed"
         )
         self._emit_terminal_nowait(active, event, {"code": code, "message": message})
+
+    async def _flush_terminal_segments(self, active: _ActiveOperation) -> None:
+        try:
+            await self._flush_segments(active)
+        except ChatUnavailableError:
+            logger.warning(
+                "Retrying transient Chat segment persistence failure: "
+                "session_id={} operation_id={}",
+                active.session_id,
+                active.operation_id,
+            )
+            await self._flush_segments(active)
 
     async def _finish_generation(
         self,

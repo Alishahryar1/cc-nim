@@ -106,6 +106,7 @@ class _ModelListingProvider(BaseProvider):
             or ("[slow-regenerate]" in user_content and attempt > 1)
             or (summary and "[slow-compaction]" in user_content)
         )
+        fragmented = "[fragmented]" in user_content
         self._slow_used = self._slow_used or slow
         text = "Earlier details retained." if summary else "E2E answer"
         frames = [
@@ -140,18 +141,32 @@ class _ModelListingProvider(BaseProvider):
                     "content_block": {"type": "text", "text": ""},
                 },
             ),
-            format_sse_event(
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 1,
-                    "delta": {"type": "text_delta", "text": text},
-                },
-            ),
         ]
+        if not fragmented:
+            frames.append(
+                format_sse_event(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": 1,
+                        "delta": {"type": "text_delta", "text": text},
+                    },
+                )
+            )
         for frame in frames:
             yield frame
             await asyncio.sleep(0)
+        if fragmented:
+            for _index in range(2_000):
+                yield format_sse_event(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": 1,
+                        "delta": {"type": "text_delta", "text": "abcd"},
+                    },
+                )
+                await asyncio.sleep(0)
         if summary and "[fail-compaction]" in user_content:
             yield format_sse_event(
                 "error",

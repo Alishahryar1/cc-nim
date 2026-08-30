@@ -84,7 +84,9 @@ async function api(path, options = {}) {
     } catch {
       // The status remains useful when an upstream proxy returns a non-JSON page.
     }
-    throw new Error(detail || `${response.status} ${response.statusText}`);
+    const error = new Error(detail || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
