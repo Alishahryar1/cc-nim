@@ -118,6 +118,11 @@
 
 .chat-session-shell {
   display: grid;
+  grid-template-areas:
+    "header"
+    "notice"
+    "transcript"
+    "composer";
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   position: relative;
   max-width: 1120px;
@@ -125,6 +130,7 @@
 }
 
 .chat-session-header {
+  grid-area: header;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--line);
 }
@@ -227,6 +233,7 @@
 }
 
 .chat-notice {
+  grid-area: notice;
   margin-top: 12px;
   margin-bottom: 10px;
   border: 1px solid var(--line);
@@ -243,6 +250,7 @@
 }
 
 .chat-transcript {
+  grid-area: transcript;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -367,6 +375,7 @@
 }
 
 .chat-composer {
+  grid-area: composer;
   border-top: 1px solid var(--line);
   background: var(--bg);
   padding: 16px max(12px, 7vw) 20px;
