@@ -13,7 +13,7 @@
 }
 
 .chat-root {
-  padding: 36px 42px 16px;
+  padding: 36px clamp(16px, 3vw, 42px) 16px;
 }
 
 .chat-library-header,
@@ -252,7 +252,7 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 24px clamp(12px, 3vw, 40px) 30px;
+  padding: 24px 0 30px;
   scroll-behavior: auto;
 }
 
@@ -374,7 +374,7 @@
 
 .chat-composer {
   grid-area: composer;
-  margin: 8px clamp(12px, 3vw, 40px) 0;
+  margin: 8px 0 0;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
   background: var(--input);
@@ -554,13 +554,13 @@
   }
 
   .chat-transcript {
-    padding-left: 4px;
-    padding-right: 4px;
+    padding-left: 0;
+    padding-right: 0;
   }
 
   .chat-composer {
-    margin-left: 4px;
-    margin-right: 4px;
+    margin-left: 0;
+    margin-right: 0;
   }
 }
 

@@ -687,9 +687,9 @@ def test_chat_uses_desktop_width_with_one_responsive_gutter(
     )
 
     assert layout["shellShare"] > 0.9
-    assert layout["composerShare"] > 0.84
-    assert layout["leftGutter"] <= 40.5
-    assert layout["rightGutter"] <= 40.5
+    assert layout["composerShare"] > 0.9
+    assert layout["leftGutter"] < 0.5
+    assert layout["rightGutter"] < 0.5
     assert abs(layout["leftGutter"] - layout["rightGutter"]) < 0.5
 
 
