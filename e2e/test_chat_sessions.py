@@ -506,7 +506,7 @@ def test_manual_compaction_failure_remains_visible(
     expect(notice).to_have_text("summary provider failed")
 
 
-def test_terminal_refresh_preserves_reader_scroll_position(
+def test_long_transcript_keeps_composer_visible_and_preserves_reader_scroll_position(
     page: Page,
     admin_base_url: str,
 ) -> None:
@@ -514,16 +514,22 @@ def test_terminal_refresh_preserves_reader_scroll_position(
     long_message = "[slow]\n" + "\n".join(
         f"line {index}: keep reading here" for index in range(100)
     )
-    page.get_by_role("textbox", name="Message", exact=True).fill(long_message)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill(long_message)
     page.get_by_role("button", name="Send").click()
     expect(page.get_by_role("button", name="Stop")).to_be_visible()
     scroller = page.locator("#chatTranscript")
     assert scroller.evaluate("node => node.scrollHeight > node.clientHeight")
+    composer_is_fully_visible = message.evaluate(
+        "node => { const box = node.getBoundingClientRect(); "
+        "return box.top >= 0 && box.bottom <= window.innerHeight; }"
+    )
     scroller.evaluate("node => { node.scrollTop = 0; }")
 
     page.get_by_role("button", name="Stop").click()
 
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
+    assert composer_is_fully_visible
     assert scroller.evaluate("node => node.scrollTop") < 10
 
 
