@@ -100,12 +100,12 @@ async function load() {
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
   byId("configPath").textContent = config.paths.managed;
-  await refreshConnectedAccounts();
-  await hydrateModelOptions();
-  await refreshLocalStatus();
-  if (window.ChatSessions) {
-    await window.ChatSessions.initialize(api);
-  }
+  await Promise.all([
+    refreshConnectedAccounts(),
+    hydrateModelOptions(),
+    refreshLocalStatus(),
+    window.ChatSessions ? window.ChatSessions.initialize(api) : Promise.resolve(),
+  ]);
   updateDirtyState();
   showMessage("");
 }
@@ -993,7 +993,7 @@ async function loadModelOptions(refresh = false) {
     method: refresh ? "POST" : "GET",
   });
   setModelOptions(result.models);
-  if (window.ChatSessions) await window.ChatSessions.refresh();
+  if (refresh && window.ChatSessions) await window.ChatSessions.refresh();
   return result;
 }
 

@@ -63,8 +63,6 @@
     state.initialized = true;
     if (chatIsVisible()) {
       await activate(window.location.pathname);
-    } else {
-      await refresh();
     }
   }
 
