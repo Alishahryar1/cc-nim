@@ -665,6 +665,34 @@ def test_chat_composer_is_one_compact_surface_and_grows_to_six_lines(
     assert reset_height == two_line_height
 
 
+def test_chat_uses_desktop_width_with_one_responsive_gutter(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    page.set_viewport_size({"width": 1_600, "height": 900})
+    _new_chat(page, admin_base_url)
+
+    layout = page.locator(".chat-session-shell").evaluate(
+        """shell => {
+            const main = document.querySelector(".main").getBoundingClientRect();
+            const shellBox = shell.getBoundingClientRect();
+            const composer = shell.querySelector(".chat-composer").getBoundingClientRect();
+            return {
+                shellShare: shellBox.width / main.width,
+                composerShare: composer.width / main.width,
+                leftGutter: composer.left - shellBox.left,
+                rightGutter: shellBox.right - composer.right,
+            };
+        }"""
+    )
+
+    assert layout["shellShare"] > 0.9
+    assert layout["composerShare"] > 0.84
+    assert layout["leftGutter"] <= 40.5
+    assert layout["rightGutter"] <= 40.5
+    assert abs(layout["leftGutter"] - layout["rightGutter"]) < 0.5
+
+
 def test_chat_rename_prompt_and_delete(
     page: Page,
     admin_base_url: str,
