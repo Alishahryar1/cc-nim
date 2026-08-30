@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
 from free_claude_code.config.model_refs import (
@@ -56,9 +57,11 @@ class ChatContextBuilder:
         runtime: RequestRuntimePort,
         *,
         settings: Settings | None = None,
+        model_infos: tuple[ProviderModelInfo, ...] | None = None,
     ) -> None:
         self._runtime = runtime
         self._settings = settings
+        self._model_infos = model_infos
 
     def _current_settings(self) -> Settings:
         return self._settings or self._runtime.current_settings()
@@ -67,9 +70,22 @@ class ChatContextBuilder:
         """Return configured and discovered direct models with rich metadata."""
 
         settings = self._current_settings()
+        snapshot = self._model_infos
+        discovered = (
+            self._runtime.cached_prefixed_model_infos()
+            if snapshot is None
+            else snapshot
+        )
+        snapshot_by_ref = (
+            {info.model_id: info for info in snapshot} if snapshot is not None else None
+        )
         options: dict[str, ChatModelOption] = {}
         for ref in configured_chat_model_refs(settings):
-            info = self._runtime.cached_model_info(ref.provider_id, ref.model_id)
+            info = (
+                self._runtime.cached_model_info(ref.provider_id, ref.model_id)
+                if snapshot_by_ref is None
+                else snapshot_by_ref.get(ref.model_ref)
+            )
             options[ref.model_ref] = ChatModelOption(
                 model_ref=ref.model_ref,
                 provider_id=ref.provider_id,
@@ -86,7 +102,7 @@ class ChatContextBuilder:
                 ),
             )
 
-        for info in self._runtime.cached_prefixed_model_infos():
+        for info in discovered:
             try:
                 provider_id, model_id = split_provider_model_ref(info.model_id)
             except ValueError:

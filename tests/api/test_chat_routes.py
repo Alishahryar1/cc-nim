@@ -434,6 +434,40 @@ def test_chat_routes_apply_loopback_and_origin_protection():
     )
 
 
+@pytest.mark.parametrize(
+    "origin",
+    (
+        "http://127.0.0.1:not-a-port",
+        "https://[::1",
+    ),
+)
+def test_chat_routes_reject_malformed_local_origins(origin: str):
+    response = _client(StubChat()).get(
+        "/admin/api/chat/bootstrap",
+        headers={"Origin": origin},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Admin UI is local-only"}
+
+
+@pytest.mark.parametrize(
+    "origin",
+    (
+        "http://127.0.0.1:8000",
+        "https://localhost",
+        "http://[::1]:8000",
+    ),
+)
+def test_chat_routes_accept_valid_local_origins(origin: str):
+    response = _client(StubChat()).get(
+        "/admin/api/chat/bootstrap",
+        headers={"Origin": origin},
+    )
+
+    assert response.status_code == 200
+
+
 def test_chat_without_composed_service_isolated_as_503():
     response = _client().get("/admin/api/chat/bootstrap")
 

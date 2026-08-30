@@ -91,6 +91,38 @@ async def test_store_rejects_stale_session_revision_atomically(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_user_title_new_chat_is_not_replaced_on_first_turn(tmp_path: Path):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        renamed = await store.update_session(
+            session.id,
+            expected_revision=session.revision,
+            title="New chat",
+            model=None,
+            reasoning=None,
+        )
+
+        await store.begin_send(
+            session.id,
+            expected_revision=renamed.revision,
+            turn_id=_id(),
+            generation_id=_id(),
+            user_text="First question",
+            requested_model=session.model,
+            reasoning=session.reasoning,
+            effective_output_limit=1024,
+        )
+
+        assert (await store.get_session(session.id)).title == "New chat"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_store_persists_generation_segments_and_actual_fallback(tmp_path: Path):
     store = _store(tmp_path)
     await store.start()

@@ -102,9 +102,9 @@ class SQLiteChatStore:
             connection.execute(
                 """
                 INSERT INTO chat_sessions (
-                    id, title, title_search, model, reasoning, revision,
-                    created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                    id, title, title_search, auto_title_pending, model, reasoning,
+                    revision, created_at, updated_at
+                ) VALUES (?, ?, ?, 1, ?, ?, 1, ?, ?)
                 """,
                 (
                     session_id,
@@ -198,13 +198,18 @@ class SQLiteChatStore:
             cursor = connection.execute(
                 """
                 UPDATE chat_sessions
-                SET title = ?, title_search = ?, model = ?, reasoning = ?,
+                SET title = ?, title_search = ?,
+                    auto_title_pending = CASE
+                        WHEN ? IS NULL THEN auto_title_pending ELSE 0
+                    END,
+                    model = ?, reasoning = ?,
                     revision = revision + 1, updated_at = ?
                 WHERE id = ? AND revision = ?
                 """,
                 (
                     next_title,
                     next_title.casefold(),
+                    title,
                     next_model,
                     next_reasoning.value,
                     now,
@@ -328,9 +333,15 @@ class SQLiteChatStore:
             if row is None:
                 raise ChatUnavailableError("Could not allocate the next chat turn.")
             sequence = _row_int(row, "next_sequence")
+            auto_title_row = connection.execute(
+                "SELECT auto_title_pending FROM chat_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            if auto_title_row is None:
+                raise ChatNotFoundError("Chat session not found.")
             now = _now_ms()
             title = session.title
-            if title == _NEW_CHAT_TITLE:
+            if _row_int(auto_title_row, "auto_title_pending") == 1:
                 title = _title_from_text(user_text)
             connection.execute(
                 """
@@ -360,8 +371,8 @@ class SQLiteChatStore:
             cursor = connection.execute(
                 """
                 UPDATE chat_sessions
-                SET title = ?, title_search = ?, revision = revision + 1,
-                    updated_at = ?
+                SET title = ?, title_search = ?, auto_title_pending = 0,
+                    revision = revision + 1, updated_at = ?
                 WHERE id = ? AND revision = ?
                 """,
                 (title, title.casefold(), now, session_id, expected_revision),
@@ -1046,6 +1057,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     title_search TEXT NOT NULL,
+    auto_title_pending INTEGER NOT NULL CHECK (auto_title_pending IN (0, 1)),
     model TEXT NOT NULL,
     reasoning TEXT NOT NULL CHECK (
         reasoning IN ('off', 'low', 'medium', 'high', 'xhigh', 'max')

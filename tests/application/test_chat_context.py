@@ -35,7 +35,10 @@ class FakeRuntime:
         self.configured = configured
         self.discovered = discovered
 
-    async def acquire(self) -> RequestRuntimeLease:
+    async def acquire(
+        self, *, include_model_infos: bool = False
+    ) -> RequestRuntimeLease:
+        del include_model_infos
         raise AssertionError("Context construction must not acquire a runtime lease")
 
     def current_settings(self) -> Settings:
@@ -128,6 +131,35 @@ def test_models_merge_configured_and_discovered_capabilities():
     assert options[1].input_modalities == frozenset(
         {ModelInputModality.TEXT, ModelInputModality.IMAGE}
     )
+
+
+def test_explicit_model_metadata_snapshot_does_not_follow_live_cache():
+    runtime = FakeRuntime(
+        configured=ProviderModelInfo(
+            "model",
+            context_window_tokens=100_000,
+            max_output_tokens=20_000,
+        )
+    )
+    builder = ChatContextBuilder(
+        runtime,
+        model_infos=(
+            ProviderModelInfo(
+                "groq/model",
+                context_window_tokens=32_000,
+                max_output_tokens=4_096,
+            ),
+        ),
+    )
+
+    prepared = builder.prepare(
+        _transcript(reasoning=ChatReasoning.OFF),
+        system_prompt="",
+        draft="hello",
+    )
+
+    assert prepared.model.context_window_tokens == 32_000
+    assert prepared.routed.request.max_tokens == 4_096
 
 
 def test_prepare_builds_ordered_messages_and_authoritative_reasoning():

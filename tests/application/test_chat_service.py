@@ -183,9 +183,15 @@ class BackpressuredCompletionProvider(FakeChatProvider):
 
 
 class FakeLease:
-    def __init__(self, settings: Settings, provider: FakeChatProvider) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        provider: FakeChatProvider,
+        model_infos: tuple[ProviderModelInfo, ...],
+    ) -> None:
         self._settings = settings
         self._provider = provider
+        self.model_infos = model_infos
         self.released = 0
 
     @property
@@ -225,8 +231,23 @@ class FakeRuntime:
         self.context_window_tokens = context_window_tokens
         self.leases: list[FakeLease] = []
 
-    async def acquire(self) -> RequestRuntimeLease:
-        lease = FakeLease(self.settings, self.provider)
+    async def acquire(
+        self, *, include_model_infos: bool = False
+    ) -> RequestRuntimeLease:
+        lease = FakeLease(
+            self.settings,
+            self.provider,
+            (
+                ProviderModelInfo(
+                    "groq/model",
+                    supports_thinking=True,
+                    context_window_tokens=self.context_window_tokens,
+                    max_output_tokens=20_000,
+                ),
+            )
+            if include_model_infos
+            else (),
+        )
         self.leases.append(lease)
         return lease
 

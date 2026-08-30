@@ -21,8 +21,20 @@ def _is_loopback_host(host: str | None) -> bool:
 def _origin_is_local(origin: str | None) -> bool:
     if not origin:
         return True
-    parsed = urlsplit(origin)
-    return _is_loopback_host(parsed.hostname)
+    try:
+        parsed = urlsplit(origin)
+        _ = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.path
+        and not parsed.query
+        and not parsed.fragment
+        and _is_loopback_host(parsed.hostname)
+    )
 
 
 def _authority_is_local(authority: str | None) -> bool:

@@ -453,6 +453,7 @@ class _Lease:
 
     def __init__(self, settings: Settings, provider: ProviderPort) -> None:
         self.settings = settings
+        self.model_infos: tuple[ProviderModelInfo, ...] = ()
         self._provider = provider
         self.release_calls = 0
 
@@ -472,7 +473,10 @@ class _Requests:
     def __init__(self, lease: _Lease) -> None:
         self._lease = lease
 
-    async def acquire(self) -> RequestRuntimeLease:
+    async def acquire(
+        self, *, include_model_infos: bool = False
+    ) -> RequestRuntimeLease:
+        assert include_model_infos is False
         return self._lease
 
     def current_settings(self) -> Settings:

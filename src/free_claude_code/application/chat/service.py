@@ -537,9 +537,13 @@ class ChatService:
         expected_revision: int,
         text: str,
     ) -> None:
-        lease = await self._runtime.acquire()
+        lease = await self._runtime.acquire(include_model_infos=True)
         try:
-            builder = ChatContextBuilder(self._runtime, settings=lease.settings)
+            builder = ChatContextBuilder(
+                self._runtime,
+                settings=lease.settings,
+                model_infos=lease.model_infos,
+            )
             prompt = (await self._store.load_preferences()).system_prompt
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
@@ -595,9 +599,13 @@ class ChatService:
         *,
         expected_revision: int,
     ) -> None:
-        lease = await self._runtime.acquire()
+        lease = await self._runtime.acquire(include_model_infos=True)
         try:
-            builder = ChatContextBuilder(self._runtime, settings=lease.settings)
+            builder = ChatContextBuilder(
+                self._runtime,
+                settings=lease.settings,
+                model_infos=lease.model_infos,
+            )
             prompt = (await self._store.load_preferences()).system_prompt
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
@@ -656,9 +664,13 @@ class ChatService:
         *,
         expected_revision: int,
     ) -> None:
-        lease = await self._runtime.acquire()
+        lease = await self._runtime.acquire(include_model_infos=True)
         try:
-            builder = ChatContextBuilder(self._runtime, settings=lease.settings)
+            builder = ChatContextBuilder(
+                self._runtime,
+                settings=lease.settings,
+                model_infos=lease.model_infos,
+            )
             prompt = (await self._store.load_preferences()).system_prompt
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
@@ -720,9 +732,13 @@ class ChatService:
         *,
         expected_revision: int,
     ) -> None:
-        lease = await self._runtime.acquire()
+        lease = await self._runtime.acquire(include_model_infos=True)
         try:
-            builder = ChatContextBuilder(self._runtime, settings=lease.settings)
+            builder = ChatContextBuilder(
+                self._runtime,
+                settings=lease.settings,
+                model_infos=lease.model_infos,
+            )
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
             prompt = (await self._store.load_preferences()).system_prompt
