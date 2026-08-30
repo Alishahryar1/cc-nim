@@ -250,17 +250,24 @@ class SQLiteChatStore:
 
     async def get_transcript(self, session_id: str) -> ChatTranscript:
         def operation(connection: sqlite3.Connection) -> ChatTranscript:
-            session = self._get_session(connection, session_id)
-            rows = connection.execute(
-                "SELECT * FROM chat_turns WHERE session_id = ? ORDER BY sequence",
-                (session_id,),
-            ).fetchall()
-            turns = tuple(self._turn_from_row(connection, row) for row in rows)
-            return ChatTranscript(
-                session=session,
-                turns=turns,
-                compaction=self._get_compaction(connection, session_id),
-            )
+            connection.execute("BEGIN")
+            try:
+                session = self._get_session(connection, session_id)
+                rows = connection.execute(
+                    "SELECT * FROM chat_turns WHERE session_id = ? ORDER BY sequence",
+                    (session_id,),
+                ).fetchall()
+                turns = tuple(self._turn_from_row(connection, row) for row in rows)
+                transcript = ChatTranscript(
+                    session=session,
+                    turns=turns,
+                    compaction=self._get_compaction(connection, session_id),
+                )
+                connection.commit()
+                return transcript
+            except BaseException:
+                connection.rollback()
+                raise
 
         return await self._run(operation)
 

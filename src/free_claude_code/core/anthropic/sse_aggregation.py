@@ -20,20 +20,22 @@ __all__ = ["aggregate_anthropic_sse_to_message"]
 
 async def aggregate_anthropic_sse_to_message(
     stream: AsyncIterator[str],
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
+) -> tuple[dict[str, Any], dict[str, Any] | None, bool]:
     """Assemble a complete Messages JSON body from an Anthropic SSE stream.
 
-    Returns ``(message_body, error)`` where ``error`` is the payload of a
-    top-level ``event: error`` if one arrived, else ``None``.
+    Returns ``(message_body, error, complete)`` where ``error`` is the payload
+    of a top-level ``event: error`` if one arrived and ``complete`` records
+    whether the stream emitted ``message_stop``.
     """
     decoder = AnthropicSSEDecoder()
     message: dict[str, Any] = {}
     blocks: dict[int, dict[str, Any]] = {}
     parts: dict[int, list[str]] = {}
     error: dict[str, Any] | None = None
+    complete = False
 
     def handle_payload(payload: dict[str, Any]) -> None:
-        nonlocal message, error
+        nonlocal message, error, complete
         ptype = payload.get("type")
         if ptype == "message_start":
             started = payload.get("message")
@@ -87,6 +89,8 @@ async def aggregate_anthropic_sse_to_message(
                 if isinstance(err, dict)
                 else {"type": "api_error", "message": "provider error"}
             )
+        elif ptype == "message_stop":
+            complete = True
 
     def handle_event(event: SSEEvent) -> None:
         handle_payload(event.data)
@@ -128,4 +132,4 @@ async def aggregate_anthropic_sse_to_message(
     usage.setdefault("input_tokens", 0)
     usage.setdefault("output_tokens", 0)
     message["usage"] = usage
-    return message, error
+    return message, error, complete

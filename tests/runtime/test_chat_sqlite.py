@@ -1,4 +1,6 @@
+import asyncio
 import sqlite3
+import threading
 import uuid
 from contextlib import closing
 from pathlib import Path
@@ -141,6 +143,69 @@ async def test_store_persists_generation_segments_and_actual_fallback(tmp_path: 
             "answer",
         ]
     finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_transcript_reads_one_revision_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path)
+    await store.start()
+    release_read = threading.Event()
+    session_read = threading.Event()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        generation_id = _id()
+        await store.begin_send(
+            session.id,
+            expected_revision=session.revision,
+            turn_id=_id(),
+            generation_id=generation_id,
+            user_text="Keep one coherent snapshot",
+            requested_model=session.model,
+            reasoning=session.reasoning,
+            effective_output_limit=4_096,
+        )
+        original_get_session = store._get_session
+        gate_next_read = True
+
+        def gated_get_session(
+            connection: sqlite3.Connection,
+            session_id: str,
+        ):
+            nonlocal gate_next_read
+            current = original_get_session(connection, session_id)
+            if gate_next_read:
+                gate_next_read = False
+                session_read.set()
+                if not release_read.wait(timeout=5):
+                    raise AssertionError(
+                        "Timed out waiting to finish the transcript read."
+                    )
+            return current
+
+        monkeypatch.setattr(store, "_get_session", gated_get_session)
+        transcript_task = asyncio.create_task(store.get_transcript(session.id))
+        assert await asyncio.to_thread(session_read.wait, 1)
+
+        completed = await store.finish_generation(
+            generation_id,
+            status=GenerationStatus.COMPLETED,
+            stop_reason="end_turn",
+            error_code=None,
+            error_message=None,
+        )
+        release_read.set()
+        transcript = await asyncio.wait_for(transcript_task, timeout=1)
+
+        assert completed.revision == transcript.session.revision + 1
+        assert transcript.turns[0].generation.status is GenerationStatus.RUNNING
+    finally:
+        release_read.set()
         await store.close()
 
 

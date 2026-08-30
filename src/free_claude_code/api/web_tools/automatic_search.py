@@ -56,7 +56,7 @@ async def stream_automatic_web_search_response(
             preserved_error=sys.exception(),
         )
 
-    message, stream_error = await aggregate_anthropic_sse_to_message(
+    message, stream_error, _complete = await aggregate_anthropic_sse_to_message(
         _iterate_chunks(chunks)
     )
     if stream_error is not None:

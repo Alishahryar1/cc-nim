@@ -1155,6 +1155,7 @@ async function loadModelOptions(refresh = false) {
     method: refresh ? "POST" : "GET",
   });
   setModelOptions(result.models);
+  if (window.ChatSessions) await window.ChatSessions.refresh();
   return result;
 }
 

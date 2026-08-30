@@ -152,6 +152,18 @@ class _ModelListingProvider(BaseProvider):
         for frame in frames:
             yield frame
             await asyncio.sleep(0)
+        if summary and "[fail-compaction]" in user_content:
+            yield format_sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "summary provider failed",
+                    },
+                },
+            )
+            return
         if slow:
             await asyncio.Event().wait()
         yield format_sse_event(

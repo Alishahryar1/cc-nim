@@ -1,3 +1,4 @@
+import json
 import re
 
 from playwright.sync_api import Page, expect
@@ -26,6 +27,56 @@ def test_chat_navigation_create_and_browser_history(
     expect(page.get_by_role("textbox", name="Message", exact=True)).to_be_visible()
     page.go_forward()
     expect(page.get_by_role("button", name="New chat", exact=True)).to_be_visible()
+
+
+def test_model_refresh_updates_chat_bootstrap(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    bootstrap = page.request.get(f"{admin_base_url}/admin/api/chat/bootstrap").json()
+    target = "open_router/vendor/model-b"
+    stale_bootstrap = {
+        **bootstrap,
+        "models": [
+            option for option in bootstrap["models"] if option["model_ref"] != target
+        ],
+    }
+    refreshed = False
+
+    def serve_bootstrap(route) -> None:
+        payload = bootstrap if refreshed else stale_bootstrap
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(payload),
+        )
+
+    page.route("**/admin/api/chat/bootstrap", serve_bootstrap)
+    page.goto(f"{admin_base_url}/admin")
+    expect(page.locator("#messageArea")).to_have_text("")
+    session = page.request.post(
+        f"{admin_base_url}/admin/api/chat/sessions",
+        data={},
+    ).json()
+    updated = page.request.patch(
+        f"{admin_base_url}/admin/api/chat/sessions/{session['id']}",
+        data={"expected_revision": session["revision"], "model": target},
+    )
+    assert updated.ok
+
+    refreshed = True
+    card = page.locator('[data-provider="open_router"]')
+    card.get_by_role("button", name="Refresh models", exact=True).click()
+    expect(card.locator(".provider-check-result")).to_have_text("3 models available")
+    page.get_by_role("button", name="Chat Sessions").click()
+    page.locator(".chat-session-card").click()
+
+    expect(page.get_by_label("Selected model")).to_have_value(target)
+    expect(page.get_by_label("Selected model").locator("option:checked")).to_have_text(
+        "vendor/model-b"
+    )
+    page.get_by_role("textbox", name="Message", exact=True).fill("still available")
+    expect(page.get_by_role("button", name="Send")).to_be_enabled()
 
 
 def test_delayed_older_page_cannot_cross_into_another_chat(
@@ -264,6 +315,26 @@ def test_manual_compaction_is_visible_and_recovers_in_another_tab(
         expect(other.get_by_label("Thinking")).to_be_enabled(timeout=3_000)
     finally:
         other.close()
+
+
+def test_manual_compaction_failure_remains_visible(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("[fail-compaction] first")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+    message.fill("second")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+
+    page.get_by_role("button", name="Compact now").click()
+
+    notice = page.locator("#chatNotice")
+    expect(notice).to_be_visible()
+    expect(notice).to_have_text("summary provider failed")
 
 
 def test_terminal_refresh_preserves_reader_scroll_position(

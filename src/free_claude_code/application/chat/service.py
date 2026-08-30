@@ -1142,7 +1142,7 @@ class ChatService:
             candidate_selected=selected,
         )
         try:
-            body, error = await aggregate_anthropic_sse_to_message(stream)
+            body, error, complete = await aggregate_anthropic_sse_to_message(stream)
         finally:
             await close_stream_input(
                 stream,
@@ -1158,6 +1158,8 @@ class ChatService:
                 message=message if isinstance(message, str) else "Compaction failed.",
                 retryable=False,
             )
+        if not complete:
+            raise ChatValidationError("The provider stream ended before completing.")
         response = MessagesResponse.model_validate(body)
         summary = "\n".join(
             block.text

@@ -23,8 +23,14 @@ from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
 
 
 class FakeChatProvider:
-    def __init__(self, *, block_after_delta: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        block_after_delta: bool = False,
+        truncate_summary: bool = False,
+    ) -> None:
         self.block_after_delta = block_after_delta
+        self.truncate_summary = truncate_summary
         self.started = asyncio.Event()
         self.closed = 0
         self.requests: list[MessagesRequest] = []
@@ -104,6 +110,8 @@ class FakeChatProvider:
             yield wire[:midpoint]
             yield wire[midpoint:]
             self.started.set()
+            if self.truncate_summary and text == "summary":
+                return
             if self.block_after_delta:
                 await asyncio.Event().wait()
             yield format_sse_event(
@@ -829,6 +837,39 @@ async def test_manual_compaction_keeps_full_transcript_and_adds_checkpoint(
         assert transcript.compaction is not None
         assert transcript.compaction.covered_through_sequence == 1
         assert transcript.compaction.summary == "summary"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_manual_compaction_rejects_incomplete_summary_stream(tmp_path: Path):
+    provider = FakeChatProvider(truncate_summary=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        for operation_id, text in (
+            ("560c7a0f-c074-489b-8b90-e7e031577716", "first"),
+            ("d77427c1-8417-4ab5-a380-94860c778db8", "second"),
+        ):
+            stream = await service.send(
+                session.id,
+                expected_revision=session.revision,
+                operation_id=operation_id,
+                text=text,
+            )
+            await _drain(stream)
+            session = await service.get_session(session.id)
+
+        compact = await service.compact(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="8895d9ae-c896-4af2-be44-d6328e1da736",
+        )
+        events = await _drain(compact)
+
+        transcript = await store.get_transcript(session.id)
+        assert events[-1] == "compaction.failed"
+        assert transcript.compaction is None
     finally:
         await service.close()
 

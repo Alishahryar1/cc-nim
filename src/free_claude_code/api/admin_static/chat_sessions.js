@@ -2,8 +2,8 @@
   const state = {
     api: null,
     initialized: false,
-    active: false,
     bootstrap: null,
+    bootstrapRequestVersion: 0,
     session: null,
     turns: [],
     compaction: null,
@@ -54,26 +54,48 @@
     if (state.initialized) return;
     state.api = api;
     state.initialized = true;
+    if (chatIsVisible()) {
+      await activate(window.location.pathname);
+    } else {
+      await refresh();
+    }
+  }
+
+  async function refresh(path = window.location.pathname) {
+    if (!state.initialized) return;
+    const requestVersion = ++state.bootstrapRequestVersion;
+    const routeVersion = state.routeVersion;
+    let bootstrap;
     try {
-      state.bootstrap = await api("/admin/api/chat/bootstrap");
+      bootstrap = await state.api("/admin/api/chat/bootstrap");
     } catch (error) {
-      state.bootstrap = {
+      bootstrap = {
         available: false,
         message: error.message,
         models: [],
         preferences: null,
       };
     }
-    if (state.active) await route(window.location.pathname);
+    if (requestVersion !== state.bootstrapRequestVersion) return;
+    state.bootstrap = bootstrap;
+    if (!chatIsVisible() || routeVersion !== state.routeVersion) return;
+    await route(path);
   }
 
   async function activate(path) {
-    state.active = true;
     if (!state.initialized) {
       renderLoading();
       return;
     }
-    await route(path);
+    stopForeignOperationPoll();
+    state.routeVersion += 1;
+    renderLoading();
+    await refresh(path);
+  }
+
+  function chatIsVisible() {
+    const view = root()?.closest(".admin-view");
+    return Boolean(view && !view.hidden);
   }
 
   async function route(path) {
@@ -922,6 +944,7 @@
       status: action === "compact" ? "Compacting…" : "Thinking…",
       userText: extra.text || "",
       accepted: false,
+      failureMessage: "",
     };
     state.operation = operation;
     renderSessionPreservingScroll();
@@ -943,6 +966,9 @@
       if (!response.ok) throw await responseError(response);
       if (!response.body) throw new Error("The browser could not open the chat stream.");
       await consumeEvents(response.body, operation);
+      if (operation.failureMessage) {
+        failure = new Error(operation.failureMessage);
+      }
     } catch (error) {
       if (action === "send" && !operation.accepted) {
         state.draft = operation.userText;
@@ -1023,11 +1049,16 @@
     } else if (event === "segment.delta") {
       const segment = operation.segments[payload.ordinal];
       if (segment) segment.text += payload.delta;
-    } else if (event.startsWith("compaction.")) {
-      operation.status =
-        event === "compaction.completed" ? "Compacted" : "Compacting…";
+    } else if (event === "compaction.completed") {
+      operation.status = "Compacted";
+    } else if (event === "compaction.failed") {
+      operation.failureMessage = payload.message || "Compaction failed";
+      operation.status = operation.failureMessage;
+    } else if (event === "compaction.stopped") {
+      operation.status = "Stopped";
     } else if (event === "turn.failed") {
-      operation.status = payload.message || "Generation failed";
+      operation.failureMessage = payload.message || "Generation failed";
+      operation.status = operation.failureMessage;
     } else if (event === "turn.stopped") {
       operation.status = "Stopped";
     }
@@ -1138,5 +1169,5 @@
     return value ? value[0].toUpperCase() + value.slice(1) : value;
   }
 
-  window.ChatSessions = { initialize, activate };
+  window.ChatSessions = { initialize, activate, refresh };
 })();
