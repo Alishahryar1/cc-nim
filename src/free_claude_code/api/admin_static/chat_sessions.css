@@ -379,14 +379,6 @@
   font-size: 12px;
 }
 
-.chat-jump {
-  position: absolute;
-  right: 22px;
-  bottom: 104px;
-  z-index: 2;
-  width: auto;
-}
-
 .chat-older {
   display: block;
   margin: 0 auto 24px;

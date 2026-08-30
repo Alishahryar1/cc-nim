@@ -481,7 +481,6 @@ def test_terminal_refresh_preserves_reader_scroll_position(
 
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
     assert scroller.evaluate("node => node.scrollTop") < 10
-    expect(page.get_by_role("button", name="Jump to latest")).to_be_visible()
 
 
 def test_chat_rename_prompt_and_delete(
