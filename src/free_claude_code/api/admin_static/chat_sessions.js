@@ -529,7 +529,8 @@
     state.turns.forEach((turn, index) => {
       scroller.appendChild(renderUserMessage(turn));
       const replacingLatest =
-        index === state.turns.length - 1 && state.operation?.action === "retry";
+        index === state.turns.length - 1 &&
+        ["retry", "regenerate"].includes(state.operation?.action);
       if (!replacingLatest) scroller.appendChild(renderAssistantMessage(turn));
       if (
         state.compaction &&
@@ -550,7 +551,7 @@
     if (state.compaction && !dividerRendered) {
       scroller.insertBefore(renderCompaction(), scroller.firstChild);
     }
-    if (state.operation?.segments?.length) {
+    if (state.operation && state.operation.action !== "compact") {
       scroller.appendChild(renderLiveAssistant(state.operation));
     }
   }
@@ -619,6 +620,15 @@
   function renderLiveAssistant(operation) {
     const message = node("article", "chat-message assistant-message live-message");
     message.appendChild(node("div", "chat-message-label", "Assistant"));
+    if (!operation.segments.length || operation.status !== "Thinking…") {
+      const status = node(
+        "p",
+        "chat-muted chat-operation-status",
+        operation.status,
+      );
+      status.setAttribute("aria-live", "polite");
+      message.appendChild(status);
+    }
     operation.segments.forEach((segment, ordinal) => {
       const content = node("div", "chat-message-plain");
       content.dataset.liveSegment = String(ordinal);
@@ -927,7 +937,12 @@
     send.hidden = Boolean(state.operation);
     stop.hidden = !state.operation;
     textarea.disabled = Boolean(state.operation);
-    status.textContent = state.operation ? state.operation.status : blocked;
+    status.textContent =
+      state.operation?.action === "compact"
+        ? state.operation.status
+        : state.operation
+          ? ""
+          : blocked;
     document
       .querySelectorAll(
         ".chat-controls button, .chat-controls input, .chat-controls select",
@@ -1168,7 +1183,7 @@
     const operation = state.operation;
     if (!operation) return;
     operation.status = "Stopping…";
-    refreshComposerState();
+    renderOperationStructure(operation);
     try {
       await state.api(`/admin/api/chat/sessions/${operation.sessionId}/stop`, {
         method: "POST",
