@@ -258,7 +258,7 @@
 
 .chat-message {
   max-width: 1120px;
-  margin: 0 auto 22px;
+  margin: 0 0 22px;
   border-radius: var(--radius-lg);
 }
 

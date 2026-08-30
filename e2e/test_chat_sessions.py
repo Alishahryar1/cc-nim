@@ -709,17 +709,27 @@ def test_chat_uses_desktop_width_with_one_responsive_gutter(
 ) -> None:
     page.set_viewport_size({"width": 1_600, "height": 900})
     _new_chat(page, admin_base_url)
+    page.get_by_role("textbox", name="Message", exact=True).fill("hello")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_text("E2E answer")).to_be_visible()
+    page.reload()
+    expect(page.get_by_text("E2E answer")).to_be_visible()
 
     layout = page.locator(".chat-session-shell").evaluate(
         """shell => {
             const main = document.querySelector(".main").getBoundingClientRect();
             const shellBox = shell.getBoundingClientRect();
             const composer = shell.querySelector(".chat-composer").getBoundingClientRect();
+            const transcript = shell.querySelector(".chat-transcript").getBoundingClientRect();
+            const user = shell.querySelector(".user-message").getBoundingClientRect();
+            const assistant = shell.querySelector(".assistant-message").getBoundingClientRect();
             return {
                 shellShare: shellBox.width / main.width,
                 composerShare: composer.width / main.width,
                 leftGutter: composer.left - shellBox.left,
                 rightGutter: shellBox.right - composer.right,
+                userRightGap: transcript.right - user.right,
+                assistantLeftGap: assistant.left - transcript.left,
             };
         }"""
     )
@@ -729,6 +739,8 @@ def test_chat_uses_desktop_width_with_one_responsive_gutter(
     assert layout["leftGutter"] < 0.5
     assert layout["rightGutter"] < 0.5
     assert abs(layout["leftGutter"] - layout["rightGutter"]) < 0.5
+    assert abs(layout["userRightGap"]) < 0.5
+    assert abs(layout["assistantLeftGap"]) < 0.5
 
 
 def test_chat_rename_prompt_and_delete(
