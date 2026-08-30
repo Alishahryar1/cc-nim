@@ -175,7 +175,10 @@ def configure_claude_desktop_config(
     snapshotted under ``fccPriorConfig``; ``unconfigure`` restores that
     snapshot so temporarily enabling FCC never destroys the user's previous
     provider, gateway, credential, or discovery settings. Re-merges keep the
-    original snapshot untouched.
+    original user-state entries untouched, but absorb the user's post-merge
+    edits as the new restore targets and refresh the snapshot's record of
+    the exact block FCC writes so ownership stays correct when the proxy
+    token or gateway URL rotated between configures.
 
     Returns ``False`` without writing when the existing config is malformed
     (invalid JSON or non-object root). Creates a new config when absent.
@@ -215,8 +218,26 @@ def configure_claude_desktop_config(
         for key, value in inference_raw.items():
             inference_dict[str(key)] = value
 
+    backup_raw = data.get(_BACKUP_KEY)
+    backup: dict[str, object] = {}
+    if isinstance(backup_raw, dict):
+        backup = backup_raw
+    # Capture the block the PREVIOUS merge wrote before the record is
+    # refreshed below: re-merge absorption must compare the file's current
+    # values against what the last merge actually wrote, and the refresh is
+    # about to replace that with this merge's block.
+    previous_written_raw = backup.get("managed")
+    # Record the exact block this merge writes. Unconfigure compares the
+    # current values against THIS (not a live re-resolution) to decide what
+    # is still FCC's, so removal stays correct even when the HTTPS front is
+    # gone and live URL resolution falls back to plain HTTP. Refresh it on
+    # every merge: when the proxy token or gateway URL rotated since the
+    # first configure, ownership must be decided against the newest written
+    # block, not the stale first one.
+    if backup.get("managed") != managed:
+        backup["managed"] = dict(managed)
+        changed = True
     if _BACKUP_KEY not in data:
-        backup: dict[str, object] = {}
         # Omit the discovery entry when the key was absent so the restore
         # can tell "was present with this value" from "was not present".
         if had_discovery:
@@ -235,6 +256,49 @@ def configure_claude_desktop_config(
                 backup["inferenceRaw"] = inference_raw
         data[_BACKUP_KEY] = backup
         changed = True
+    elif isinstance(inference_raw, dict):
+        # Re-merge onto an object ``inference``: a managed key whose
+        # current value differs from what the LAST merge wrote is the
+        # user's post-merge edit, and the merge is about to overwrite
+        # it — so it must become the snapshot's restore target, or
+        # unconfigure would restore the stale first-merge value and
+        # silently discard the edit. A key still at its written value
+        # keeps its original target; a key the user already moved to a
+        # new value on an earlier re-merge (target already equals the
+        # current value) also stays. Compare against the block the
+        # previous merge wrote, NOT this merge's fresh resolution — a
+        # rotated proxy token or gateway URL must not read as a user
+        # edit of the old block.
+        last_written = (
+            previous_written_raw if isinstance(previous_written_raw, dict) else {}
+        )
+        prior_inference = backup.get("inference")
+        prior_inference = prior_inference if isinstance(prior_inference, dict) else {}
+        absorbed = dict(prior_inference)
+        for key in managed:
+            current_value = inference_dict.get(key)
+            if current_value == last_written.get(key):
+                continue  # Still FCC's written value; target unchanged.
+            absorbed[key] = current_value
+        if absorbed != prior_inference:
+            backup["inference"] = absorbed
+            changed = True
+        # The discovery flag mirrors that rule: configure always writes
+        # ``True``, so a current value that is neither ``True`` nor the
+        # recorded target is the user's post-merge flip, and it becomes
+        # restore target before this merge overwrites it — even when the
+        # key was ABSENT before the first merge (the original state was
+        # "absent", the user's chosen state is now ``False``). A current
+        # ``True`` is indistinguishable from configure's own write, so the
+        # recorded target stands.
+        recorded_discovery = backup.get("discovery")
+        if (
+            prior_discovery is not True
+            and prior_discovery is not None
+            and prior_discovery != recorded_discovery
+        ):
+            backup["discovery"] = prior_discovery
+            changed = True
     elif not isinstance(inference_raw, dict) and _INFERENCE_KEY in data:
         # A non-object ``inference`` with a snapshot already recorded is
         # the user's wholesale replacement of the FCC block (a scalar or
@@ -271,12 +335,18 @@ def unconfigure_claude_desktop_config(
     """Reverse the merge. Preserves every key outside the FCC-managed surface.
 
     When the first merge recorded a ``fccPriorConfig`` snapshot, removal is
-    lossless: every managed key is deleted, then the snapshot's prior
-    presence and values are restored, and only keys FCC originally added
-    stay gone. A non-object ``inference`` value recorded verbatim by the
-    snapshot is restored exactly. Without a snapshot (a config written
-    before backups existed or by hand) ownership is decided by the
-    recorded auth token: it is settings-derived and stable across front
+    lossless for everything FCC still owns: a managed key or the discovery
+    flag is FCC's only while its current value still matches what the merge
+    wrote, so those are deleted and the snapshot's prior presence and values
+    are restored, while values the user changed after configure are kept as
+    they are (restoring the stale snapshot entry would overwrite the user's
+    post-install choice). A non-object ``inference`` value recorded verbatim
+    by the snapshot is restored exactly, but only while the inference block
+    still exactly matches what the merge wrote — a retained auth token alone
+    does not prove whole-block ownership, since a user can keep the token
+    while replacing other routing fields. Without a snapshot (a
+    config written before backups existed or by hand) ownership is decided by
+    the recorded auth token: it is settings-derived and stable across front
     state, so when it matches the FCC token the whole block is FCC's and
     every managed key is removed — even a gateway URL that no longer
     matches current resolution because the HTTPS front is gone and
@@ -313,6 +383,8 @@ def unconfigure_claude_desktop_config(
         backup = backup_raw
 
     changed = False
+    discovery_fcc_owned = False
+    block_fcc_owned = False
 
     inference_raw = data.get(_INFERENCE_KEY)
     inference_dict: dict[str, object] = {}
@@ -321,21 +393,44 @@ def unconfigure_claude_desktop_config(
             inference_dict[str(key)] = value
 
     if backup is not None:
-        # Snapshot path: the merge recorded what FCC replaced, so the
-        # discovery flag and every managed key are FCC's — remove them
-        # all, then restore the snapshot below.
-        if _DISCOVERY_KEY in data:
+        # Snapshot path: a managed field is FCC's only while its current
+        # value still matches what the merge wrote. A user who changed a
+        # managed key or the discovery flag after configure owns it again,
+        # so preserve the current value and skip the stale snapshot entry —
+        # restoring it would overwrite the user's post-install choice.
+        # Compare against the newest block configure persisted (refreshed
+        # on every merge, not a live re-resolution), so removal stays
+        # correct both when the proxy token or gateway URL rotated between
+        # configures and when the HTTPS front is gone and live URL
+        # resolution falls back to plain HTTP.
+        written_raw = backup.get("managed")
+        written = written_raw if isinstance(written_raw, dict) else managed
+        prior_raw = backup.get("inference")
+        prior = prior_raw if isinstance(prior_raw, dict) else {}
+        # The verbatim ``inferenceRaw`` restore below replaces the whole
+        # block; it is only safe while the block is still EXACTLY what the
+        # merge wrote. A retained auth token alone does not prove that: a
+        # user can legitimately keep the FCC token while replacing the
+        # provider, gateway URL, or any other routing field, and restoring
+        # the stale raw value over such an edited dict would destroy the
+        # user's routing. Require every written field to match and no extra
+        # keys — an added or changed key means the user edited the block,
+        # so it is theirs now and only individually matching fields are
+        # still removed below.
+        block_fcc_owned = isinstance(inference_raw, dict) and inference_dict == written
+
+        discovery_fcc_owned = data.get(_DISCOVERY_KEY) is True
+        if discovery_fcc_owned:
             del data[_DISCOVERY_KEY]
             changed = True
-        for key in managed:
-            if key in inference_dict:
+
+        for key, value in written.items():
+            if key in inference_dict and inference_dict[key] == value:
                 del inference_dict[key]
                 changed = True
-        prior_raw = backup.get("inference")
-        if isinstance(prior_raw, dict):
-            for key, value in prior_raw.items():
-                inference_dict[str(key)] = value
-                changed = True
+                if key in prior:
+                    inference_dict[str(key)] = prior[key]
+                    changed = True
     else:
         # Legacy path (no snapshot): ownership is decided by the recorded
         # auth token. The discovery flag is removed only once FCC
@@ -362,13 +457,16 @@ def unconfigure_claude_desktop_config(
             changed = True
 
     if backup is not None:
-        if "inferenceRaw" in backup:
-            # The original value was not a JSON object; restore it verbatim.
+        if block_fcc_owned and "inferenceRaw" in backup:
+            # The original value was not a JSON object; restore it verbatim,
+            # but only while the block is still FCC's — a user who replaced
+            # the whole block after configure owns it and must be preserved.
             data[_INFERENCE_KEY] = backup["inferenceRaw"]
             changed = True
-        # Restore the original discovery value when the key was present
-        # before the first merge; leave it deleted when it was absent.
-        if "discovery" in backup:
+        # Restore the original discovery value only when the flag was still
+        # FCC's (the user did not change it after configure) and the key was
+        # present before the first merge; leave it deleted when it was absent.
+        if discovery_fcc_owned and "discovery" in backup:
             data[_DISCOVERY_KEY] = backup["discovery"]
             changed = True
         del data[_BACKUP_KEY]
