@@ -332,8 +332,12 @@ def test_chat_stop_then_retry_uses_one_operation_owner(
     page.get_by_role("textbox", name="Message", exact=True).fill("[slow] please answer")
     page.get_by_role("button", name="Send").click()
     expect(page.get_by_text("E2E answer")).to_be_visible()
-    page.get_by_role("button", name="Stop").click()
+    stop = page.get_by_role("button", name="Stop")
+    expect(stop).to_be_visible()
+    send_is_hidden = page.locator("#chatSend").is_hidden()
+    stop.click()
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
+    assert send_is_hidden
 
     page.get_by_role("button", name="Retry").click()
     expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
