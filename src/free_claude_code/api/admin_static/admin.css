@@ -101,7 +101,11 @@
 html {
   scroll-behavior: smooth;
 }
-
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
 body {
   margin: 0;
   min-width: 320px;
@@ -114,7 +118,14 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
-
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  flex-shrink: 0;
+}
 /* Subtle Neutral Backdrop Vignette (Zero color glow) */
 .ambient-glow {
   position: fixed;
@@ -1277,3 +1288,113 @@ textarea:focus-visible,
     text-align: left;
   }
 }
+
+/* ============================================================ */
+/* ===== Task 3: Search Filtering → Vertical List Layout ===== */
+/* ============================================================ */
+
+/* .status-dot is already defined above (near body styles) — no duplicate needed */
+
+/* ===== List View Mode (active during search) ===== */
+.provider-grid.list-view,
+#providerGrid.list-view,
+#connectedAccountGrid.list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+}
+
+/* List-view card: full-width row instead of grid cell */
+.provider-grid.list-view .provider-card,
+#providerGrid.list-view .provider-card,
+#connectedAccountGrid.list-view .provider-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(120px, auto) minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  border-radius: 0;
+  border-left: none;
+  border-right: none;
+  border-top: none;
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Only the last card gets a bottom border */
+.provider-grid.list-view .provider-card:last-child,
+#providerGrid.list-view .provider-card:last-child,
+#connectedAccountGrid.list-view .provider-card:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+/* Align title column (name + dot + pill) */
+.provider-grid.list-view .provider-title,
+#providerGrid.list-view .provider-title,
+#connectedAccountGrid.list-view .provider-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Meta column: config keys */
+.provider-grid.list-view .provider-meta,
+#providerGrid.list-view .provider-meta,
+#connectedAccountGrid.list-view .provider-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Result column */
+.provider-grid.list-view .provider-check-result,
+#providerGrid.list-view .provider-check-result {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Actions column: right-aligned buttons */
+.provider-grid.list-view .provider-actions,
+#providerGrid.list-view .provider-actions,
+#connectedAccountGrid.list-view .provider-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+/* Responsive: stack columns on narrow screens */
+@media (max-width: 720px) {
+  .provider-grid.list-view .provider-card,
+  #providerGrid.list-view .provider-card,
+  #connectedAccountGrid.list-view .provider-card {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 12px 16px;
+  }
+
+  .provider-grid.list-view .provider-actions,
+  #providerGrid.list-view .provider-actions,
+  #connectedAccountGrid.list-view .provider-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* No results message */
+.no-results-message {
+  padding: 24px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+Both files are complete and re

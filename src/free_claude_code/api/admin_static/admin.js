@@ -68,6 +68,36 @@ function statusClass(status) {
   return "neutral";
 }
 
+// ===== Task 3: Status dot helper for provider cards =====
+function getProviderStatusDot(provider) {
+  const status = provider.state || provider.status || "unknown";
+  const cls = statusClass(status);
+  const colors = {
+    ok: "var(--ok)",
+    warn: "var(--warn)",
+    error: "var(--error)",
+    neutral: "var(--neutral)",
+  };
+  const labels = {
+    configured: "Configured",
+    reachable: "Reachable",
+    running: "running",
+    connected: "Connected",
+    missing_key: "Missing key",
+    missing_config: "Missing configuration",
+    missing_url: "Missing URL",
+    unknown: "Unknown status",
+    connecting: "Connecting",
+    offline: "Offline",
+    error: "Error",
+    disconnected: "Not connected",
+  };
+  return {
+    color: colors[cls] || colors.neutral,
+    label: labels[status] || provider.label || "Unknown",
+  };
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
@@ -118,8 +148,9 @@ function updateStats() {
   const configuredProviders = regularProviders.filter(
     (p) => !p.missing_configuration_keys || p.missing_configuration_keys.length === 0,
   );
-  const connectedAccounts = providers.filter((p) => p.kind === "connected_account");
-
+  const connectedAccounts = providers.filter(
+  (p) => p.kind === "connected_account" && p.connected === true
+);
   const statProvCount = byId("statProvidersCount");
   const statProvSub = byId("statProvidersSub");
   if (statProvCount) {
@@ -194,7 +225,9 @@ function initFilterTabs() {
   });
 }
 
-function initGlobalShortcuts() {
+  function initGlobalShortcuts() {
+  if (window.__fccAdminShortcutsInitialized) return;
+  window.__fccAdminShortcutsInitialized = true;
   window.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
@@ -204,15 +237,28 @@ function initGlobalShortcuts() {
   });
 }
 
+// ===== Task 3 (A1): filterViewsBySearch — toggles list-view mode + filters connected accounts =====
 function filterViewsBySearch() {
   const q = state.searchQuery;
   const filter = state.providerFilter || "all";
-  
+
+  // Toggle list-view mode on the provider grid when searching
+  const providerGrid = byId("providerGrid");
+  const connectedAccountGrid = byId("connectedAccountGrid");
+  const isSearching = !!q;
+
+  if (providerGrid) {
+    providerGrid.classList.toggle("list-view", isSearching);
+  }
+  if (connectedAccountGrid) {
+    connectedAccountGrid.classList.toggle("list-view", isSearching);
+  }
+
   // Filter provider cards
   document.querySelectorAll("#providerGrid .provider-card").forEach((card) => {
     const providerId = card.dataset.provider;
     const provider = state.config?.provider_status?.find((p) => p.provider_id === providerId);
-    
+
     let filterMatch = true;
     if (filter === "configured") {
       filterMatch = !provider?.missing_configuration_keys || provider.missing_configuration_keys.length === 0;
@@ -228,12 +274,26 @@ function filterViewsBySearch() {
       searchMatch = text.includes(q);
     }
 
+    // Completely hide non-matching cards
     card.hidden = !(filterMatch && searchMatch);
   });
 
-  // Filter fields
+  // Also filter connected account cards
+  document.querySelectorAll("#connectedAccountGrid .provider-card").forEach((card) => {
+    let searchMatch = true;
+    if (q) {
+      const text = (card.textContent || "").toLowerCase();
+      searchMatch = text.includes(q);
+    }
+    card.hidden = !searchMatch;
+  });
+
+  // Filter fields in settings sections
   document.querySelectorAll(".settings-section").forEach((section) => {
     let hasVisibleField = false;
+    const sectionText = (section.textContent || "").toLowerCase();
+    const sectionMatches = q ? sectionText.includes(q) : true;
+
     section.querySelectorAll(".field").forEach((field) => {
       if (!q) {
         field.style.display = "";
@@ -247,11 +307,48 @@ function filterViewsBySearch() {
     });
 
     if (q) {
-      section.hidden = !hasVisibleField;
+      section.hidden = !hasVisibleField && !sectionMatches;
     } else {
       section.hidden = false;
     }
   });
+
+  // Show a "no results" message when searching and nothing matches
+  showNoResultsMessage(isSearching);
+}
+
+// ===== Task 3 (A1): showNoResultsMessage helper =====
+function showNoResultsMessage(isSearching) {
+  let existing = byId("noResultsMessage");
+  const providerGrid = byId("providerGrid");
+  const connectedAccountGrid = byId("connectedAccountGrid");
+
+  let anyVisible = false;
+  if (providerGrid) {
+    providerGrid.querySelectorAll(".provider-card:not([hidden])").forEach(() => {
+      anyVisible = true;
+    });
+  }
+  if (connectedAccountGrid && !anyVisible) {
+    connectedAccountGrid.querySelectorAll(".provider-card:not([hidden])").forEach(() => {
+      anyVisible = true;
+    });
+  }
+
+  if (isSearching && !anyVisible) {
+    if (!existing) {
+      existing = document.createElement("div");
+      existing.id = "noResultsMessage";
+      existing.className = "no-results-message";
+      existing.textContent = "No matching providers found.";
+      if (providerGrid && providerGrid.parentNode) {
+        providerGrid.parentNode.insertBefore(existing, providerGrid.nextSibling);
+      }
+    }
+    existing.hidden = false;
+  } else if (existing) {
+    existing.hidden = true;
+  }
 }
 
 function renderNav() {
@@ -305,6 +402,7 @@ function setActiveView(viewId, { scroll = false } = {}) {
   }
 }
 
+// ===== Task 3 (A2): renderProviders — now includes status dots =====
 function renderProviders(providerStatus) {
   const grid = byId("providerGrid");
   const connectedGrid = byId("connectedAccountGrid");
@@ -325,6 +423,16 @@ function renderProviders(providerStatus) {
 
     const title = document.createElement("div");
     title.className = "provider-title";
+
+    // Status dot
+    const dotInfo = getProviderStatusDot(provider);
+    const dot = document.createElement("span");
+    dot.className = "status-dot";
+    dot.style.backgroundColor = dotInfo.color;
+    dot.title = dotInfo.label;
+    dot.setAttribute("aria-label", dotInfo.label);
+    title.appendChild(dot);
+
     const name = document.createElement("strong");
     name.textContent = provider.display_name || provider.provider_id;
 
@@ -405,6 +513,7 @@ function navigateToProviderConfiguration(provider, configuring) {
   input.focus({ preventScroll: true });
 }
 
+// ===== Task 3 (A3): renderConnectedAccountCard — now includes status dots =====
 function renderConnectedAccountCard(provider, status = provider) {
   const card = document.createElement("article");
   card.className = "provider-card";
@@ -413,6 +522,16 @@ function renderConnectedAccountCard(provider, status = provider) {
 
   const title = document.createElement("div");
   title.className = "provider-title";
+
+  // Status dot
+  const dotInfo = getProviderStatusDot(status);
+  const dot = document.createElement("span");
+  dot.className = "status-dot";
+  dot.style.backgroundColor = dotInfo.color;
+  dot.title = dotInfo.label;
+  dot.setAttribute("aria-label", dotInfo.label);
+  title.appendChild(dot);
+
   const name = document.createElement("strong");
   name.textContent = provider.display_name || provider.provider_id;
   const pill = document.createElement("span");
@@ -733,23 +852,19 @@ function renderField(field) {
   input.dataset.remove = "false";
   input.dataset.fieldType = field.type;
   input.disabled = field.locked;
+   input.addEventListener("input", updateDirtyState);
+  input.addEventListener("change", updateDirtyState);
   input.addEventListener("input", () => {
-    updateDirtyState();
-    updateStats();
-  });
-  input.addEventListener("change", () => {
-    updateDirtyState();
-    updateStats();
+    input.dataset.remove = "false";
   });
   input.addEventListener("input", () => {
     input.dataset.remove = "false";
   });
-  if (field.type === "optional_model") {
+    if (field.type === "optional_model") {
     input.addEventListener("blur", () => {
       if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
         input.value = "None";
         updateDirtyState();
-        updateStats();
       }
     });
   }
@@ -768,13 +883,12 @@ function renderField(field) {
     removeButton.type = "button";
     removeButton.className = "ghost-button secret-remove";
     removeButton.textContent = "Remove";
-    removeButton.addEventListener("click", () => {
+     removeButton.addEventListener("click", () => {
       const removing = input.dataset.remove !== "true";
       input.dataset.remove = removing ? "true" : "false";
       input.readOnly = removing;
       removeButton.textContent = removing ? "Undo removal" : "Remove";
       updateDirtyState();
-      updateStats();
     });
     wrapper.appendChild(removeButton);
   }
@@ -1093,12 +1207,11 @@ class ModelListEditor {
     this.sync();
   }
 
-  sync() {
+    sync() {
     this.input.value = this.values.join(",");
     this.input.dataset.remove = "false";
     this.input.dispatchEvent(new Event("input", { bubbles: true }));
     this.renderRows();
-    updateStats();
   }
 
   renderRows() {

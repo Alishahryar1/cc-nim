@@ -2810,9 +2810,12 @@ Invoke-DownloadedPowerShellInstaller `
     )
 
     assert result.returncode != 0
+    # Windows PowerShell v5 word-wraps long error messages with newlines.
+    # Normalize whitespace before checking the substring.
+    normalized_stderr = " ".join(result.stderr.split())
     assert (
         "Example installer from 'https://example.test/install.ps1' is not valid PowerShell"
-        in result.stderr
+        in normalized_stderr
     )
     assert "network proxy or filter" in result.stderr
     assert "invalid installer reached execution" not in result.stderr
