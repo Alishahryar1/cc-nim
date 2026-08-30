@@ -22,7 +22,7 @@ from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from free_claude_code.providers.runtime import ProviderRuntime
+from free_claude_code.providers.runtime import ProviderRuntime, discovery
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 from tests.providers.support import (
@@ -47,6 +47,7 @@ def _settings(
     opencode_api_key: str = "",
     zai_api_key: str = "",
     vertex_project_id: str = "",
+    ollama_base_url: str | None = None,
 ) -> Settings:
     return Settings.model_construct(
         model=model,
@@ -63,6 +64,7 @@ def _settings(
         zai_api_key=zai_api_key,
         vertex_project_id=vertex_project_id,
         log_api_error_tracebacks=False,
+        **({"ollama_base_url": ollama_base_url} if ollama_base_url is not None else {}),
     )
 
 
@@ -343,12 +345,14 @@ class FakeProvider(BaseProvider):
         error: BaseException | None = None,
         started: asyncio.Event | None = None,
         peer_started: asyncio.Event | None = None,
+        stall: float | None = None,
     ):
         super().__init__(
             make_provider_config(api_key="test", base_url="https://test.invalid")
         )
         self._model_infos = model_infos
         self._error = error
+        self._stall = stall
         self._started = started
         self._peer_started = peer_started
         self.cleaned = False
@@ -384,6 +388,8 @@ class FakeProvider(BaseProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         await self._before_model_list()
+        if self._stall is not None:
+            await asyncio.sleep(self._stall)
         return self._model_infos
 
     async def stream_messages(
@@ -512,6 +518,14 @@ async def test_runtime_warm_queries_referenced_providers_concurrently() -> None:
     await asyncio.wait_for(runtime.warm_referenced_model_cache(), timeout=1.0)
 
 
+def _offline_local_providers() -> dict[str, BaseProvider]:
+    """Local providers are always configured; this host is running none of them."""
+    return {
+        provider_id: FakeProvider(error=RuntimeError("connection refused"))
+        for provider_id in ("ollama", "lmstudio", "llamacpp")
+    }
+
+
 @pytest.mark.asyncio
 async def test_startup_discovery_queries_each_successful_provider_once() -> None:
     settings = _settings(
@@ -522,7 +536,7 @@ async def test_startup_discovery_queries_each_successful_provider_once() -> None
     router = FakeProvider(_infos("anthropic/claude-sonnet"))
     runtime = _manager(
         settings,
-        {"nvidia_nim": nim, "open_router": router},
+        {**_offline_local_providers(), "nvidia_nim": nim, "open_router": router},
     )
 
     await runtime.warm_referenced_model_cache()
@@ -543,7 +557,7 @@ async def test_startup_discovery_queries_each_successful_provider_once() -> None
 async def test_failed_startup_warm_remains_eligible_for_background_refresh() -> None:
     settings = _settings(nvidia_nim_api_key="nim-key")
     nim = FakeProvider(error=RuntimeError("upstream unavailable"))
-    runtime = _manager(settings, {"nvidia_nim": nim})
+    runtime = _manager(settings, {**_offline_local_providers(), "nvidia_nim": nim})
 
     warm_result = await runtime.warm_referenced_model_cache()
     runtime.start_model_list_refresh()
@@ -557,9 +571,12 @@ async def test_failed_startup_warm_remains_eligible_for_background_refresh() -> 
 
 
 @pytest.mark.asyncio
-async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_referenced_local() -> (
+async def test_runtime_refresh_model_list_cache_discovers_running_local_providers() -> (
     None
 ):
+    # https://github.com/Alishahryar1/free-claude-code/issues/1296
+    # A local provider the customer has not routed to is still queried, so its
+    # models can reach the client model picker before they pick one.
     settings = _settings(
         model="lmstudio/local-qwen",
         open_router_api_key="open-router-key",
@@ -570,6 +587,7 @@ async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_
             "open_router": FakeProvider(_infos("anthropic/claude-sonnet")),
             "lmstudio": FakeProvider(_infos("local-qwen")),
             "ollama": FakeProvider(_infos("llama3.1")),
+            "llamacpp": FakeProvider(error=RuntimeError("connection refused")),
         },
     )
 
@@ -578,8 +596,72 @@ async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_
     assert runtime.cached_model_ids() == {
         "open_router": frozenset({"anthropic/claude-sonnet"}),
         "lmstudio": frozenset({"local-qwen"}),
+        "ollama": frozenset({"llama3.1"}),
     }
-    assert result.refreshed_provider_ids == ("open_router", "lmstudio")
+    assert result.refreshed_provider_ids == ("open_router", "lmstudio", "ollama")
+    # llamacpp is configured by default but is not running: absent, not failed.
+    assert result.failed_provider_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_reports_a_routed_local_failure() -> (
+    None
+):
+    # A local provider the customer routed to is theirs to fix, so it keeps
+    # being reported, unlike one queried only on the chance it is running.
+    settings = _settings(model="ollama/llama3.1")
+    runtime = _manager(settings, _offline_local_providers())
+
+    result = await runtime.refresh_model_list_cache()
+
+    assert result.failed_provider_ids == ("ollama",)
+    assert runtime.cached_model_ids() == {}
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_reports_a_relocated_local_failure() -> (
+    None
+):
+    # Pointing a local provider somewhere other than the shipped default is as
+    # deliberate as routing a model to it, so an unreachable host is reported
+    # even though no configured model names the provider.
+    settings = _settings(ollama_base_url="http://gpu-box:11434")
+    runtime = _manager(settings, _offline_local_providers())
+
+    result = await runtime.refresh_model_list_cache()
+
+    assert result.failed_provider_ids == ("ollama",)
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_bounds_a_relocated_local_endpoint() -> (
+    None
+):
+    # Reporting a configured endpoint's failure and bounding how long it may take
+    # are separate concerns. A local host that hangs must not hold the refresh open
+    # for the provider's full retry backoff just because its failure is reported.
+    settings = _settings(ollama_base_url="http://gpu-box:11434")
+    providers = _offline_local_providers()
+    providers["ollama"] = FakeProvider(stall=30.0)
+    runtime = _manager(settings, providers)
+
+    with patch.object(discovery, "LOCAL_DISCOVERY_TIMEOUT_SECONDS", 0.01):
+        result = await asyncio.wait_for(runtime.refresh_model_list_cache(), 5.0)
+
+    assert result.failed_provider_ids == ("ollama",)
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_stays_quiet_for_default_local_hosts() -> (
+    None
+):
+    # The default base URL is present on every install, so it carries no intent
+    # and an absent daemon must not be reported as a provider failure.
+    settings = _settings()
+    runtime = _manager(settings, _offline_local_providers())
+
+    result = await runtime.refresh_model_list_cache()
+
     assert result.failed_provider_ids == ()
 
 
@@ -593,7 +675,10 @@ async def test_runtime_refresh_model_list_cache_treats_vertex_project_as_configu
     )
     runtime = _manager(
         settings,
-        {"vertex": FakeProvider(_infos("google/gemini-3.5-flash"))},
+        {
+            **_offline_local_providers(),
+            "vertex": FakeProvider(_infos("google/gemini-3.5-flash")),
+        },
     )
 
     result = await runtime.refresh_model_list_cache()
@@ -613,7 +698,10 @@ async def test_runtime_refresh_model_list_cache_keeps_prior_cache_on_failure() -
     )
     runtime = _manager(
         settings,
-        {"nvidia_nim": FakeProvider(error=RuntimeError("upstream down"))},
+        {
+            **_offline_local_providers(),
+            "nvidia_nim": FakeProvider(error=RuntimeError("upstream down")),
+        },
     )
     runtime.cache_model_infos(
         "nvidia_nim",
