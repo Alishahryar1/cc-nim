@@ -8,6 +8,7 @@ from urllib.request import Request
 
 from free_claude_code.cli.local_http import open_local_request
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 from .common import PROXY_PREFLIGHT_TIMEOUT_SECONDS
 
@@ -19,7 +20,10 @@ class ClientModel:
     wire_slug: str
     provider_model_ref: str
     display_name: str
-    allows_reasoning: bool
+    supports_reasoning: bool | None
+    input_modalities: frozenset[ModelInputModality] | None = None
+    context_window_tokens: int | None = None
+    max_output_tokens: int | None = None
 
 
 def client_models_from_response(
@@ -104,7 +108,12 @@ def _catalog_candidates(
                 wire_slug=model_id,
                 provider_model_ref=provider_model_ref,
                 display_name=_nonempty_string(item.get("display_name")) or model_id,
-                allows_reasoning=model_id == provider_model_ref,
+                supports_reasoning=_optional_boolean(item.get("supportsReasoning")),
+                input_modalities=_input_modalities(item.get("inputModalities")),
+                context_window_tokens=_optional_positive_int(item.get("contextWindow")),
+                max_output_tokens=_optional_positive_int(
+                    item.get("maxCompletionTokens")
+                ),
             )
         )
     return candidates
@@ -115,6 +124,26 @@ def _nonempty_string(value: object) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _optional_boolean(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
+def _optional_positive_int(value: object) -> int | None:
+    return value if type(value) is int and value > 0 else None
+
+
+def _input_modalities(value: object) -> frozenset[ModelInputModality] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    try:
+        modalities = frozenset(ModelInputModality(item) for item in value)
+    except TypeError, ValueError:
+        return None
+    if ModelInputModality.TEXT not in modalities:
+        return None
+    return modalities
 
 
 def _provider_model_ref(value: object) -> str | None:

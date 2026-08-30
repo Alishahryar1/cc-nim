@@ -1,13 +1,11 @@
 """Local admin UI routes and APIs."""
 
-import ipaddress
 from collections.abc import Mapping
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -16,7 +14,6 @@ from free_claude_code.application.connected_accounts import (
 )
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
-from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response, load_value_state
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.provider_catalog import (
@@ -24,13 +21,19 @@ from free_claude_code.config.provider_catalog import (
     ProviderAuthKind,
 )
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.version import package_version
 
+from .admin_security import require_loopback_admin
 from .dependencies import get_services
 from .ports import ApiServices
 
 router = APIRouter()
 
 STATIC_DIR = Path(__file__).resolve().parent / "admin_static"
+_ADMIN_ASSET_VERSION_PLACEHOLDER = "__FCC_VERSION__"
+_ADMIN_ASSET_FILENAMES = frozenset(
+    {"admin.css", "admin.js", "chat_sessions.css", "chat_sessions.js"}
+)
 LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
@@ -53,54 +56,34 @@ class ConnectedAccountLoginPayload(BaseModel):
     mode: ConnectedAccountLoginMode = ConnectedAccountLoginMode.BROWSER
 
 
-def _is_loopback_host(host: str | None) -> bool:
-    if host is None:
-        return False
-    normalized = host.strip().strip("[]").lower()
-    if normalized == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(normalized).is_loopback
-    except ValueError:
-        return False
-
-
-def _origin_is_local(origin: str | None) -> bool:
-    if not origin:
-        return True
-    parsed = urlsplit(origin)
-    return _is_loopback_host(parsed.hostname)
-
-
-def require_loopback_admin(request: Request) -> None:
-    """Allow admin access only from the local machine."""
-
-    client_host = request.client.host if request.client else None
-    if not _is_loopback_host(client_host):
-        raise HTTPException(status_code=403, detail="Admin UI is local-only")
-
-    origin = request.headers.get("origin")
-    if not _origin_is_local(origin):
-        raise HTTPException(status_code=403, detail="Admin UI is local-only")
-
-
-def _asset_response(filename: str) -> FileResponse:
+def _asset_path(filename: str) -> Path:
     path = STATIC_DIR / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Admin asset not found")
-    return FileResponse(path)
+    return path
+
+
+def _asset_response(filename: str) -> FileResponse:
+    return FileResponse(_asset_path(filename))
+
+
+def admin_page_response() -> HTMLResponse:
+    template = _asset_path("index.html").read_text(encoding="utf-8")
+    return HTMLResponse(
+        template.replace(_ADMIN_ASSET_VERSION_PLACEHOLDER, package_version())
+    )
 
 
 @router.get("/admin", include_in_schema=False)
-async def admin_page(request: Request):
+def admin_page(request: Request):
     require_loopback_admin(request)
-    return _asset_response("index.html")
+    return admin_page_response()
 
 
-@router.get("/admin/assets/{filename}", include_in_schema=False)
-async def admin_asset(filename: str, request: Request):
+@router.get("/admin/assets/{version}/{filename}", include_in_schema=False)
+async def admin_asset(version: str, filename: str, request: Request):
     require_loopback_admin(request)
-    if filename not in {"admin.css", "admin.js"}:
+    if version != package_version() or filename not in _ADMIN_ASSET_FILENAMES:
         raise HTTPException(status_code=404, detail="Admin asset not found")
     return _asset_response(filename)
 
@@ -109,12 +92,6 @@ async def admin_asset(filename: str, request: Request):
 async def get_admin_config(request: Request):
     require_loopback_admin(request)
     return load_config_response()
-
-
-@router.post("/admin/api/config/validate")
-async def validate_admin_config(payload: AdminConfigPayload, request: Request):
-    require_loopback_admin(request)
-    return validate_updates(_filtered_values(payload.values))
 
 
 @router.post("/admin/api/config/apply")

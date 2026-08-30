@@ -15,7 +15,7 @@ def _refresh_openrouter_models(page: Page) -> None:
     page.get_by_role("button", name="Providers", exact=True).click()
     card = page.locator('[data-provider="open_router"]')
     card.get_by_role("button", name="Refresh models", exact=True).click()
-    expect(card.locator(".provider-check-result")).to_have_text("2 models available")
+    expect(card.locator(".provider-check-result")).to_have_text("3 models available")
     page.get_by_role("button", name="Model Config", exact=True).click()
 
 

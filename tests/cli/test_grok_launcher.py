@@ -28,13 +28,13 @@ def _models() -> tuple[ClientModel, ...]:
             wire_slug="nvidia_nim/vendor/model",
             provider_model_ref="nvidia_nim/vendor/model",
             display_name="Nested model",
-            allows_reasoning=True,
+            supports_reasoning=True,
         ),
         ClientModel(
             wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
             provider_model_ref="open_router/plain-model",
             display_name="Plain model",
-            allows_reasoning=False,
+            supports_reasoning=False,
         ),
     )
 
@@ -178,8 +178,9 @@ def test_route_bypass_flags_are_rejected_before_version_probe(argv: list[str]) -
             (1, 0, 5),
         ),
         ('{"channel":"stable","currentVersion":"1.2.3+build.1"}', 0, (1, 2, 3)),
+        ('{"currentVersion":"1.0.5","channel":"unknown"}', 0, (1, 0, 5)),
+        ('{"currentVersion":"1.2.3","channel":"alpha"}', 0, (1, 2, 3)),
         ('{"currentVersion":"1.2.3-alpha.1","channel":"stable"}', 0, None),
-        ('{"currentVersion":"1.2.3","channel":"preview"}', 0, None),
         ('{"currentVersion":123,"channel":"stable"}', 0, None),
         ('{"currentVersion":"1.2.3","channel":"stable"}', 1, None),
         ('{"currentVersion":"1.2.3\t(build)","channel":"stable"}', 0, None),

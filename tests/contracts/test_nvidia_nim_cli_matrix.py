@@ -145,8 +145,8 @@ def test_openrouter_free_cli_matrix_report_shape_and_redaction(
         duration_s=1.25,
     )
     outcome = make_outcome(
-        model="openai/gpt-oss-120b:free",
-        full_model="open_router/openai/gpt-oss-120b:free",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        full_model="open_router/nvidia/nemotron-3-super-120b-a12b:free",
         source="openrouter_free_cli_default",
         feature="basic_text",
         marker="FCC_OPENROUTER_FREE_BASIC",
@@ -165,7 +165,7 @@ def test_openrouter_free_cli_matrix_report_shape_and_redaction(
 
     assert path.name.startswith("openrouter-free-cli-matrix-test-worker-")
     assert payload["target"] == "openrouter_free_cli"
-    assert payload["models"] == ["open_router/openai/gpt-oss-120b:free"]
+    assert payload["models"] == ["open_router/nvidia/nemotron-3-super-120b-a12b:free"]
     saved = payload["outcomes"][0]
     assert saved["feature"] == "basic_text"
     assert saved["classification"] == "passed"
@@ -255,7 +255,9 @@ def test_nvidia_nim_cli_raw_payload_log_counts_as_proxy_request(
     assert regression_failures([outcome]) == []
 
 
-def test_cli_matrix_missing_agent_catalog_is_harness_bug(tmp_path: Path) -> None:
+def test_cli_matrix_missing_agent_catalog_without_agent_use_is_model_limitation(
+    tmp_path: Path,
+) -> None:
     run = ClaudeCliRun(
         command=("claude", "-p", "x"),
         returncode=0,
@@ -264,14 +266,14 @@ def test_cli_matrix_missing_agent_catalog_is_harness_bug(tmp_path: Path) -> None
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="openai/gpt-oss-120b:free",
-        full_model="open_router/openai/gpt-oss-120b:free",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        full_model="open_router/nvidia/nemotron-3-super-120b-a12b:free",
         source="openrouter_free_cli_default",
         feature="subagent_task",
         marker="FCC_OPENROUTER_FREE_TASK",
         run=run,
         log_delta=(
-            "API_REQUEST: request_id=req_1 model=openai/gpt-oss-120b:free "
+            "API_REQUEST: request_id=req_1 model=nvidia/nemotron-3-super-120b-a12b:free "
             "messages=1\n"
             "FULL_PAYLOAD [req_1]: {'messages': [], 'tools': [{'name': 'Read'}], "
             "'tool_choice': None}"
@@ -280,7 +282,7 @@ def test_cli_matrix_missing_agent_catalog_is_harness_bug(tmp_path: Path) -> None
         requires_agent=True,
     )
 
-    assert outcome.classification == "harness_bug"
+    assert outcome.classification == "model_feature_failure"
     assert outcome.token_evidence["agent_catalog_present"] is False
 
 
@@ -298,14 +300,14 @@ def test_cli_matrix_agent_catalog_without_agent_use_is_model_feature_failure(
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="openai/gpt-oss-120b:free",
-        full_model="open_router/openai/gpt-oss-120b:free",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        full_model="open_router/nvidia/nemotron-3-super-120b-a12b:free",
         source="openrouter_free_cli_default",
         feature="subagent_task",
         marker=marker,
         run=run,
         log_delta=(
-            "API_REQUEST: request_id=req_1 model=openai/gpt-oss-120b:free "
+            "API_REQUEST: request_id=req_1 model=nvidia/nemotron-3-super-120b-a12b:free "
             "messages=1\n"
             "FULL_PAYLOAD [req_1]: {'messages': [], 'tools': "
             "[{'name': 'Agent'}, {'name': 'Read'}], 'tool_choice': None}"
@@ -333,17 +335,17 @@ def test_cli_matrix_agent_use_result_and_marker_pass(tmp_path: Path) -> None:
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="openai/gpt-oss-120b:free",
-        full_model="open_router/openai/gpt-oss-120b:free",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        full_model="open_router/nvidia/nemotron-3-super-120b-a12b:free",
         source="openrouter_free_cli_default",
         feature="subagent_task",
         marker=marker,
         run=run,
         log_delta=(
-            "API_REQUEST: request_id=req_1 model=openai/gpt-oss-120b:free "
+            "API_REQUEST: request_id=req_1 model=nvidia/nemotron-3-super-120b-a12b:free "
             "messages=1\n"
             "FULL_PAYLOAD [req_1]: {'messages': [], 'tools': "
-            "[{'name': 'Agent'}, {'name': 'Read'}], 'tool_choice': None}"
+            "[{'name': 'Read'}], 'tool_choice': None}"
         ),
         log_path=tmp_path / "server.log",
         requires_tool_result=True,
@@ -351,7 +353,7 @@ def test_cli_matrix_agent_use_result_and_marker_pass(tmp_path: Path) -> None:
     )
 
     assert outcome.classification == "passed"
-    assert outcome.token_evidence["agent_catalog_present"] is True
+    assert outcome.token_evidence["agent_catalog_present"] is False
     assert outcome.token_evidence["agent_tool_count"] == 1
     assert outcome.token_evidence["agent_result_count"] == 1
 
@@ -368,14 +370,14 @@ def test_cli_matrix_agent_prompt_text_without_tool_evidence_does_not_pass(
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="openai/gpt-oss-120b:free",
-        full_model="open_router/openai/gpt-oss-120b:free",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        full_model="open_router/nvidia/nemotron-3-super-120b-a12b:free",
         source="openrouter_free_cli_default",
         feature="subagent_task",
         marker=marker,
         run=run,
         log_delta=(
-            "API_REQUEST: request_id=req_1 model=openai/gpt-oss-120b:free "
+            "API_REQUEST: request_id=req_1 model=nvidia/nemotron-3-super-120b-a12b:free "
             "messages=1\n"
             "FULL_PAYLOAD [req_1]: {'messages': [], 'tools': "
             "[{'name': 'Agent'}, {'name': 'Read'}], 'tool_choice': None}"
@@ -400,8 +402,8 @@ def test_cli_matrix_unclassified_provider_error_is_model_feature_failure(
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="poolside/laguna-m.1:free",
-        full_model="open_router/poolside/laguna-m.1:free",
+        model="poolside/laguna-s-2.1:free",
+        full_model="open_router/poolside/laguna-s-2.1:free",
         source="openrouter_free_cli_default",
         feature="tool_use_roundtrip",
         marker="FCC_OPENROUTER_FREE_TOOL",
@@ -483,13 +485,16 @@ def test_cli_matrix_uuid_429_does_not_count_as_upstream_unavailable(
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="openai/gpt-oss-120b:free",
-        full_model="open_router/openai/gpt-oss-120b:free",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        full_model="open_router/nvidia/nemotron-3-super-120b-a12b:free",
         source="openrouter_free_cli_default",
         feature="subagent_task",
         marker="FCC_OPENROUTER_FREE_TASK",
         run=run,
-        log_delta="API_REQUEST: request_id=req_1 model=openai/gpt-oss-120b:free messages=2",
+        log_delta=(
+            "API_REQUEST: request_id=req_1 "
+            "model=nvidia/nemotron-3-super-120b-a12b:free messages=2"
+        ),
         log_path=tmp_path / "server.log",
         requires_task=True,
     )
@@ -508,14 +513,14 @@ def test_cli_matrix_real_http_429_counts_as_upstream_unavailable(
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="openai/gpt-oss-120b:free",
-        full_model="open_router/openai/gpt-oss-120b:free",
+        model="nvidia/nemotron-3-super-120b-a12b:free",
+        full_model="open_router/nvidia/nemotron-3-super-120b-a12b:free",
         source="openrouter_free_cli_default",
         feature="subagent_task",
         marker="FCC_OPENROUTER_FREE_TASK",
         run=run,
         log_delta=(
-            "API_REQUEST: request_id=req_1 model=openai/gpt-oss-120b:free "
+            "API_REQUEST: request_id=req_1 model=nvidia/nemotron-3-super-120b-a12b:free "
             'messages=2 upstream HTTP/1.1" 429 Too Many Requests'
         ),
         log_path=tmp_path / "server.log",

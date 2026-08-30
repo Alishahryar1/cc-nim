@@ -36,6 +36,13 @@ const VIEW_GROUPS = [
     sections: ["messaging", "voice"],
     containerId: "messagingSections",
   },
+  {
+    id: "chat",
+    label: "Chat Sessions",
+    title: "Chat Sessions",
+    sections: [],
+    containerId: "chatRoot",
+  },
 ];
 
 const byId = (id) => document.getElementById(id);
@@ -112,7 +119,9 @@ async function api(path, options = {}) {
     } catch {
       // The status remains useful when an upstream proxy returns a non-JSON page.
     }
-    throw new Error(detail || `${response.status} ${response.statusText}`);
+    const error = new Error(detail || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -131,8 +140,10 @@ async function load() {
   }
   await refreshConnectedAccounts();
   await hydrateModelOptions();
-  await validate(false);
   await refreshLocalStatus();
+  if (window.ChatSessions) {
+    await window.ChatSessions.initialize(api);
+  }
   updateDirtyState();
   updateStats();
   initSearch();
@@ -364,7 +375,7 @@ function renderNav() {
       button.setAttribute("aria-current", "page");
     }
     button.addEventListener("click", () => {
-      setActiveView(view.id, { scroll: true });
+      navigateToView(view.id);
     });
     nav.appendChild(button);
   });
@@ -400,6 +411,20 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+  if (chatActive && window.ChatSessions) {
+    window.ChatSessions.activate(window.location.pathname);
+  }
+}
+
+function navigateToView(viewId) {
+  if (viewId === "chat") {
+    if (window.location.pathname !== "/admin/chat") {
+      window.history.pushState({}, "", "/admin/chat");
+    }
+  } else if (window.location.pathname.startsWith("/admin/chat")) {
+    window.history.pushState({}, "", "/admin");
+  }
+  setActiveView(viewId, { scroll: true });
 }
 
 // ===== Task 3 (A2): renderProviders — now includes status dots =====
@@ -1308,32 +1333,13 @@ function updateDirtyState() {
   updateStats();
 }
 
-async function validate(showResult = true) {
-  const result = await api("/admin/api/config/validate", {
-    method: "POST",
-    body: JSON.stringify({ values: changedValues() }),
-  });
-  if (showResult) {
-    showValidationResult(result);
-  }
-  return result;
-}
-
-function showValidationResult(result) {
-  if (result.valid) {
-    showMessage("Config shape is valid", "ok");
-  } else {
-    showMessage(result.errors.join("; "), "error");
-  }
-}
-
 async function apply() {
   const result = await api("/admin/api/config/apply", {
     method: "POST",
     body: JSON.stringify({ values: changedValues() }),
   });
   if (!result.applied) {
-    showValidationResult(result);
+    showMessage(result.errors.join("; "), "error");
     return;
   }
   const restart = result.restart || {};
@@ -1434,6 +1440,7 @@ async function loadModelOptions(refresh = false) {
     method: refresh ? "POST" : "GET",
   });
   setModelOptions(result.models);
+  if (window.ChatSessions) await window.ChatSessions.refresh();
   return result;
 }
 
@@ -1485,12 +1492,18 @@ function showMessage(message, kind = "") {
   area.className = `message-area ${kind}`.trim();
 }
 
-byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();
   });
+});
+
+window.addEventListener("popstate", () => {
+  const viewId = window.location.pathname.startsWith("/admin/chat")
+    ? "chat"
+    : "providers";
+  setActiveView(viewId, { scroll: false });
 });
 
 load().catch((error) => {

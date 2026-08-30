@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import CHUTES_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
@@ -131,7 +132,7 @@ async def test_lists_only_semantically_agent_capable_models(
     chutes_provider._client.get = AsyncMock(
         return_value={
             "data": [
-                _catalog_model(),
+                _catalog_model(input_modalities=("text", "image")),
                 _catalog_model(
                     "plain-agent",
                     supported_features=("tools",),
@@ -153,8 +154,17 @@ async def test_lists_only_semantically_agent_capable_models(
 
     assert model_infos == frozenset(
         {
-            ProviderModelInfo(_MODEL, supports_thinking=True),
-            ProviderModelInfo("plain-agent"),
+            ProviderModelInfo(
+                _MODEL,
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "plain-agent",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
         }
     )
 
@@ -242,7 +252,15 @@ async def test_model_catalog_uses_documented_url_and_bearer_auth(
     finally:
         await chutes_provider.cleanup()
 
-    assert model_infos == frozenset({ProviderModelInfo(_MODEL, supports_thinking=True)})
+    assert model_infos == frozenset(
+        {
+            ProviderModelInfo(
+                _MODEL,
+                supports_thinking=True,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            )
+        }
+    )
     assert len(requests) == 1
     assert str(requests[0].url) == "https://llm.chutes.ai/v1/models"
     assert requests[0].headers["authorization"] == "Bearer wire-chutes-key"

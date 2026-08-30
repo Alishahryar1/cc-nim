@@ -170,7 +170,9 @@ class MessagesHandler:
             # complete JSON Message; the internal pipeline is always SSE, so
             # serving that raw here breaks the client SDK's response parse.
             try:
-                message, error = await aggregate_anthropic_sse_to_message(result.body)
+                message, error, _complete = await aggregate_anthropic_sse_to_message(
+                    result.body
+                )
             except GeneratorExit:
                 raise
             except asyncio.CancelledError:

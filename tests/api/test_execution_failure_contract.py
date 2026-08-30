@@ -516,6 +516,43 @@ def test_pre_start_permission_failure_preserves_403_without_client_retry(
     assert trace["provider_retryable"] is False
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/v1/messages", _messages_payload(stream=True)),
+        ("/v1/responses", _responses_payload()),
+    ],
+)
+def test_pre_start_request_too_large_failure_preserves_413(
+    path: str,
+    payload: dict[str, object],
+) -> None:
+    provider = CanonicalFailureProvider(
+        [],
+        kind=FailureKind.INVALID_REQUEST,
+        status_code=413,
+        message="Provider rejected the request as too large.",
+        retryable=False,
+    )
+    resolver_patch, client = _client_for(provider)
+
+    with resolver_patch, client:
+        response = client.post(path, json=payload)
+
+    request_id = response.headers["request-id"]
+    body = response.json()
+    assert response.status_code == 413
+    assert response.headers["x-should-retry"] == "false"
+    assert body["error"]["type"] == "request_too_large"
+    assert body["error"]["message"] == (
+        f"Provider rejected the request as too large.\n\nRequest ID: {request_id}"
+    )
+    if path == "/v1/messages":
+        assert body["request_id"] == request_id
+    else:
+        assert response.headers["x-request-id"] == request_id
+
+
 def test_messages_context_window_failure_triggers_client_compaction() -> None:
     provider = CanonicalFailureProvider(
         [],

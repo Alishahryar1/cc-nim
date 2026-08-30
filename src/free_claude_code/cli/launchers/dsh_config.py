@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 from .common import proxy_v1_url
 from .model_catalog import ClientModel
@@ -112,8 +113,18 @@ def _model_profile(model: ClientModel) -> JsonObject:
         "name": model.display_name,
     }
     profile["reasoningEfforts"] = (
-        dict(_REASONING_EFFORTS) if model.allows_reasoning else False
+        dict(_REASONING_EFFORTS) if model.supports_reasoning is not False else False
     )
+    if model.input_modalities is not None:
+        profile["input"] = [
+            modality.value
+            for modality in ModelInputModality
+            if modality in model.input_modalities
+        ]
+    if model.context_window_tokens is not None:
+        profile["contextWindow"] = model.context_window_tokens
+    if model.max_output_tokens is not None:
+        profile["maxTokens"] = model.max_output_tokens
     return profile
 
 

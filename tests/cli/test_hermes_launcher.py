@@ -50,7 +50,7 @@ def _models() -> tuple[ClientModel, ...]:
             wire_slug="nvidia_nim/vendor/model",
             provider_model_ref="nvidia_nim/vendor/model",
             display_name="Nested model",
-            allows_reasoning=True,
+            supports_reasoning=True,
         ),
     )
 

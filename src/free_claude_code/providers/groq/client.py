@@ -21,6 +21,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
+    OpenAIModelListing,
     validate_extra_body_does_not_override_reasoning_fields,
 )
 
@@ -48,6 +49,10 @@ _PROFILE = OpenAIChatProfile(
         _GROQ_EFFORTS,
         disabled_value="none",
         enabled_value="medium",
+    ),
+    model_listing=OpenAIModelListing(
+        context_window_tokens_path=("context_window",),
+        max_output_tokens_path=("max_completion_tokens",),
     ),
 )
 

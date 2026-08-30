@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Free Claude Code Admin</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/admin/assets/admin.css" />
+    <link rel="stylesheet" href="/admin/assets/__FCC_VERSION__/admin.css" />
+    <link rel="stylesheet" href="/admin/assets/__FCC_VERSION__/chat_sessions.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -161,6 +162,10 @@
               aria-label="Messaging configuration"
             ></div>
           </section>
+
+          <section id="view-chat" class="admin-view" data-view="chat" hidden>
+            <div id="chatRoot" class="chat-root" aria-live="off"></div>
+          </section>
         </div>
       </main>
 
@@ -184,6 +189,7 @@
         </div>
       </footer>
     </div>
-    <script src="/admin/assets/admin.js"></script>
+    <script src="/admin/assets/__FCC_VERSION__/chat_sessions.js"></script>
+    <script src="/admin/assets/__FCC_VERSION__/admin.js"></script>
   </body>
 </html>

@@ -1,4 +1,7 @@
 import json
+from typing import cast
+
+import pytest
 
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses.models import OpenAIResponsesRequest
@@ -17,6 +20,18 @@ def _parse_frame(frame: str) -> tuple[str, dict[str, object]]:
 def _object_dict(value: object) -> dict[str, object]:
     assert isinstance(value, dict)
     return value
+
+
+def _finished_responses_usage(usage: ChatStreamUsage) -> dict[str, object]:
+    output = ResponsesChatStreamOutput(
+        OpenAIResponsesRequest.model_validate(
+            {"model": "public-model", "input": "Hello"}
+        ),
+        input_tokens=1,
+    )
+    frames = output.finish_success(stop_reason="stop", usage=usage)
+    final = _object_dict(_parse_frame(frames[-1])[1]["response"])
+    return _object_dict(final["usage"])
 
 
 def test_anthropic_chat_output_preserves_existing_wire_lifecycle() -> None:
@@ -112,6 +127,7 @@ def test_responses_chat_output_emits_one_native_lifecycle_with_exact_usage() -> 
                 input_tokens=20,
                 output_tokens=8,
                 cached_tokens=5,
+                cache_write_tokens=4,
                 reasoning_tokens=3,
             ),
         )
@@ -134,7 +150,7 @@ def test_responses_chat_output_emits_one_native_lifecycle_with_exact_usage() -> 
     assert final["status"] == "completed"
     assert final["usage"] == {
         "input_tokens": 20,
-        "input_tokens_details": {"cached_tokens": 5},
+        "input_tokens_details": {"cached_tokens": 5, "cache_write_tokens": 4},
         "output_tokens": 8,
         "output_tokens_details": {"reasoning_tokens": 3},
         "total_tokens": 28,
@@ -155,6 +171,70 @@ def test_responses_chat_output_emits_one_native_lifecycle_with_exact_usage() -> 
         "name": "lookup",
         "namespace": "mcp",
         "arguments": '{"q":"fcc"}',
+    }
+
+
+def test_responses_chat_output_preserves_explicit_zero_cache_write() -> None:
+    usage = _finished_responses_usage(
+        ChatStreamUsage(
+            input_tokens=20,
+            output_tokens=8,
+            cached_tokens=5,
+            cache_write_tokens=0,
+        )
+    )
+
+    assert usage["input_tokens_details"] == {
+        "cached_tokens": 5,
+        "cache_write_tokens": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    "cache_write_tokens",
+    [None, -1, 16, True, "4"],
+    ids=["absent", "negative", "over-remaining-total", "boolean", "string"],
+)
+def test_responses_chat_output_omits_untrustworthy_cache_write_without_losing_read(
+    cache_write_tokens: object,
+) -> None:
+    usage = _finished_responses_usage(
+        ChatStreamUsage(
+            input_tokens=20,
+            output_tokens=8,
+            cached_tokens=5,
+            cache_write_tokens=cast(int | None, cache_write_tokens),
+        )
+    )
+
+    assert usage == {
+        "input_tokens": 20,
+        "input_tokens_details": {"cached_tokens": 5},
+        "output_tokens": 8,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 28,
+    }
+
+
+def test_responses_chat_output_ignores_overflowing_read_without_losing_write() -> None:
+    usage = _finished_responses_usage(
+        ChatStreamUsage(
+            input_tokens=20,
+            output_tokens=8,
+            cached_tokens=21,
+            cache_write_tokens=5,
+        )
+    )
+
+    assert usage == {
+        "input_tokens": 20,
+        "input_tokens_details": {
+            "cached_tokens": 0,
+            "cache_write_tokens": 5,
+        },
+        "output_tokens": 8,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 28,
     }
 
 

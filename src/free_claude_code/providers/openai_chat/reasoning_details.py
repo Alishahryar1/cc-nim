@@ -4,10 +4,10 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Literal
 
-from free_claude_code.core.anthropic import (
-    is_synthetic_openai_tool_turn_boundary,
-)
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.openai_chat import (
+    is_synthetic_chat_tool_turn_boundary,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 from .stream_output import ChatStreamOutput
@@ -31,7 +31,7 @@ def apply_reasoning_details_replay(
             if (
                 not isinstance(message, dict)
                 or message.get("role") != "assistant"
-                or is_synthetic_openai_tool_turn_boundary(message)
+                or is_synthetic_chat_tool_turn_boundary(message)
             ):
                 continue
             existing = message.get("reasoning_details")

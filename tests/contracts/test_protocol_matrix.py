@@ -46,6 +46,75 @@ def _responses_request() -> OpenAIResponsesRequest:
     )
 
 
+def _image_messages_request() -> MessagesRequest:
+    return MessagesRequest.model_validate(
+        {
+            "model": "upstream-model",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_image",
+                            "name": "read_image",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_image",
+                            "content": [
+                                {"type": "text", "text": "result"},
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "url",
+                                        "url": "https://images.example.test/result.png",
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ],
+            "max_tokens": 64,
+        }
+    )
+
+
+def _image_responses_request() -> OpenAIResponsesRequest:
+    return OpenAIResponsesRequest.model_validate(
+        {
+            "model": "upstream-model",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_image",
+                    "name": "read_image",
+                    "arguments": "{}",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_image",
+                    "output": [
+                        {"type": "input_text", "text": "result"},
+                        {
+                            "type": "input_image",
+                            "image_url": "https://images.example.test/result.png",
+                        },
+                    ],
+                },
+            ],
+            "max_output_tokens": 64,
+        }
+    )
+
+
 def _client(handler: Callable[[httpx2.Request], httpx2.Response]) -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key="test-key",
@@ -313,3 +382,121 @@ async def test_responses_upstream_accepts_both_ingress_protocols_directly() -> N
         responses_events[-1].data["response"]["output"][0]["content"][0]["text"]
         == "responses-ok"
     )
+
+
+@pytest.mark.asyncio
+async def test_image_tool_output_remains_visual_across_all_protocol_cells() -> None:
+    chat_requests: list[httpx2.Request] = []
+    responses_requests: list[httpx2.Request] = []
+
+    def chat_handler(request: httpx2.Request) -> httpx2.Response:
+        chat_requests.append(request)
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_chat_sse("chat-ok"),
+        )
+
+    def responses_handler(request: httpx2.Request) -> httpx2.Response:
+        responses_requests.append(request)
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_responses_sse("responses-ok"),
+        )
+
+    chat_client = _client(chat_handler)
+    config = make_provider_config(
+        api_key="test-key",
+        base_url="https://provider.invalid/v1",
+    )
+    with patch(
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI",
+        return_value=chat_client,
+    ):
+        chat_provider = OpenAIChatProvider(
+            config,
+            profile=OpenAIChatProfile(
+                OpenAIChatRequestPolicy(
+                    provider_name="MATRIX_CHAT",
+                    reasoning_replay=ReasoningReplayMode.DISABLED,
+                ),
+                NO_REASONING,
+            ),
+            admission=immediate_admission(provider_name="MATRIX_CHAT"),
+        )
+
+    responses_client = _client(responses_handler)
+    responses_transport = OpenAIResponsesTransport(
+        client=responses_client,
+        admission=immediate_admission(provider_name="MATRIX_RESPONSES"),
+        provider_name="MATRIX_RESPONSES",
+        read_timeout_s=120.0,
+        log_raw_sse_events=False,
+    )
+    try:
+        await _collect(
+            chat_provider.stream_messages(
+                _image_messages_request(),
+                input_tokens=2,
+                request_id="req_matrix_image_messages_chat",
+                response_model="public-model",
+            )
+        )
+        await _collect(
+            chat_provider.stream_responses(
+                _image_responses_request(),
+                input_tokens=2,
+                request_id="req_matrix_image_responses_chat",
+                response_model="public-model",
+            )
+        )
+        await _collect(
+            responses_transport.stream_messages(
+                _image_messages_request(),
+                input_tokens=2,
+                request_id="req_matrix_image_messages_responses",
+                response_model="public-model",
+                reasoning=DEFAULT_REASONING_POLICY,
+            )
+        )
+        await _collect(
+            responses_transport.stream_responses(
+                _image_responses_request(),
+                input_tokens=2,
+                request_id="req_matrix_image_responses_responses",
+                response_model="public-model",
+                reasoning=DEFAULT_REASONING_POLICY,
+            )
+        )
+    finally:
+        await chat_provider.cleanup()
+        await responses_client.close()
+
+    image_url = "https://images.example.test/result.png"
+    messages_chat = json.loads(chat_requests[0].content)
+    responses_chat = json.loads(chat_requests[1].content)
+    messages_responses = json.loads(responses_requests[0].content)
+    responses_responses = json.loads(responses_requests[1].content)
+
+    for chat_body in (messages_chat, responses_chat):
+        tool_message = next(
+            message for message in chat_body["messages"] if message["role"] == "tool"
+        )
+        assert image_url not in tool_message["content"]
+        assert any(
+            part.get("image_url", {}).get("url") == image_url
+            for message in chat_body["messages"]
+            if message["role"] == "user" and isinstance(message["content"], list)
+            for part in message["content"]
+        )
+
+    assert messages_responses["input"][1] == {
+        "type": "function_call_output",
+        "call_id": "call_image",
+        "output": [
+            {"type": "input_text", "text": "result"},
+            {"type": "input_image", "image_url": image_url},
+        ],
+    }
+    assert responses_responses["input"] == _image_responses_request().input

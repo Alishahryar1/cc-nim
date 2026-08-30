@@ -134,7 +134,7 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
 
 
 @pytest.mark.parametrize(
-    ("usage", "expected"),
+    ("usage", "anthropic_expected", "responses_cached"),
     [
         (
             {
@@ -143,6 +143,7 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
                 "prompt_cache_miss_tokens": 20,
             },
             {"input_tokens": 20, "cache_read_input_tokens": 10},
+            10,
         ),
         (
             {
@@ -151,6 +152,7 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
                 "prompt_cache_miss_tokens": 30,
             },
             {"input_tokens": 30, "cache_read_input_tokens": 0},
+            0,
         ),
         (
             {
@@ -159,18 +161,22 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
                 "prompt_cache_miss_tokens": 0,
             },
             {"input_tokens": 0, "cache_read_input_tokens": 30},
+            30,
         ),
         (
             {"prompt_cache_hit_tokens": 10, "prompt_cache_miss_tokens": 20},
             {"input_tokens": 20, "cache_read_input_tokens": 10},
+            None,
         ),
         (
             {"prompt_tokens": 30, "prompt_cache_miss_tokens": 20},
             {},
+            None,
         ),
         (
             {"prompt_tokens": 30, "prompt_cache_hit_tokens": 10},
             {},
+            None,
         ),
         (
             {
@@ -179,6 +185,7 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
                 "prompt_cache_miss_tokens": 20,
             },
             {},
+            None,
         ),
         (
             {
@@ -187,6 +194,7 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
                 "prompt_cache_miss_tokens": 20.0,
             },
             {},
+            None,
         ),
         (
             {
@@ -195,6 +203,7 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
                 "prompt_cache_miss_tokens": 31,
             },
             {},
+            None,
         ),
         (
             {
@@ -203,6 +212,16 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
                 "prompt_cache_miss_tokens": -1,
             },
             {},
+            None,
+        ),
+        (
+            {
+                "prompt_tokens": -1,
+                "prompt_cache_hit_tokens": 10,
+                "prompt_cache_miss_tokens": 20,
+            },
+            {"input_tokens": 20, "cache_read_input_tokens": 10},
+            None,
         ),
         (
             {
@@ -211,13 +230,15 @@ def test_responses_tool_history_keeps_deepseek_replayable_reasoning(
                 "prompt_cache_miss_tokens": 19,
             },
             {},
+            None,
         ),
     ],
 )
 def test_maps_only_complete_consistent_cache_usage(
-    deepseek_provider, usage, expected
+    deepseek_provider, usage, anthropic_expected, responses_cached
 ) -> None:
-    assert deepseek_provider._anthropic_usage_fields(usage) == expected
+    assert deepseek_provider._anthropic_usage_fields(usage) == anthropic_expected
+    assert deepseek_provider._cached_input_tokens(usage) == responses_cached
 
 
 def test_build_request_body_openai_chat_shape(deepseek_provider):
@@ -1177,6 +1198,69 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
         "input_tokens": 20,
         "output_tokens": 3,
         "cache_read_input_tokens": 10,
+    }
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_maps_deepseek_cache_usage(deepseek_provider):
+    request = OpenAIResponsesRequest(model="m", input="hi")
+
+    async def fake_stream():
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content="hello", reasoning_content=None, tool_calls=None
+                    ),
+                    finish_reason=None,
+                )
+            ],
+            usage=None,
+        )
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None, reasoning_content=None, tool_calls=None
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+        yield SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(
+                completion_tokens=3,
+                prompt_tokens=30,
+                model_extra={
+                    "prompt_cache_hit_tokens": 10,
+                    "prompt_cache_miss_tokens": 20,
+                },
+            ),
+        )
+
+    create = AsyncMock(return_value=fake_stream())
+    with patch.object(deepseek_provider._client.chat.completions, "create", create):
+        chunks = [
+            chunk
+            async for chunk in deepseek_provider.stream_responses(
+                request, input_tokens=7, request_id="r1"
+            )
+        ]
+
+    parsed = parse_sse_text("".join(chunks))
+    completed = next(
+        event.data["response"]
+        for event in parsed
+        if event.event == "response.completed"
+    )
+    assert completed["usage"] == {
+        "input_tokens": 30,
+        "input_tokens_details": {"cached_tokens": 10},
+        "output_tokens": 3,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 33,
     }
 
 
