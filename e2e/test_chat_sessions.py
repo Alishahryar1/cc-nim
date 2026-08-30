@@ -105,6 +105,65 @@ def test_chat_opened_in_another_tab_recovers_when_operation_stops(
         other.close()
 
 
+def test_regeneration_is_visible_and_recovers_in_another_tab(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    page.get_by_role("textbox", name="Message", exact=True).fill(
+        "[slow-regenerate] answer twice"
+    )
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+
+    page.get_by_role("button", name="Regenerate").click()
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+    other = page.context.new_page()
+    try:
+        other.goto(page.url)
+        expect(other.locator("#chatComposerStatus")).to_contain_text(
+            "running in another tab"
+        )
+        expect(other.get_by_label("Selected model")).to_be_disabled()
+
+        page.get_by_role("button", name="Stop").click()
+
+        expect(other.get_by_label("Selected model")).to_be_enabled(timeout=3_000)
+        expect(other.get_by_role("button", name="Regenerate")).to_be_visible()
+    finally:
+        other.close()
+
+
+def test_manual_compaction_is_visible_and_recovers_in_another_tab(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("[slow-compaction] first")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+    message.fill("second")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+
+    page.get_by_role("button", name="Compact now").click()
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+    other = page.context.new_page()
+    try:
+        other.goto(page.url)
+        expect(other.locator("#chatComposerStatus")).to_contain_text(
+            "running in another tab"
+        )
+        expect(other.get_by_label("Thinking")).to_be_disabled()
+
+        page.get_by_role("button", name="Stop").click()
+
+        expect(other.get_by_label("Thinking")).to_be_enabled(timeout=3_000)
+    finally:
+        other.close()
+
+
 def test_terminal_refresh_preserves_reader_scroll_position(
     page: Page,
     admin_base_url: str,
@@ -124,6 +183,7 @@ def test_terminal_refresh_preserves_reader_scroll_position(
 
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
     assert scroller.evaluate("node => node.scrollTop") < 10
+    expect(page.get_by_role("button", name="Jump to latest")).to_be_visible()
 
 
 def test_chat_rename_prompt_and_delete(
@@ -172,11 +232,15 @@ def test_reset_system_prompt_refreshes_context_and_unblocks_send(
     expect(page.locator("#chatComposerStatus")).to_contain_text(
         "exceeds the model context"
     )
+    message.fill("[delay-first-estimate] send after reset")
+    page.wait_for_timeout(350)
 
     page.get_by_role("button", name="System prompt").click()
     page.get_by_role("dialog").get_by_role("button", name="Reset to default").click()
 
     expect(page.get_by_role("button", name="Send")).to_be_enabled(timeout=3_000)
+    page.wait_for_timeout(800)
+    expect(page.get_by_role("button", name="Send")).to_be_enabled()
 
 
 def test_chat_remains_usable_at_narrow_viewport(

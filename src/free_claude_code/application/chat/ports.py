@@ -172,6 +172,8 @@ class ChatApplicationPort(Protocol):
 
     async def get_session(self, session_id: str) -> ChatSession: ...
 
+    async def operation_active(self, session_id: str) -> bool: ...
+
     async def update_session(
         self,
         session_id: str,

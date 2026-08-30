@@ -89,6 +89,7 @@ class StubChat:
         )
         self.last_stream: StubStream | None = None
         self.deleted = False
+        self.active_operation = False
 
     def availability(self) -> tuple[bool, str | None]:
         return True, None
@@ -118,6 +119,10 @@ class StubChat:
 
     async def create_session(self) -> ChatSession:
         return self.session
+
+    async def operation_active(self, session_id: str) -> bool:
+        assert session_id == SESSION_ID
+        return self.active_operation
 
     async def list_sessions(
         self,
@@ -267,6 +272,7 @@ def test_chat_deep_links_serve_the_versioned_admin_shell():
 
 def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
     chat = StubChat()
+    chat.active_operation = True
     client = _client(chat)
 
     bootstrap = client.get("/admin/api/chat/bootstrap").json()
@@ -279,6 +285,7 @@ def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
     assert "<strong>safe</strong>" in segment["html"]
     assert "<script>" not in segment["html"]
     assert detail["turns"][0]["generation"]["actual_model"] == ("open_router/fallback")
+    assert detail["active_operation"] is True
 
 
 def test_chat_detail_stays_readable_when_context_controls_need_repair():

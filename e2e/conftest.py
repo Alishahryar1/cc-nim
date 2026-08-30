@@ -12,7 +12,7 @@ import uvicorn
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
-from free_claude_code.application.chat import ChatService
+from free_claude_code.application.chat import ChatContextEstimate, ChatService
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
@@ -54,6 +54,7 @@ class _ModelListingProvider(BaseProvider):
         self._model_infos = model_infos
         self._error = error
         self._slow_used = False
+        self._message_attempts: dict[str, int] = {}
 
     def preflight_messages(
         self,
@@ -91,7 +92,13 @@ class _ModelListingProvider(BaseProvider):
         del input_tokens, request_id, response_model
         summary = str(request.system).startswith("Summarize")
         user_content = str(request.messages[-1].content) if request.messages else ""
-        slow = "[slow]" in user_content and not self._slow_used
+        attempt = self._message_attempts.get(user_content, 0) + 1
+        self._message_attempts[user_content] = attempt
+        slow = not self._slow_used and (
+            "[slow]" in user_content
+            or ("[slow-regenerate]" in user_content and attempt > 1)
+            or (summary and "[slow-compaction]" in user_content)
+        )
         self._slow_used = self._slow_used or slow
         text = "Earlier details retained." if summary else "E2E answer"
         frames = [
@@ -228,6 +235,24 @@ def admin_base_url(
             config_dir / "chat" / "chat.lock",
         ),
     )
+    original_estimate = chat.estimate
+    delayed_estimate_seen = False
+
+    async def estimate_with_delayed_first_result(
+        session_id: str,
+        *,
+        draft: str,
+    ) -> ChatContextEstimate:
+        nonlocal delayed_estimate_seen
+        delay_result = "[delay-first-estimate]" in draft and not delayed_estimate_seen
+        delayed_estimate_seen = delayed_estimate_seen or delay_result
+        try:
+            return await original_estimate(session_id, draft=draft)
+        finally:
+            if delay_result:
+                await asyncio.sleep(0.75)
+
+    monkeypatch.setattr(chat, "estimate", estimate_with_delayed_first_result)
     runtime = ApplicationRuntime(manager, transcriber=None, chat_service=chat)
     app = RuntimeASGIApp(
         create_app(

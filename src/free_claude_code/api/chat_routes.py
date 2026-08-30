@@ -143,6 +143,7 @@ async def get_chat_session(
     except ChatValidationError as exc:
         estimate = None
         context_error = str(exc)
+    active_operation = await chat.operation_active(session_id)
     return {
         "session": _session_payload(session),
         "turns": [_turn_payload(turn) for turn in turns],
@@ -150,6 +151,7 @@ async def get_chat_session(
         "compaction": _compaction_payload(compaction),
         "context": _estimate_payload(estimate) if estimate is not None else None,
         "context_error": context_error,
+        "active_operation": active_operation,
     }
 
 

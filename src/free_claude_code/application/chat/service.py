@@ -235,6 +235,12 @@ class ChatService:
         self._require_available()
         return await self._store.get_session(_canonical_uuid(session_id, "session"))
 
+    async def operation_active(self, session_id: str) -> bool:
+        self._require_available()
+        session_id = _canonical_uuid(session_id, "session")
+        async with self._active_lock:
+            return session_id in self._active
+
     async def update_session(
         self,
         session_id: str,
@@ -786,18 +792,26 @@ class ChatService:
 
         if not saw_message_stop:
             raise ChatValidationError("The provider stream ended before completing.")
-        await self._flush_segments(active)
-        session = await self._store.finish_generation(
-            generation_id,
-            status=GenerationStatus.COMPLETED,
-            stop_reason=stop_reason,
-            error_code=None,
-            error_message=None,
+
+        async def commit_completion() -> ChatSession:
+            await self._flush_segments(active)
+            session = await self._store.finish_generation(
+                generation_id,
+                status=GenerationStatus.COMPLETED,
+                stop_reason=stop_reason,
+                error_code=None,
+                error_message=None,
+            )
+            if active.regeneration:
+                session = await self._store.complete_regeneration(generation_id)
+            return session
+
+        commit_task = asyncio.create_task(
+            commit_completion(),
+            name=f"fcc-chat-generation-commit-{generation_id}",
         )
-        if active.regeneration:
-            session = await self._store.complete_regeneration(generation_id)
-        active.terminal_emitted = True
-        await self._emit(
+        session, _cancellation = await _await_task_despite_cancellation(commit_task)
+        self._emit_terminal_nowait(
             active,
             "turn.completed",
             {
@@ -995,22 +1009,28 @@ class ChatService:
             )
             covered = later[0].sequence
 
-        compaction = await self._store.upsert_compaction(
-            transcript.session.id,
-            covered_through_sequence=covered,
-            summary=summary,
-            estimated_tokens=estimate_text_tokens(summary),
-            requested_model=transcript.session.model,
-            actual_model=actual_model,
+        commit_task = asyncio.create_task(
+            self._store.upsert_compaction(
+                transcript.session.id,
+                covered_through_sequence=covered,
+                summary=summary,
+                estimated_tokens=estimate_text_tokens(summary),
+                requested_model=transcript.session.model,
+                actual_model=actual_model,
+            ),
+            name=f"fcc-chat-compaction-commit-{transcript.session.id}",
         )
-        await self._emit(
-            active,
-            "compaction.completed",
-            {
-                "covered_through_sequence": covered,
-                "revision": transcript.session.revision + 1,
-            },
-        )
+        compaction, cancellation = await _await_task_despite_cancellation(commit_task)
+        completion: JsonObject = {
+            "covered_through_sequence": covered,
+            "revision": transcript.session.revision + 1,
+        }
+        if active.kind is _OperationKind.COMPACT:
+            self._emit_terminal_nowait(active, "compaction.completed", completion)
+        else:
+            self._emit_nowait(active, "compaction.completed", completion)
+            if cancellation is not None:
+                raise cancellation
         return compaction
 
     async def _summarize_turns(
@@ -1222,6 +1242,12 @@ class ChatService:
     ) -> None:
         if active.terminal_emitted:
             return
+        self._emit_nowait(active, event, data)
+        active.terminal_emitted = True
+
+    def _emit_nowait(
+        self, active: _ActiveOperation, event: str, data: JsonObject
+    ) -> None:
         active.event_sequence += 1
         payload: JsonObject = {
             "session_id": active.session_id,
@@ -1236,7 +1262,6 @@ class ChatService:
                 data=payload,
             )
         )
-        active.terminal_emitted = True
 
     async def _cancel_active(
         self,
@@ -1249,9 +1274,10 @@ class ChatService:
             return
         if active.cancellation_reason is None:
             active.cancellation_reason = reason
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+            task.cancel()
+        _result, cancellation = await _await_task_despite_cancellation(task)
+        if cancellation is not None:
+            raise cancellation
 
     async def _release_active(self, active: _ActiveOperation) -> None:
         async with self._active_lock:
@@ -1283,6 +1309,19 @@ async def _commit_generation_start[T](
         run(),
         name=f"fcc-chat-generation-start-{generation_id}",
     )
+    result, cancellation = await _await_task_despite_cancellation(task)
+    active.generation_id = generation_id
+    active.regeneration = regeneration
+    if cancellation is not None:
+        raise cancellation
+    return result
+
+
+async def _await_task_despite_cancellation[T](
+    task: asyncio.Task[T],
+) -> tuple[T, asyncio.CancelledError | None]:
+    """Wait for an already-started task before restoring caller cancellation."""
+
     current = asyncio.current_task()
     cancellation: asyncio.CancelledError | None = None
     while not task.done():
@@ -1293,13 +1332,8 @@ async def _commit_generation_start[T](
                 cancellation = cancellation or exc
         except Exception:
             break
-
     result = task.result()
-    active.generation_id = generation_id
-    active.regeneration = regeneration
-    if cancellation is not None:
-        raise cancellation
-    return result
+    return result, cancellation
 
 
 def _latest_turn(transcript: ChatTranscript) -> ChatTurn:

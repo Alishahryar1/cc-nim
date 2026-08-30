@@ -18,7 +18,9 @@
     draftSessionId: null,
     routeVersion: 0,
     estimateTimer: null,
+    estimateVersion: 0,
     foreignPollTimer: null,
+    serverOperationActive: false,
   };
 
   const root = () => document.getElementById("chatRoot");
@@ -103,6 +105,7 @@
   async function showLibrary(version) {
     cancelLocalStream();
     state.session = null;
+    state.serverOperationActive = false;
     if (!state.bootstrap?.available) {
       renderUnavailable();
       return;
@@ -249,6 +252,7 @@
     state.compaction = detail.compaction;
     state.context = detail.context;
     state.contextError = detail.context_error || "";
+    state.serverOperationActive = Boolean(detail.active_operation);
   }
 
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
@@ -280,6 +284,7 @@
     } else {
       scroller.scrollTop = scrollTop;
     }
+    jump.hidden = nearBottom(scroller);
     syncForeignOperationPoll();
   }
 
@@ -699,12 +704,16 @@
 
   function scheduleEstimate(immediate = false) {
     window.clearTimeout(state.estimateTimer);
-    state.estimateTimer = window.setTimeout(updateEstimate, immediate ? 0 : 250);
+    const version = ++state.estimateVersion;
+    state.estimateTimer = window.setTimeout(
+      () => updateEstimate(version),
+      immediate ? 0 : 250,
+    );
   }
 
-  async function updateEstimate() {
+  async function updateEstimate(version) {
     const session = state.session;
-    if (!session || state.operation) return;
+    if (!session || state.operation || version !== state.estimateVersion) return;
     const textarea = document.getElementById("chatComposer");
     try {
       const context = await state.api(
@@ -714,13 +723,21 @@
           body: JSON.stringify({ draft: textarea?.value || "" }),
         },
       );
-      if (state.session?.id !== session.id) return;
+      if (
+        state.session?.id !== session.id ||
+        version !== state.estimateVersion
+      )
+        return;
       state.context = context;
       state.contextError = "";
       updateContextMeter();
       refreshComposerState();
     } catch (error) {
-      if (state.session?.id !== session.id) return;
+      if (
+        state.session?.id !== session.id ||
+        version !== state.estimateVersion
+      )
+        return;
       state.context = null;
       state.contextError = error.message;
       updateContextMeter();
@@ -739,7 +756,10 @@
     if (!state.session) return "Chat unavailable";
     if (state.operation) return "A chat operation is already running";
     const latest = state.turns[state.turns.length - 1];
-    if (latest?.generation?.status === "running") {
+    if (
+      state.serverOperationActive ||
+      latest?.generation?.status === "running"
+    ) {
       return "This chat is running in another tab";
     }
     const option = modelOption(state.session.model);
@@ -766,6 +786,12 @@
     const status = document.getElementById("chatComposerStatus");
     if (!textarea || !send || !stop || !status) return;
     const blocked = sendBlockReason();
+    const latest = state.turns[state.turns.length - 1];
+    const busy = Boolean(
+      state.operation ||
+        state.serverOperationActive ||
+        latest?.generation?.status === "running",
+    );
     send.disabled = Boolean(blocked) || !textarea.value.trim();
     send.hidden = Boolean(state.operation);
     stop.hidden = !state.operation;
@@ -773,11 +799,11 @@
     status.textContent = state.operation ? state.operation.status : blocked;
     document.querySelectorAll(".chat-controls button, .chat-controls select").forEach(
       (control) => {
-        control.disabled = Boolean(state.operation);
+        control.disabled = busy;
       },
     );
     if (compact) {
-      compact.disabled = Boolean(state.operation) || !state.context?.can_compact;
+      compact.disabled = busy || !state.context?.can_compact;
     }
   }
 
@@ -976,7 +1002,8 @@
     if (
       !state.session ||
       state.operation ||
-      latest?.generation?.status !== "running" ||
+      (!state.serverOperationActive &&
+        latest?.generation?.status !== "running") ||
       chatView?.hidden
     ) {
       return;

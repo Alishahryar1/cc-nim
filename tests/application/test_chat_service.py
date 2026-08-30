@@ -461,6 +461,110 @@ async def test_cancellation_waits_for_generation_start_commit_before_cleanup(
 
 
 @pytest.mark.asyncio
+async def test_repeated_cancellation_waits_for_terminal_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    blocker: sqlite3.Connection | None = None
+    try:
+        session = await service.create_session()
+        operation_id = "f02c0da7-1ec9-4433-bef3-dc760753e451"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="preserve partial output",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+
+        entered_cleanup = asyncio.Event()
+        original_replace_segments = store.replace_generation_segments
+
+        async def observed_replace_segments(generation_id, segments):
+            entered_cleanup.set()
+            await original_replace_segments(generation_id, segments)
+
+        monkeypatch.setattr(
+            store,
+            "replace_generation_segments",
+            observed_replace_segments,
+        )
+        blocker = sqlite3.connect(tmp_path / "chat.db", isolation_level=None)
+        blocker.execute("PRAGMA journal_mode = WAL")
+        blocker.execute("BEGIN IMMEDIATE")
+
+        close_task = asyncio.create_task(stream.aclose())
+        await asyncio.wait_for(entered_cleanup.wait(), timeout=1)
+        stop_task = asyncio.create_task(
+            service.stop(session.id, operation_id=operation_id)
+        )
+        await asyncio.sleep(0.05)
+
+        assert not close_task.done()
+        assert not stop_task.done()
+        blocker.commit()
+        blocker.close()
+        blocker = None
+        await asyncio.wait_for(close_task, timeout=1)
+        assert await asyncio.wait_for(stop_task, timeout=1) is True
+
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert generation.status is GenerationStatus.STOPPED
+        assert await service.stop(session.id, operation_id=operation_id) is False
+    finally:
+        if blocker is not None:
+            blocker.rollback()
+            blocker.close()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_at_generation_commit_preserves_completed_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        entered_commit = asyncio.Event()
+        release_commit = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_commit.set()
+            await release_commit.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        operation_id = "03ba5dce-bd47-452c-a878-229d4df65944"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="finish this answer",
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+
+        stop_task = asyncio.create_task(
+            service.stop(session.id, operation_id=operation_id)
+        )
+        await asyncio.sleep(0.05)
+        assert not stop_task.done()
+        release_commit.set()
+
+        assert await asyncio.wait_for(stop_task, timeout=1) is True
+        events = await _drain(stream)
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert events[-1] == "turn.completed"
+        assert generation.status is GenerationStatus.COMPLETED
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_disconnect_after_durable_completion_cannot_downgrade_status(
     tmp_path: Path,
 ):
@@ -493,6 +597,73 @@ async def test_disconnect_after_durable_completion_cannot_downgrade_status(
         assert generation.status is GenerationStatus.COMPLETED
         assert generation.stop_reason == "end_turn"
     finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_during_compaction_commit_waits_and_reports_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    blocker: sqlite3.Connection | None = None
+    try:
+        session = await service.create_session()
+        for index, operation_id in enumerate(
+            (
+                "08ea4712-3732-4626-9590-ac78cd273982",
+                "35d15a22-88e4-476f-aec2-9c0cdfb5cb87",
+            )
+        ):
+            stream = await service.send(
+                session.id,
+                expected_revision=session.revision,
+                operation_id=operation_id,
+                text=f"turn {index}",
+            )
+            await _drain(stream)
+            session = await service.get_session(session.id)
+
+        entered_commit = asyncio.Event()
+        original_upsert_compaction = store.upsert_compaction
+
+        async def observed_upsert_compaction(*args, **kwargs):
+            entered_commit.set()
+            return await original_upsert_compaction(*args, **kwargs)
+
+        monkeypatch.setattr(store, "upsert_compaction", observed_upsert_compaction)
+        blocker = sqlite3.connect(tmp_path / "chat.db", isolation_level=None)
+        blocker.execute("PRAGMA journal_mode = WAL")
+        blocker.execute("BEGIN IMMEDIATE")
+
+        operation_id = "b15f0721-acd3-482f-812d-28d2d3cc568b"
+        compact = await service.compact(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+        stop_task = asyncio.create_task(
+            service.stop(session.id, operation_id=operation_id)
+        )
+        await asyncio.sleep(0.05)
+        assert not stop_task.done()
+
+        blocker.commit()
+        blocker.close()
+        blocker = None
+        assert await asyncio.wait_for(stop_task, timeout=1) is True
+        events = await _drain(compact)
+
+        transcript = await store.get_transcript(session.id)
+        assert events[-1] == "compaction.completed"
+        assert transcript.compaction is not None
+        assert transcript.compaction.covered_through_sequence == 1
+    finally:
+        if blocker is not None:
+            blocker.rollback()
+            blocker.close()
         await service.close()
 
 
@@ -576,6 +747,76 @@ async def test_send_auto_compacts_without_removing_original_turns(tmp_path: Path
         assert transcript.compaction is not None
         assert transcript.compaction.covered_through_sequence >= 1
     finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_during_auto_compaction_commit_keeps_checkpoint_without_new_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    runtime = FakeRuntime(provider, context_window_tokens=40_000)
+    store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    service = ChatService(runtime, store)
+    await service.start()
+    blocker: sqlite3.Connection | None = None
+    try:
+        session = await service.create_session()
+        for operation_id in (
+            "d3bb405e-245f-4dbf-bbdd-b72508926367",
+            "d4fec5fe-a75a-4752-8c33-f51fd105774f",
+            "79cd9bd9-df33-4ed4-8a5c-5e34770a30f7",
+        ):
+            stream = await service.send(
+                session.id,
+                expected_revision=session.revision,
+                operation_id=operation_id,
+                text="token " * 5_000,
+            )
+            await _drain(stream)
+            session = await service.get_session(session.id)
+
+        entered_commit = asyncio.Event()
+        original_upsert_compaction = store.upsert_compaction
+
+        async def observed_upsert_compaction(*args, **kwargs):
+            entered_commit.set()
+            return await original_upsert_compaction(*args, **kwargs)
+
+        monkeypatch.setattr(store, "upsert_compaction", observed_upsert_compaction)
+        blocker = sqlite3.connect(tmp_path / "chat.db", isolation_level=None)
+        blocker.execute("PRAGMA journal_mode = WAL")
+        blocker.execute("BEGIN IMMEDIATE")
+
+        operation_id = "443b12d9-8989-4bb5-a609-c9c2c0e2ecf5"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="token " * 5_000,
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+        stop_task = asyncio.create_task(
+            service.stop(session.id, operation_id=operation_id)
+        )
+        await asyncio.sleep(0.05)
+        assert not stop_task.done()
+
+        blocker.commit()
+        blocker.close()
+        blocker = None
+        assert await asyncio.wait_for(stop_task, timeout=1) is True
+        events = await _drain(stream)
+
+        transcript = await store.get_transcript(session.id)
+        assert events[-2:] == ["compaction.completed", "turn.stopped"]
+        assert transcript.compaction is not None
+        assert len(transcript.turns) == 3
+    finally:
+        if blocker is not None:
+            blocker.rollback()
+            blocker.close()
         await service.close()
 
 
