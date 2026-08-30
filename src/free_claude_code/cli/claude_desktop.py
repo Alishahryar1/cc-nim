@@ -243,10 +243,10 @@ def configure_claude_desktop_config(
         # ensure the block exists — but the snapshot must now restore the
         # REPLACEMENT on unconfigure; keeping the first-merge value would
         # silently discard the user's later change.
-        backup = data[_BACKUP_KEY]
-        if isinstance(backup, dict):
-            backup.pop("inference", None)
-            backup["inferenceRaw"] = inference_raw
+        existing_backup = data.get(_BACKUP_KEY)
+        if isinstance(existing_backup, dict):
+            existing_backup.pop("inference", None)
+            existing_backup["inferenceRaw"] = inference_raw
             changed = True
 
     for key, value in managed.items():
