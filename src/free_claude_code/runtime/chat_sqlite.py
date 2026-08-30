@@ -1,12 +1,14 @@
 """SQLite persistence owned exclusively by local Chat Sessions."""
 
-import asyncio
 import os
 import sqlite3
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import TypeVar
+
+import anyio.to_thread
 
 from free_claude_code.application.chat.models import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
@@ -47,15 +49,17 @@ class SQLiteChatStore:
         if self._started:
             return
         directory = self._database_path.parent
-        await asyncio.to_thread(directory.mkdir, parents=True, exist_ok=True)
+        await anyio.to_thread.run_sync(
+            partial(directory.mkdir, parents=True, exist_ok=True)
+        )
         _owner_only(directory, 0o700)
-        acquired = await asyncio.to_thread(self._lock.acquire)
+        acquired = await anyio.to_thread.run_sync(self._lock.acquire)
         if not acquired:
             raise ChatUnavailableError(
                 "Chat Sessions is already open in another FCC server process."
             )
         try:
-            await asyncio.to_thread(self._run_sync, self._migrate_and_repair)
+            await anyio.to_thread.run_sync(self._run_sync, self._migrate_and_repair)
             _owner_only(self._database_path, 0o600)
             for suffix in ("-wal", "-shm"):
                 sidecar = Path(f"{self._database_path}{suffix}")
@@ -71,7 +75,7 @@ class SQLiteChatStore:
 
     async def close(self) -> None:
         self._started = False
-        await asyncio.to_thread(self._lock.release)
+        await anyio.to_thread.run_sync(self._lock.release)
 
     async def load_preferences(self) -> ChatPreferences:
         return await self._run(self._load_preferences)
@@ -682,7 +686,7 @@ class SQLiteChatStore:
         if not self._started:
             raise ChatUnavailableError("Chat storage is not available.")
         try:
-            return await asyncio.to_thread(lambda: self._run_sync(operation))
+            return await anyio.to_thread.run_sync(lambda: self._run_sync(operation))
         except sqlite3.Error as exc:
             raise ChatUnavailableError("Chat storage is unavailable.") from exc
 
