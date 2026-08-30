@@ -18,6 +18,7 @@ from free_claude_code.config.admin.values import MASKED_SECRET
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.version import package_version
 from tests.api.support import create_test_app, provider_manager_for_app, runtime_for_app
 
 
@@ -89,12 +90,56 @@ def test_admin_page_is_loopback_only(monkeypatch, tmp_path):
     assert remote_client.get("/admin").status_code == 403
 
 
+def test_admin_page_uses_installed_version_for_asset_urls(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "free_claude_code.api.admin_routes.package_version",
+        lambda: "9.8.7",
+    )
+
+    response = _local_client(create_test_app()).get("/admin")
+
+    assert response.status_code == 200
+    assert 'href="/admin/assets/9.8.7/admin.css"' in response.text
+    assert 'src="/admin/assets/9.8.7/admin.js"' in response.text
+    assert 'href="/admin/assets/admin.css"' not in response.text
+    assert 'src="/admin/assets/admin.js"' not in response.text
+
+
+@pytest.mark.parametrize(
+    ("filename", "media_type"),
+    (("admin.css", "text/css"), ("admin.js", "text/javascript")),
+)
+def test_admin_versioned_assets_serve_packaged_files(
+    monkeypatch,
+    tmp_path,
+    filename,
+    media_type,
+):
+    asset_path = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "free_claude_code"
+        / "api"
+        / "admin_static"
+        / filename
+    )
+    _set_home(monkeypatch, tmp_path)
+    response = _local_client(create_test_app()).get(
+        f"/admin/assets/{package_version()}/{filename}"
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(media_type)
+    assert response.content == asset_path.read_bytes()
+
+
 @pytest.mark.parametrize(
     "path",
     (
         "/admin",
-        "/admin/assets/admin.css",
-        "/admin/assets/admin.js",
+        f"/admin/assets/{package_version()}/admin.css",
+        f"/admin/assets/{package_version()}/admin.js",
         "/admin/api/config",
     ),
 )
@@ -110,7 +155,22 @@ def test_admin_responses_are_never_cached(monkeypatch, tmp_path, path):
     ("path", "client_host", "expected_status"),
     (
         ("/admin", "203.0.113.10", 403),
-        ("/admin/assets/missing.js", "127.0.0.1", 404),
+        ("/admin/assets/admin.js", "127.0.0.1", 404),
+        (
+            f"/admin/assets/{package_version()}.stale/admin.js",
+            "127.0.0.1",
+            404,
+        ),
+        (
+            f"/admin/assets/{package_version()}/missing.js",
+            "127.0.0.1",
+            404,
+        ),
+        (
+            f"/admin/assets/{package_version()}/admin.js",
+            "203.0.113.10",
+            403,
+        ),
     ),
 )
 def test_admin_http_errors_are_never_cached(
