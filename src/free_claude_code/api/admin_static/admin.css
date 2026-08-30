@@ -104,7 +104,6 @@ textarea {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   min-height: 100vh;
-  padding-bottom: 96px; /* Space for action bar */
 }
 
 /* Sidebar Navigation */
@@ -200,7 +199,7 @@ textarea:focus-visible,
 /* Main Content Area */
 .main {
   min-width: 0;
-  padding: 40px 48px;
+  padding: 40px 48px 136px; /* Includes space for the fixed action bar */
 }
 
 .topbar {
@@ -802,7 +801,6 @@ textarea:focus-visible,
   .app-shell {
     display: flex;
     flex-direction: column;
-    padding-bottom: 180px; /* More room for stacked action bar */
   }
 
   .sidebar {
@@ -819,7 +817,7 @@ textarea:focus-visible,
   }
 
   .main {
-    padding: 24px 20px;
+    padding: 24px 20px 204px; /* Includes space for the stacked action bar */
   }
 
   .action-bar {
