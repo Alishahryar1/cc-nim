@@ -608,21 +608,32 @@
   async function updateSession(changes) {
     if (!state.session) return;
     if (state.operation && (changes.model || changes.reasoning)) return;
+    const sessionId = state.session.id;
+    const expectedRevision = state.session.revision;
+    const routeVersion = state.routeVersion;
     try {
       const session = await state.api(
-        `/admin/api/chat/sessions/${state.session.id}`,
+        `/admin/api/chat/sessions/${sessionId}`,
         {
           method: "PATCH",
           body: JSON.stringify({
-            expected_revision: state.session.revision,
+            expected_revision: expectedRevision,
             ...changes,
           }),
         },
       );
+      if (
+        routeVersion !== state.routeVersion ||
+        state.session?.id !== sessionId ||
+        state.session.revision !== expectedRevision
+      )
+        return;
       state.session = session;
       renderSessionPreservingScroll();
       scheduleEstimate(true);
     } catch (error) {
+      if (routeVersion !== state.routeVersion || state.session?.id !== sessionId)
+        return;
       await reloadSession();
       setNotice(error.message, "error");
     }

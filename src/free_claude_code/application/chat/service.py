@@ -524,7 +524,11 @@ class ChatService:
         except Exception as exc:
             await self._handle_failure(active, exc)
         finally:
-            await self._release_active(active)
+            release_task = asyncio.create_task(
+                self._release_active(active),
+                name=f"fcc-chat-release-{active.operation_id}",
+            )
+            await _await_task_despite_cancellation(release_task)
 
     async def _run_send(
         self,

@@ -12,7 +12,11 @@ import uvicorn
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
-from free_claude_code.application.chat import ChatContextEstimate, ChatService
+from free_claude_code.application.chat import (
+    ChatContextEstimate,
+    ChatReasoning,
+    ChatService,
+)
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
@@ -236,6 +240,7 @@ def admin_base_url(
         ),
     )
     original_estimate = chat.estimate
+    original_update_session = chat.update_session
     delayed_estimate_seen = False
 
     async def estimate_with_delayed_first_result(
@@ -253,6 +258,27 @@ def admin_base_url(
                 await asyncio.sleep(0.75)
 
     monkeypatch.setattr(chat, "estimate", estimate_with_delayed_first_result)
+
+    async def update_session_with_delayed_result(
+        session_id: str,
+        *,
+        expected_revision: int,
+        title: str | None = None,
+        model: str | None = None,
+        reasoning: ChatReasoning | None = None,
+    ):
+        result = await original_update_session(
+            session_id,
+            expected_revision=expected_revision,
+            title=title,
+            model=model,
+            reasoning=reasoning,
+        )
+        if title is not None and "[delay-title-save]" in title:
+            await asyncio.sleep(0.75)
+        return result
+
+    monkeypatch.setattr(chat, "update_session", update_session_with_delayed_result)
     runtime = ApplicationRuntime(manager, transcriber=None, chat_service=chat)
     app = RuntimeASGIApp(
         create_app(

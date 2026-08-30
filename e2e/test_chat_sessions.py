@@ -213,6 +213,28 @@ def test_chat_rename_prompt_and_delete(
     expect(page.locator(".chat-session-card")).to_have_count(0)
 
 
+def test_delayed_title_save_cannot_restore_chat_after_back_navigation(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    title = page.get_by_label("Chat title")
+    title.fill("[delay-title-save] Release notes")
+    with page.expect_request(
+        lambda request: (
+            request.method == "PATCH" and "/admin/api/chat/sessions/" in request.url
+        )
+    ):
+        title.press("Enter")
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    expect(page).to_have_url(f"{admin_base_url}/admin/chat")
+    expect(page.get_by_role("button", name="New chat", exact=True)).to_be_visible()
+    page.wait_for_timeout(1_000)
+    expect(page.get_by_role("button", name="New chat", exact=True)).to_be_visible()
+    expect(page).to_have_url(f"{admin_base_url}/admin/chat")
+
+
 def test_reset_system_prompt_refreshes_context_and_unblocks_send(
     page: Page,
     admin_base_url: str,

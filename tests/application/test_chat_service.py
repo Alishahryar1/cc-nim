@@ -622,6 +622,74 @@ async def test_detail_snapshot_keeps_operation_owner_visible_through_completion(
 
 
 @pytest.mark.asyncio
+async def test_cancellation_while_release_waits_cannot_strand_operation_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_commit = asyncio.Event()
+    release_snapshot = asyncio.Event()
+    try:
+        entered_commit = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_commit.set()
+            await release_commit.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        operation_id = "7f4dcfd1-bc69-4df1-9737-f434d357133a"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="finish while detail owns the lifecycle lock",
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+
+        entered_snapshot = asyncio.Event()
+        original_get_transcript = store.get_transcript
+
+        async def observed_get_transcript(session_id: str):
+            entered_snapshot.set()
+            await release_snapshot.wait()
+            return await original_get_transcript(session_id)
+
+        monkeypatch.setattr(store, "get_transcript", observed_get_transcript)
+        detail_task = asyncio.create_task(service.get_detail(session.id))
+        await asyncio.wait_for(entered_snapshot.wait(), timeout=1)
+
+        release_commit.set()
+        events = stream.__aiter__()
+        while (
+            await asyncio.wait_for(anext(events), timeout=1)
+        ).event != "turn.completed":
+            pass
+
+        close_task = asyncio.create_task(stream.aclose())
+        await asyncio.sleep(0)
+        release_snapshot.set()
+        await asyncio.wait_for(detail_task, timeout=1)
+        await asyncio.wait_for(close_task, timeout=1)
+
+        current = await service.get_session(session.id)
+        next_stream = await service.send(
+            session.id,
+            expected_revision=current.revision,
+            operation_id="87f5dd83-ee78-48d8-82f5-b65cd91034fc",
+            text="the next operation can start",
+        )
+        await _drain(next_stream)
+    finally:
+        release_commit.set()
+        release_snapshot.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_disconnect_after_durable_completion_cannot_downgrade_status(
     tmp_path: Path,
 ):
