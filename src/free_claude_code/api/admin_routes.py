@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,7 @@ from free_claude_code.config.provider_catalog import (
     ProviderAuthKind,
 )
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.version import package_version
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -30,6 +31,8 @@ from .ports import ApiServices
 router = APIRouter()
 
 STATIC_DIR = Path(__file__).resolve().parent / "admin_static"
+_ADMIN_ASSET_VERSION_PLACEHOLDER = "__FCC_VERSION__"
+_ADMIN_ASSET_FILENAMES = frozenset({"admin.css", "admin.js"})
 LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
@@ -83,23 +86,34 @@ def require_loopback_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Admin UI is local-only")
 
 
-def _asset_response(filename: str) -> FileResponse:
+def _asset_path(filename: str) -> Path:
     path = STATIC_DIR / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Admin asset not found")
-    return FileResponse(path)
+    return path
+
+
+def _asset_response(filename: str) -> FileResponse:
+    return FileResponse(_asset_path(filename))
+
+
+def _admin_page_response() -> HTMLResponse:
+    template = _asset_path("index.html").read_text(encoding="utf-8")
+    return HTMLResponse(
+        template.replace(_ADMIN_ASSET_VERSION_PLACEHOLDER, package_version())
+    )
 
 
 @router.get("/admin", include_in_schema=False)
-async def admin_page(request: Request):
+def admin_page(request: Request):
     require_loopback_admin(request)
-    return _asset_response("index.html")
+    return _admin_page_response()
 
 
-@router.get("/admin/assets/{filename}", include_in_schema=False)
-async def admin_asset(filename: str, request: Request):
+@router.get("/admin/assets/{version}/{filename}", include_in_schema=False)
+async def admin_asset(version: str, filename: str, request: Request):
     require_loopback_admin(request)
-    if filename not in {"admin.css", "admin.js"}:
+    if version != package_version() or filename not in _ADMIN_ASSET_FILENAMES:
         raise HTTPException(status_code=404, detail="Admin asset not found")
     return _asset_response(filename)
 
