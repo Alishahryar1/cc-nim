@@ -66,6 +66,44 @@ def test_chat_navigation_create_and_browser_history(
     expect(page.get_by_role("button", name="New chat", exact=True)).to_be_visible()
 
 
+def test_chat_routes_render_while_provider_health_is_still_loading(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    session = page.request.post(
+        f"{admin_base_url}/admin/api/chat/sessions",
+        data={},
+    ).json()
+    routes = (
+        ("/admin/chat", page.get_by_role("button", name="New chat", exact=True)),
+        (
+            f"/admin/chat/{session['id']}",
+            page.get_by_role("textbox", name="Message", exact=True),
+        ),
+    )
+    page.add_init_script(
+        """
+        const originalFetch = window.fetch.bind(window);
+        window.__localProviderStatusRequested = false;
+        window.fetch = (...args) => {
+          const input = args[0];
+          const value = typeof input === "string" ? input : input.url;
+          const url = new URL(value, window.location.href);
+          if (url.pathname === "/admin/api/providers/local-status") {
+            window.__localProviderStatusRequested = true;
+            return new Promise(() => {});
+          }
+          return originalFetch(...args);
+        };
+        """
+    )
+
+    for path, ready in routes:
+        page.goto(f"{admin_base_url}{path}")
+        expect(ready).to_be_visible()
+        assert page.evaluate("window.__localProviderStatusRequested === true")
+
+
 def test_model_refresh_updates_chat_bootstrap(
     page: Page,
     admin_base_url: str,

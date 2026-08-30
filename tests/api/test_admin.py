@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -1839,6 +1840,43 @@ def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
     assert response.status_code == 200
     providers = response.json()["providers"]
     assert {provider["status"] for provider in providers} == {"reachable"}
+
+
+def test_admin_local_provider_status_checks_all_providers_concurrently(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    calls = 0
+    active = 0
+    max_active = 0
+
+    class SlowAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str):
+            nonlocal active, calls, max_active
+            calls += 1
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return httpx.Response(200, json={"data": []})
+
+    with patch("free_claude_code.api.admin_routes.httpx.AsyncClient", SlowAsyncClient):
+        response = _local_client(app).get("/admin/api/providers/local-status")
+
+    assert response.status_code == 200
+    assert calls == 3
+    assert max_active == 3
 
 
 def test_admin_config_exposes_structured_provider_configuration_targets(

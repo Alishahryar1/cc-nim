@@ -1,5 +1,6 @@
 """Local admin UI routes and APIs."""
 
+import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -128,10 +129,16 @@ async def admin_status(
 async def local_provider_status(request: Request):
     require_loopback_admin(request)
     values = {key: entry.value or "" for key, entry in load_value_state().items()}
-    checks = []
-    for provider_id, path in LOCAL_PROVIDER_PATHS.items():
-        base_url = _local_provider_url(provider_id, values)
-        checks.append(await _check_local_provider(provider_id, base_url, path))
+    checks = await asyncio.gather(
+        *(
+            _check_local_provider(
+                provider_id,
+                _local_provider_url(provider_id, values),
+                path,
+            )
+            for provider_id, path in LOCAL_PROVIDER_PATHS.items()
+        )
+    )
     return {"providers": checks}
 
 
