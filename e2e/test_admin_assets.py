@@ -25,6 +25,9 @@ def test_admin_loads_current_release_assets_before_rendering_dynamic_content(
     page.goto(f"{admin_base_url}/admin")
 
     expect(page.locator('[data-provider="nvidia_nim"]')).to_be_visible()
+    expect(page.locator(".brand p")).to_have_text(
+        f"Server Control · v{package_version()}"
+    )
 
     versioned_root = f"/admin/assets/{package_version()}"
     assert f"{versioned_root}/admin.css" in requested_paths

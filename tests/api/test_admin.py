@@ -90,7 +90,7 @@ def test_admin_page_is_loopback_only(monkeypatch, tmp_path):
     assert remote_client.get("/admin").status_code == 403
 
 
-def test_admin_page_uses_installed_version_for_asset_urls(monkeypatch, tmp_path):
+def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     monkeypatch.setattr(
         "free_claude_code.api.admin_routes.package_version",
@@ -100,6 +100,7 @@ def test_admin_page_uses_installed_version_for_asset_urls(monkeypatch, tmp_path)
     response = _local_client(create_test_app()).get("/admin")
 
     assert response.status_code == 200
+    assert "<p>Server Control · v9.8.7</p>" in response.text
     assert 'href="/admin/assets/9.8.7/admin.css"' in response.text
     assert 'src="/admin/assets/9.8.7/admin.js"' in response.text
     assert 'href="/admin/assets/admin.css"' not in response.text
