@@ -32,10 +32,12 @@ def test_admin_loads_current_release_assets_before_rendering_dynamic_content(
     versioned_root = f"/admin/assets/{package_version()}"
     assert f"{versioned_root}/admin.css" in requested_paths
     assert f"{versioned_root}/chat_sessions.css" in requested_paths
+    assert f"{versioned_root}/model_combobox.js" in requested_paths
     assert f"{versioned_root}/chat_sessions.js" in requested_paths
     assert f"{versioned_root}/admin.js" in requested_paths
     assert "/admin/assets/admin.css" not in requested_paths
     assert "/admin/assets/chat_sessions.css" not in requested_paths
+    assert "/admin/assets/model_combobox.js" not in requested_paths
     assert "/admin/assets/chat_sessions.js" not in requested_paths
     assert "/admin/assets/admin.js" not in requested_paths
     assert page_errors == []

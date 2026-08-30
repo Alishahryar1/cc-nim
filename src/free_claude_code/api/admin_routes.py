@@ -32,7 +32,13 @@ router = APIRouter()
 STATIC_DIR = Path(__file__).resolve().parent / "admin_static"
 _ADMIN_ASSET_VERSION_PLACEHOLDER = "__FCC_VERSION__"
 _ADMIN_ASSET_FILENAMES = frozenset(
-    {"admin.css", "admin.js", "chat_sessions.css", "chat_sessions.js"}
+    {
+        "admin.css",
+        "admin.js",
+        "chat_sessions.css",
+        "chat_sessions.js",
+        "model_combobox.js",
+    }
 )
 LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
