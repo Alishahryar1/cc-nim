@@ -465,7 +465,7 @@
       return;
     }
     const percent = Math.round((context.usage_ratio || 0) * 100);
-    element.textContent = `Context: ${percent}% · ${formatCount(context.estimated_input_tokens)} / ${formatCount(context.usable_input_tokens)}`;
+    element.textContent = `Context: ${percent}% · ${formatCount(context.estimated_input_tokens)} / ${formatCount(context.context_window_tokens)}`;
     element.className = `chat-context-meter${percent >= 85 ? " warn" : ""}`;
   }
 
@@ -898,8 +898,9 @@
     }
     if (state.contextError) return state.contextError;
     if (
-      state.context?.usage_ratio !== null &&
-      state.context?.usage_ratio > 1 &&
+      state.context?.usable_input_tokens !== null &&
+      state.context?.estimated_input_tokens >
+        state.context?.usable_input_tokens &&
       !state.context?.can_compact
     ) {
       return "This message exceeds the model context";

@@ -1408,6 +1408,7 @@ async def test_send_auto_compacts_without_removing_original_turns(tmp_path: Path
             "4e542b5b-8386-46d2-8643-67a523c216f0",
             "86293f1e-2899-47b9-8590-27450fc00989",
             "dd945983-b49c-4749-83b3-3051d3998bc2",
+            "3a4f8108-2cf4-45c1-b412-56a8551e7f8b",
         )
         for operation_id in operation_ids:
             stream = await service.send(
@@ -1430,7 +1431,7 @@ async def test_send_auto_compacts_without_removing_original_turns(tmp_path: Path
         transcript = await store.get_transcript(session.id)
         assert "compaction.started" in events
         assert "compaction.completed" in events
-        assert len(transcript.turns) == 4
+        assert len(transcript.turns) == 5
         assert transcript.compaction is not None
         assert transcript.compaction.covered_through_sequence >= 1
     finally:
@@ -1454,6 +1455,7 @@ async def test_stop_during_auto_compaction_commit_keeps_checkpoint_without_new_t
             "d3bb405e-245f-4dbf-bbdd-b72508926367",
             "d4fec5fe-a75a-4752-8c33-f51fd105774f",
             "79cd9bd9-df33-4ed4-8a5c-5e34770a30f7",
+            "71ac3c34-7be1-4c26-b69e-f6f7193fa353",
         ):
             stream = await service.send(
                 session.id,
@@ -1499,7 +1501,7 @@ async def test_stop_during_auto_compaction_commit_keeps_checkpoint_without_new_t
         transcript = await store.get_transcript(session.id)
         assert events[-2:] == ["compaction.completed", "turn.stopped"]
         assert transcript.compaction is not None
-        assert len(transcript.turns) == 3
+        assert len(transcript.turns) == 4
     finally:
         if blocker is not None:
             blocker.rollback()

@@ -123,7 +123,7 @@ def test_chat_model_picker_searches_and_selects_in_one_control(
     assert len(model_patches) == 1
 
 
-def test_chat_context_meter_shows_used_over_usable_input_capacity(
+def test_chat_context_meter_shows_used_over_advertised_context_window(
     page: Page,
     admin_base_url: str,
 ) -> None:
@@ -139,7 +139,7 @@ def test_chat_context_meter_shows_used_over_usable_input_capacity(
     page.get_by_role("textbox", name="Message", exact=True).fill("hello")
 
     meter = page.locator("#chatContextMeter")
-    expect(meter).to_have_text(re.compile(r"^Context: \d+% · \d+ / 81\.6K$"))
+    expect(meter).to_have_text(re.compile(r"^Context: \d+% · \d+ / 100K$"))
 
 
 def test_delayed_older_page_cannot_cross_into_another_chat(
