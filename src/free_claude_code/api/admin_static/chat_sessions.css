@@ -57,11 +57,15 @@
 .chat-session-list,
 .chat-load-more,
 .chat-notice {
-  display: block;
   width: 100%;
   max-width: 920px;
   margin-left: auto;
   margin-right: auto;
+}
+
+.chat-search,
+.chat-load-more {
+  display: block;
 }
 
 .chat-search {
@@ -175,7 +179,7 @@
 }
 
 .chat-control select,
-.chat-model-filter {
+.chat-model-input {
   min-height: 38px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
@@ -186,11 +190,21 @@
 }
 
 .chat-model-control {
-  grid-template-columns: minmax(110px, 160px) minmax(190px, 260px);
+  flex: 1 1 360px;
+  max-width: 520px;
 }
 
-.chat-model-control > span {
-  grid-column: 1 / -1;
+.chat-model-control .model-combobox input[type="text"] {
+  width: 100%;
+  padding-right: 44px;
+}
+
+.chat-model-control .model-combobox {
+  text-transform: none;
+}
+
+.chat-model-control .model-combobox-toggle {
+  height: 38px;
 }
 
 .chat-context-meter {
@@ -475,6 +489,10 @@
   .chat-context-meter {
     grid-column: 1 / -1;
   }
+
+  .chat-model-control {
+    max-width: none;
+  }
 }
 
 @media (max-width: 700px) {
@@ -507,12 +525,10 @@
     flex-basis: 100%;
   }
 
-  .chat-controls,
-  .chat-model-control {
+  .chat-controls {
     grid-template-columns: 1fr;
   }
 
-  .chat-model-control > span,
   .chat-model-control,
   .chat-context-meter {
     grid-column: auto;

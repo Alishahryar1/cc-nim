@@ -107,6 +107,7 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
     assert "<p>Server Control · v9.8.7</p>" in response.text
     assert 'href="/admin/assets/9.8.7/admin.css"' in response.text
     assert 'href="/admin/assets/9.8.7/chat_sessions.css"' in response.text
+    assert 'src="/admin/assets/9.8.7/model_combobox.js"' in response.text
     assert 'src="/admin/assets/9.8.7/chat_sessions.js"' in response.text
     assert 'src="/admin/assets/9.8.7/admin.js"' in response.text
     assert 'href="/admin/assets/admin.css"' not in response.text
@@ -122,6 +123,7 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
         ("admin.js", "text/javascript"),
         ("chat_sessions.css", "text/css"),
         ("chat_sessions.js", "text/javascript"),
+        ("model_combobox.js", "text/javascript"),
     ),
 )
 def test_admin_versioned_assets_serve_packaged_files(
@@ -156,6 +158,7 @@ def test_admin_versioned_assets_serve_packaged_files(
         f"/admin/assets/{package_version()}/admin.js",
         f"/admin/assets/{package_version()}/chat_sessions.css",
         f"/admin/assets/{package_version()}/chat_sessions.js",
+        f"/admin/assets/{package_version()}/model_combobox.js",
         "/admin/api/config",
     ),
 )
@@ -424,23 +427,27 @@ def test_admin_static_model_combobox_owns_dropdown_and_search_behavior():
     script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
         encoding="utf-8"
     )
+    combobox_script = Path(
+        "src/free_claude_code/api/admin_static/model_combobox.js"
+    ).read_text(encoding="utf-8")
     styles = Path("src/free_claude_code/api/admin_static/admin.css").read_text(
         encoding="utf-8"
     )
 
     assert 'api("/admin/api/models" + (refresh ? "/refresh" : "")' in script
     assert 'field.type === "model" || field.type === "optional_model"' in script
-    assert 'input.setAttribute("role", "combobox")' in script
-    assert 'listbox.setAttribute("role", "listbox")' in script
-    assert 'toggle.className = "model-combobox-toggle"' in script
-    assert "class ModelCombobox" in script
-    assert 'input.addEventListener("click", () => this.open())' in script
-    assert "value.toLocaleLowerCase().includes(normalizedQuery)" in script
-    assert 'event.key === "ArrowDown" || event.key === "ArrowUp"' in script
-    assert "this.setActive(this.visibleOptions.length - 1)" in script
-    assert 'event.key === "Enter"' in script
-    assert 'event.key === "Escape"' in script
-    assert 'document.createElement("datalist")' not in script
+    assert "new window.FccModelCombobox" in script
+    assert 'input.setAttribute("role", "combobox")' in combobox_script
+    assert 'this.listbox.setAttribute("role", "listbox")' in combobox_script
+    assert 'this.toggle.className = "model-combobox-toggle"' in combobox_script
+    assert "class FccModelCombobox" in combobox_script
+    assert 'input.addEventListener("click", () => this.open())' in combobox_script
+    assert "value.toLocaleLowerCase().includes(normalizedQuery)" in combobox_script
+    assert 'event.key === "ArrowDown" || event.key === "ArrowUp"' in combobox_script
+    assert "this.setActive(this.visibleOptions.length - 1)" in combobox_script
+    assert 'event.key === "Enter"' in combobox_script
+    assert 'event.key === "Escape"' in combobox_script
+    assert 'document.createElement("datalist")' not in combobox_script
     assert ".model-combobox-list" in styles
     assert ".model-combobox-option.active" in styles
     assert styles.count("background-image: var(--dropdown-chevron)") == 2

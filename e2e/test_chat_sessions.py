@@ -13,6 +13,21 @@ def _new_chat(page: Page, admin_base_url: str) -> None:
     expect(page.get_by_role("textbox", name="Message", exact=True)).to_be_visible()
 
 
+def _select_model(page: Page, model_ref: str) -> None:
+    model = page.get_by_role("combobox", name="Selected model")
+    model.click()
+    model.fill(model_ref)
+    expect(page.get_by_role("option", name=model_ref, exact=True)).to_be_visible()
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH"
+            and "/admin/api/chat/sessions/" in response.url
+        )
+    ):
+        model.press("Enter")
+    expect(page.get_by_role("combobox", name="Selected model")).to_have_value(model_ref)
+
+
 def test_chat_navigation_create_and_browser_history(
     page: Page,
     admin_base_url: str,
@@ -71,12 +86,41 @@ def test_model_refresh_updates_chat_bootstrap(
     page.get_by_role("button", name="Chat Sessions").click()
     page.locator(".chat-session-card").click()
 
-    expect(page.get_by_label("Selected model")).to_have_value(target)
-    expect(page.get_by_label("Selected model").locator("option:checked")).to_have_text(
-        "vendor/model-b"
-    )
+    expect(page.get_by_role("combobox", name="Selected model")).to_have_value(target)
     page.get_by_role("textbox", name="Message", exact=True).fill("still available")
     expect(page.get_by_role("button", name="Send")).to_be_enabled()
+
+
+def test_chat_model_picker_searches_and_selects_in_one_control(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    model_patches: list[str] = []
+    page.on(
+        "request",
+        lambda request: (
+            model_patches.append(request.url)
+            if request.method == "PATCH" and "/admin/api/chat/sessions/" in request.url
+            else None
+        ),
+    )
+
+    model = page.get_by_role("combobox", name="Selected model")
+    expect(model).to_have_value("open_router/e2e-default")
+    expect(page.get_by_role("searchbox", name="Filter models")).to_have_count(0)
+    expect(page.locator("select#chatModel")).to_have_count(0)
+    expect(page.locator("#chatNotice")).to_be_hidden()
+
+    model.fill("not-a-catalog-model")
+    expect(page.get_by_text("No matching models.", exact=True)).to_be_visible()
+    page.get_by_label("Thinking").click()
+    expect(model).to_have_value("open_router/e2e-default")
+
+    _select_model(page, "open_router/vendor/small-context")
+    expect(page.get_by_role("listbox")).to_be_hidden()
+    page.wait_for_timeout(100)
+    assert len(model_patches) == 1
 
 
 def test_delayed_older_page_cannot_cross_into_another_chat(
@@ -537,9 +581,7 @@ def test_reset_system_prompt_refreshes_context_and_unblocks_send(
     admin_base_url: str,
 ) -> None:
     _new_chat(page, admin_base_url)
-    page.get_by_label("Selected model").select_option(
-        "open_router/vendor/small-context"
-    )
+    _select_model(page, "open_router/vendor/small-context")
     message = page.get_by_role("textbox", name="Message", exact=True)
     message.fill("send after reset")
 
@@ -590,6 +632,6 @@ def test_chat_remains_usable_at_narrow_viewport(
     page.set_viewport_size({"width": 390, "height": 844})
     _new_chat(page, admin_base_url)
 
-    expect(page.get_by_label("Selected model")).to_be_visible()
+    expect(page.get_by_role("combobox", name="Selected model")).to_be_visible()
     expect(page.get_by_label("Thinking")).to_be_visible()
     expect(page.get_by_role("textbox", name="Message", exact=True)).to_be_in_viewport()

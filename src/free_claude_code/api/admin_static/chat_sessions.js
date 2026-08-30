@@ -26,6 +26,7 @@
     foreignPollTimer: null,
     serverOperationActive: false,
     eventChannel: null,
+    modelComboboxes: new Set(),
   };
 
   const root = () => document.getElementById("chatRoot");
@@ -120,11 +121,13 @@
   }
 
   function renderLoading() {
+    state.modelComboboxes.clear();
     const container = root();
     container.replaceChildren(node("div", "chat-empty", "Loading Chat Sessions…"));
   }
 
   function renderUnavailable() {
+    state.modelComboboxes.clear();
     const container = node("section", "chat-empty");
     container.append(
       node("h3", "", "Chat Sessions unavailable"),
@@ -150,6 +153,7 @@
   }
 
   function renderLibraryShell() {
+    state.modelComboboxes.clear();
     const header = node("header", "chat-library-header");
     const copy = node("div");
     copy.append(
@@ -329,6 +333,7 @@
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
     const session = state.session;
     if (!session) return;
+    state.modelComboboxes.clear();
     const shell = node("div", "chat-session-shell");
     const header = renderSessionHeader(session);
     const notice = node("div", "chat-notice");
@@ -388,51 +393,35 @@
   }
 
   function renderModelControl(session) {
-    const group = node("label", "chat-control chat-model-control");
-    group.appendChild(node("span", "", "Model"));
-    const filter = node("input", "chat-model-filter");
-    filter.type = "search";
-    filter.placeholder = "Filter models";
-    filter.setAttribute("aria-label", "Filter models");
-    const select = node("select");
-    select.id = "chatModel";
-    select.setAttribute("aria-label", "Selected model");
-    fillModelOptions(select, "", session.model);
-    filter.addEventListener("input", () =>
-      fillModelOptions(select, filter.value, state.session.model),
-    );
-    select.addEventListener("change", () => updateSession({ model: select.value }));
-    group.append(filter, select);
+    const group = node("div", "chat-control chat-model-control");
+    const label = node("label", "", "Model");
+    label.htmlFor = "chatModel";
+    const input = node("input", "chat-model-input");
+    input.id = "chatModel";
+    input.type = "text";
+    input.autocomplete = "off";
+    input.value = session.model;
+    input.setAttribute("aria-label", "Selected model");
+    let committedModel = session.model;
+    const availableModels = () =>
+      (state.bootstrap?.models || []).map((option) => option.model_ref);
+    const combobox = new window.FccModelCombobox(input, {
+      listboxId: "chat-model-options",
+      label: "model",
+      values: availableModels,
+      emptyMessage: () =>
+        availableModels().length ? "No matching models." : "No models available.",
+      registry: state.modelComboboxes,
+      onSelect: (model) => {
+        committedModel = model;
+        void updateSession({ model });
+      },
+      onClose: () => {
+        input.value = committedModel;
+      },
+    });
+    group.append(label, combobox.element);
     return group;
-  }
-
-  function fillModelOptions(select, query, selected) {
-    const folded = query.trim().toLowerCase();
-    const matches = (state.bootstrap.models || []).filter(
-      (option) => !folded || option.model_ref.toLowerCase().includes(folded),
-    );
-    const groups = new Map();
-    matches.forEach((option) => {
-      if (!groups.has(option.provider_id)) groups.set(option.provider_id, []);
-      groups.get(option.provider_id).push(option);
-    });
-    select.replaceChildren();
-    if (!(state.bootstrap.models || []).some((item) => item.model_ref === selected)) {
-      const unavailable = node("option", "", `${selected} (Unavailable)`);
-      unavailable.value = selected;
-      select.appendChild(unavailable);
-    }
-    [...groups.keys()].sort().forEach((provider) => {
-      const group = document.createElement("optgroup");
-      group.label = provider;
-      groups.get(provider).forEach((option) => {
-        const item = node("option", "", option.model_id);
-        item.value = option.model_ref;
-        group.appendChild(item);
-      });
-      select.appendChild(group);
-    });
-    select.value = selected;
   }
 
   function renderReasoningControl(session) {
@@ -930,11 +919,13 @@
     stop.hidden = !state.operation;
     textarea.disabled = Boolean(state.operation);
     status.textContent = state.operation ? state.operation.status : blocked;
-    document.querySelectorAll(".chat-controls button, .chat-controls select").forEach(
-      (control) => {
+    document
+      .querySelectorAll(
+        ".chat-controls button, .chat-controls input, .chat-controls select",
+      )
+      .forEach((control) => {
         control.disabled = busy;
-      },
-    );
+      });
     if (compact) {
       compact.disabled = busy || !state.context?.can_compact;
     }
@@ -1271,4 +1262,12 @@
   }
 
   window.ChatSessions = { initialize, activate, refresh };
+
+  document.addEventListener("pointerdown", (event) => {
+    state.modelComboboxes.forEach((combobox) => {
+      if (combobox.isOpen && !combobox.element.contains(event.target)) {
+        combobox.close();
+      }
+    });
+  });
 })();
