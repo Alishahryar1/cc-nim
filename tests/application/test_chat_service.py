@@ -344,6 +344,105 @@ async def test_closing_initiating_stream_cancels_and_persists_partial_answer(
 
 
 @pytest.mark.asyncio
+async def test_stop_retries_transient_terminal_persistence_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        operation_id = "3a1c071f-f558-4be3-a072-f9af230352ec"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="survive one storage failure",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+
+        attempts = 0
+        original_finish_generation = store.finish_generation
+
+        async def flaky_finish_generation(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ChatUnavailableError("Chat storage is temporarily unavailable.")
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", flaky_finish_generation)
+
+        assert await service.stop(session.id, operation_id=operation_id) is True
+        assert (await _drain(stream))[-1] == "turn.stopped"
+
+        transcript = await store.get_transcript(session.id)
+        assert attempts == 2
+        assert transcript.turns[-1].generation.status is GenerationStatus.STOPPED
+        assert (await service.get_detail(session.id)).active_operation is False
+
+        provider.block_after_delta = False
+        replacement = await service.send(
+            session.id,
+            expected_revision=transcript.session.revision,
+            operation_id="f5190fdb-ce16-402d-a5a2-1633ba0cae55",
+            text="keep going",
+        )
+        assert (await _drain(replacement))[-1] == "turn.completed"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_persistence_failure_disables_chat_instead_of_lying(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        operation_id = "f744570e-0ec6-4f70-b74d-19de6bc60547"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="surface a persistent storage failure",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+
+        attempts = 0
+
+        async def unavailable_finish_generation(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            raise ChatUnavailableError("Chat storage is unavailable.")
+
+        monkeypatch.setattr(
+            store,
+            "finish_generation",
+            unavailable_finish_generation,
+        )
+
+        assert await service.stop(session.id, operation_id=operation_id) is True
+        assert (await _drain(stream))[-1] == "turn.failed"
+        assert attempts == 2
+
+        available, message = service.availability()
+        assert available is False
+        assert message == (
+            "Chat storage became unavailable. Restart FCC to repair Chat Sessions."
+        )
+        with pytest.raises(ChatUnavailableError, match="Restart FCC"):
+            await service.get_detail(session.id)
+
+        generation = (await store.get_transcript(session.id)).turns[-1].generation
+        assert generation.status is GenerationStatus.RUNNING
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_immediate_stop_before_operation_task_starts_releases_owner(
     tmp_path: Path,
 ):

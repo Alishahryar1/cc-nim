@@ -57,6 +57,9 @@ _PERSIST_INTERVAL_SECONDS = 0.25
 _PERSIST_CHARACTER_THRESHOLD = 4_096
 _TURN_PAGE_LIMIT = 50
 _SESSION_PAGE_LIMIT = 25
+_STORAGE_RESTART_MESSAGE = (
+    "Chat storage became unavailable. Restart FCC to repair Chat Sessions."
+)
 
 
 class _OperationKind(StrEnum):
@@ -844,7 +847,7 @@ class ChatService:
                 return await self._store.finish_regeneration(
                     generation_id, stop_reason=stop_reason
                 )
-            return await self._store.finish_generation(
+            return await self._finish_generation(
                 generation_id,
                 status=GenerationStatus.COMPLETED,
                 stop_reason=stop_reason,
@@ -1210,14 +1213,36 @@ class ChatService:
                     if reason is _CancellationReason.INTERRUPTED
                     else GenerationStatus.STOPPED
                 )
-                with contextlib.suppress(Exception):
-                    await self._store.finish_generation(
+                try:
+                    await self._finish_generation(
                         active.generation_id,
                         status=status,
                         stop_reason=reason.value,
                         error_code=None,
                         error_message=None,
                     )
+                except Exception as exc:
+                    if reason is _CancellationReason.INTERRUPTED:
+                        logger.warning(
+                            "Chat shutdown could not persist terminal state: "
+                            "session_id={} operation_id={} exc_type={}",
+                            active.session_id,
+                            active.operation_id,
+                            type(exc).__name__,
+                        )
+                        return
+                    self._disable_after_terminal_write_failure(active, exc)
+                    if reason is _CancellationReason.DELETED:
+                        raise
+                    self._emit_terminal_nowait(
+                        active,
+                        "turn.failed",
+                        {
+                            "code": "chat_storage_unavailable",
+                            "message": _STORAGE_RESTART_MESSAGE,
+                        },
+                    )
+                    return
         if reason is _CancellationReason.DELETED:
             return
         event = (
@@ -1253,20 +1278,74 @@ class ChatService:
                 with contextlib.suppress(Exception):
                     await self._store.discard_generation(active.generation_id)
             else:
-                with contextlib.suppress(Exception):
-                    await self._store.finish_generation(
+                try:
+                    await self._finish_generation(
                         active.generation_id,
                         status=GenerationStatus.FAILED,
                         stop_reason=None,
                         error_code=code,
                         error_message=message,
                     )
+                except Exception as persistence_exc:
+                    self._disable_after_terminal_write_failure(
+                        active,
+                        persistence_exc,
+                    )
+                    code = "chat_storage_unavailable"
+                    message = _STORAGE_RESTART_MESSAGE
         event = (
             "compaction.failed"
             if active.kind is _OperationKind.COMPACT
             else "turn.failed"
         )
         self._emit_terminal_nowait(active, event, {"code": code, "message": message})
+
+    async def _finish_generation(
+        self,
+        generation_id: str,
+        *,
+        status: GenerationStatus,
+        stop_reason: str | None,
+        error_code: str | None,
+        error_message: str | None,
+    ) -> ChatSession:
+        try:
+            return await self._store.finish_generation(
+                generation_id,
+                status=status,
+                stop_reason=stop_reason,
+                error_code=error_code,
+                error_message=error_message,
+            )
+        except ChatUnavailableError:
+            logger.warning(
+                "Retrying transient Chat terminal persistence failure: "
+                "generation_id={} status={}",
+                generation_id,
+                status.value,
+            )
+            return await self._store.finish_generation(
+                generation_id,
+                status=status,
+                stop_reason=stop_reason,
+                error_code=error_code,
+                error_message=error_message,
+            )
+
+    def _disable_after_terminal_write_failure(
+        self,
+        active: _ActiveOperation,
+        exc: Exception,
+    ) -> None:
+        self._accepting = False
+        self._unavailable_message = _STORAGE_RESTART_MESSAGE
+        logger.error(
+            "Chat Sessions disabled after terminal persistence failure: "
+            "session_id={} operation_id={} exc_type={}",
+            active.session_id,
+            active.operation_id,
+            type(exc).__name__,
+        )
 
     async def _emit(
         self, active: _ActiveOperation, event: str, data: JsonObject
