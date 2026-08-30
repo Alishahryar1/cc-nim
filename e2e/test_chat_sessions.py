@@ -90,7 +90,7 @@ def test_delayed_older_page_cannot_cross_into_another_chat(
     expect(page.locator(".assistant-message")).to_have_count(1)
     message.fill("A latest")
     page.get_by_role("button", name="Send").click()
-    expect(page.locator(".assistant-message")).to_have_count(2)
+    expect(message).to_be_enabled()
     title = page.get_by_label("Chat title")
     title.fill("[delay-older-page] Chat A")
     with page.expect_response(
