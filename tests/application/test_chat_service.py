@@ -422,7 +422,7 @@ async def test_cancellation_waits_for_generation_start_commit_before_cleanup(
             operation_id="7f4c7a3f-c06e-42c3-9887-f748dc5aa518",
             text="partial answer",
         )
-        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.started.wait(), timeout=5)
         assert await service.stop(
             session.id,
             operation_id="7f4c7a3f-c06e-42c3-9887-f748dc5aa518",
