@@ -533,6 +533,61 @@ def test_long_transcript_keeps_composer_visible_and_preserves_reader_scroll_posi
     assert scroller.evaluate("node => node.scrollTop") < 10
 
 
+def test_chat_composer_is_one_compact_surface_and_grows_to_six_lines(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    page.set_viewport_size({"width": 1_258, "height": 566})
+    _new_chat(page, admin_base_url)
+    composer = page.locator(".chat-composer")
+    message = page.get_by_role("textbox", name="Message", exact=True)
+
+    surface = composer.evaluate(
+        """node => {
+            const box = node.getBoundingClientRect();
+            const textarea = node.querySelector("textarea").getBoundingClientRect();
+            const send = node.querySelector("#chatSend").getBoundingClientRect();
+            const surfaceStyle = getComputedStyle(node);
+            const textareaStyle = getComputedStyle(node.querySelector("textarea"));
+            return {
+                contained:
+                    textarea.left >= box.left && textarea.right <= box.right &&
+                    textarea.top >= box.top && textarea.bottom <= box.bottom &&
+                    send.left >= box.left && send.right <= box.right &&
+                    send.top >= box.top && send.bottom <= box.bottom,
+                surfaceBorder: surfaceStyle.borderLeftWidth,
+                textareaBorder: textareaStyle.borderLeftWidth,
+                bottomGap: window.innerHeight - box.bottom,
+            };
+        }"""
+    )
+    assert surface == {
+        "contained": True,
+        "surfaceBorder": "1px",
+        "textareaBorder": "0px",
+        "bottomGap": 16,
+    }
+
+    two_line_height = message.evaluate("node => node.getBoundingClientRect().height")
+    message.fill("one\ntwo\nthree\nfour")
+    four_line_height = message.evaluate("node => node.getBoundingClientRect().height")
+    message.fill("\n".join(f"line {index}" for index in range(6)))
+    six_line_height = message.evaluate("node => node.getBoundingClientRect().height")
+    six_line_overflow = message.evaluate("node => getComputedStyle(node).overflowY")
+    message.fill("\n".join(f"line {index}" for index in range(8)))
+    capped_height = message.evaluate("node => node.getBoundingClientRect().height")
+    overflow = message.evaluate("node => getComputedStyle(node).overflowY")
+    message.fill("short again")
+    reset_height = message.evaluate("node => node.getBoundingClientRect().height")
+
+    assert four_line_height > two_line_height
+    assert six_line_height > four_line_height
+    assert six_line_overflow == "hidden"
+    assert capped_height == six_line_height
+    assert overflow == "auto"
+    assert reset_height == two_line_height
+
+
 def test_chat_rename_prompt_and_delete(
     page: Page,
     admin_base_url: str,

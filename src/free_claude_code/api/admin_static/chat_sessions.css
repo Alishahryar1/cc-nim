@@ -13,7 +13,7 @@
 }
 
 .chat-root {
-  padding: 36px 42px;
+  padding: 36px 42px 16px;
 }
 
 .chat-library-header,
@@ -376,25 +376,37 @@
 
 .chat-composer {
   grid-area: composer;
-  border-top: 1px solid var(--line);
-  background: var(--bg);
-  padding: 16px max(12px, 7vw) 20px;
+  margin: 8px max(12px, 7vw) 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--input);
+  padding: 10px 12px 9px;
+}
+
+.chat-composer:focus-within {
+  border-color: var(--accent);
+  background: var(--input-focus);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
 }
 
 .chat-composer textarea {
   display: block;
   width: 100%;
+  min-height: calc(3em + 8px);
+  max-height: calc(9em + 8px);
   resize: none;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-lg);
-  background: var(--input);
-  padding: 13px 15px;
+  overflow-y: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 2px;
   line-height: 1.5;
+  outline: none;
 }
 
 .chat-composer-actions {
   gap: 12px;
-  margin-top: 9px;
+  margin-top: 4px;
 }
 
 .chat-composer-status {
@@ -486,7 +498,7 @@
   }
 
   .chat-root {
-    padding: 24px 20px;
+    padding: 24px 20px 12px;
   }
 
   .chat-controls {
@@ -514,7 +526,7 @@
   }
 
   .chat-root {
-    padding: 16px 12px;
+    padding: 16px 12px 8px;
   }
 
   .chat-session-shell {
@@ -543,10 +555,14 @@
     grid-column: auto;
   }
 
-  .chat-transcript,
-  .chat-composer {
+  .chat-transcript {
     padding-left: 4px;
     padding-right: 4px;
+  }
+
+  .chat-composer {
+    margin-left: 4px;
+    margin-right: 4px;
   }
 }
 
