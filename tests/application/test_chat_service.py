@@ -565,6 +565,63 @@ async def test_stop_at_generation_commit_preserves_completed_result(
 
 
 @pytest.mark.asyncio
+async def test_detail_snapshot_keeps_operation_owner_visible_through_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_commit = asyncio.Event()
+    release_snapshot = asyncio.Event()
+    try:
+        entered_commit = asyncio.Event()
+        committed = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_commit.set()
+            await release_commit.wait()
+            result = await original_finish_generation(*args, **kwargs)
+            committed.set()
+            return result
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="9e34cdcb-3d56-44f2-8921-a5d43cb0ed20",
+            text="complete while detail loads",
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+
+        entered_snapshot = asyncio.Event()
+        original_get_transcript = store.get_transcript
+
+        async def observed_get_transcript(session_id: str):
+            entered_snapshot.set()
+            await release_snapshot.wait()
+            return await original_get_transcript(session_id)
+
+        monkeypatch.setattr(store, "get_transcript", observed_get_transcript)
+        detail_task = asyncio.create_task(service.get_detail(session.id))
+        await asyncio.wait_for(entered_snapshot.wait(), timeout=1)
+
+        release_commit.set()
+        await asyncio.wait_for(committed.wait(), timeout=1)
+        release_snapshot.set()
+        detail = await asyncio.wait_for(detail_task, timeout=1)
+        await _drain(stream)
+
+        assert detail.active_operation is True
+        assert detail.session.revision > session.revision
+    finally:
+        release_commit.set()
+        release_snapshot.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_disconnect_after_durable_completion_cannot_downgrade_status(
     tmp_path: Path,
 ):

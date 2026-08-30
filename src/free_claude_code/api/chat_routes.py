@@ -129,29 +129,17 @@ async def get_chat_session(
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    chat = _chat(services)
-    session = await chat.get_session(session_id)
-    turns, next_before, compaction = await chat.get_turn_page(
-        session_id,
-        before_sequence=None,
-        limit=50,
-    )
-    estimate: ChatContextEstimate | None
-    context_error: str | None = None
-    try:
-        estimate = await chat.estimate(session_id, draft="")
-    except ChatValidationError as exc:
-        estimate = None
-        context_error = str(exc)
-    active_operation = await chat.operation_active(session_id)
+    detail = await _chat(services).get_detail(session_id)
     return {
-        "session": _session_payload(session),
-        "turns": [_turn_payload(turn) for turn in turns],
-        "next_before": next_before,
-        "compaction": _compaction_payload(compaction),
-        "context": _estimate_payload(estimate) if estimate is not None else None,
-        "context_error": context_error,
-        "active_operation": active_operation,
+        "session": _session_payload(detail.session),
+        "turns": [_turn_payload(turn) for turn in detail.turns],
+        "next_before": detail.next_before,
+        "compaction": _compaction_payload(detail.compaction),
+        "context": (
+            _estimate_payload(detail.context) if detail.context is not None else None
+        ),
+        "context_error": detail.context_error,
+        "active_operation": detail.active_operation,
     }
 
 

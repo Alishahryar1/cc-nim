@@ -40,6 +40,7 @@ from .models import (
     ChatReasoning,
     ChatSegment,
     ChatSession,
+    ChatSessionDetail,
     ChatSessionPage,
     ChatStreamEvent,
     ChatTranscript,
@@ -235,11 +236,35 @@ class ChatService:
         self._require_available()
         return await self._store.get_session(_canonical_uuid(session_id, "session"))
 
-    async def operation_active(self, session_id: str) -> bool:
+    async def get_detail(self, session_id: str) -> ChatSessionDetail:
         self._require_available()
         session_id = _canonical_uuid(session_id, "session")
         async with self._active_lock:
-            return session_id in self._active
+            active_operation = session_id in self._active
+            transcript = await self._store.get_transcript(session_id)
+            prompt = (await self._store.load_preferences()).system_prompt
+            context: ChatContextEstimate | None
+            context_error: str | None = None
+            try:
+                context = self._context.prepare(
+                    transcript,
+                    system_prompt=prompt,
+                ).estimate
+            except ChatValidationError as exc:
+                context = None
+                context_error = str(exc)
+            has_more = len(transcript.turns) > _TURN_PAGE_LIMIT
+            turns = transcript.turns[-_TURN_PAGE_LIMIT:]
+            next_before = turns[0].sequence if has_more and turns else None
+            return ChatSessionDetail(
+                session=transcript.session,
+                turns=turns,
+                next_before=next_before,
+                compaction=transcript.compaction,
+                context=context,
+                context_error=context_error,
+                active_operation=active_operation,
+            )
 
     async def update_session(
         self,

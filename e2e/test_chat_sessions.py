@@ -243,6 +243,27 @@ def test_reset_system_prompt_refreshes_context_and_unblocks_send(
     expect(page.get_by_role("button", name="Send")).to_be_enabled()
 
 
+def test_estimate_from_before_operation_cannot_overwrite_terminal_context(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("first")
+    page.get_by_role("button", name="Send").click()
+    expect(page.locator(".assistant-message")).to_have_count(1)
+
+    message.fill("[delay-first-estimate] second")
+    page.wait_for_timeout(350)
+    page.get_by_role("button", name="Send").click()
+
+    expect(page.locator(".assistant-message")).to_have_count(2)
+    compact = page.get_by_role("button", name="Compact now")
+    expect(compact).to_be_enabled(timeout=3_000)
+    page.wait_for_timeout(800)
+    expect(compact).to_be_enabled()
+
+
 def test_chat_remains_usable_at_narrow_viewport(
     page: Page,
     admin_base_url: str,

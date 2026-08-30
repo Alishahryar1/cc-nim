@@ -159,6 +159,17 @@ class ChatContextEstimate:
 
 
 @dataclass(frozen=True, slots=True)
+class ChatSessionDetail:
+    session: ChatSession
+    turns: tuple[ChatTurn, ...]
+    next_before: int | None
+    compaction: ChatCompaction | None
+    context: ChatContextEstimate | None
+    context_error: str | None
+    active_operation: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ChatStreamEvent:
     event: str
     sequence: int

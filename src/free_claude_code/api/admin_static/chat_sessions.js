@@ -242,6 +242,7 @@
   }
 
   function applyDetail(detail) {
+    invalidateEstimate();
     if (state.draftSessionId !== detail.session.id) {
       state.draft = "";
       state.draftSessionId = detail.session.id;
@@ -253,6 +254,7 @@
     state.context = detail.context;
     state.contextError = detail.context_error || "";
     state.serverOperationActive = Boolean(detail.active_operation);
+    if (state.draft && !state.operation) scheduleEstimate(true);
   }
 
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
@@ -702,9 +704,15 @@
     textarea.focus();
   }
 
-  function scheduleEstimate(immediate = false) {
+  function invalidateEstimate() {
     window.clearTimeout(state.estimateTimer);
-    const version = ++state.estimateVersion;
+    state.estimateTimer = null;
+    state.estimateVersion += 1;
+  }
+
+  function scheduleEstimate(immediate = false) {
+    invalidateEstimate();
+    const version = state.estimateVersion;
     state.estimateTimer = window.setTimeout(
       () => updateEstimate(version),
       immediate ? 0 : 250,
@@ -715,16 +723,21 @@
     const session = state.session;
     if (!session || state.operation || version !== state.estimateVersion) return;
     const textarea = document.getElementById("chatComposer");
+    const revision = session.revision;
+    const draft = textarea?.value || "";
     try {
       const context = await state.api(
         `/admin/api/chat/sessions/${session.id}/estimate`,
         {
           method: "POST",
-          body: JSON.stringify({ draft: textarea?.value || "" }),
+          body: JSON.stringify({ draft }),
         },
       );
       if (
         state.session?.id !== session.id ||
+        state.session.revision !== revision ||
+        state.draft !== draft ||
+        state.operation ||
         version !== state.estimateVersion
       )
         return;
@@ -735,6 +748,9 @@
     } catch (error) {
       if (
         state.session?.id !== session.id ||
+        state.session.revision !== revision ||
+        state.draft !== draft ||
+        state.operation ||
         version !== state.estimateVersion
       )
         return;
@@ -828,6 +844,7 @@
 
   async function runOperation(action, extra) {
     if (!state.session || state.operation) return;
+    invalidateEstimate();
     let failure = null;
     const operation = {
       id: crypto.randomUUID(),

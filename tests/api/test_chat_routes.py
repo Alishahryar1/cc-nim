@@ -12,6 +12,7 @@ from free_claude_code.application.chat import (
     ChatReasoning,
     ChatSegment,
     ChatSession,
+    ChatSessionDetail,
     ChatSessionPage,
     ChatSessionSummary,
     ChatStreamEvent,
@@ -120,9 +121,29 @@ class StubChat:
     async def create_session(self) -> ChatSession:
         return self.session
 
-    async def operation_active(self, session_id: str) -> bool:
-        assert session_id == SESSION_ID
-        return self.active_operation
+    async def get_detail(self, session_id: str) -> ChatSessionDetail:
+        session = await self.get_session(session_id)
+        turns, next_before, compaction = await self.get_turn_page(
+            session_id,
+            before_sequence=None,
+            limit=50,
+        )
+        context: ChatContextEstimate | None
+        context_error: str | None = None
+        try:
+            context = await self.estimate(session_id, draft="")
+        except ChatValidationError as exc:
+            context = None
+            context_error = str(exc)
+        return ChatSessionDetail(
+            session=session,
+            turns=turns,
+            next_before=next_before,
+            compaction=compaction,
+            context=context,
+            context_error=context_error,
+            active_operation=self.active_operation,
+        )
 
     async def list_sessions(
         self,
