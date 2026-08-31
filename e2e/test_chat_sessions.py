@@ -450,6 +450,30 @@ def test_committed_send_does_not_restore_draft_when_stream_ack_is_lost(
     ).to_be_visible()
 
 
+def test_send_keeps_composer_ready_for_the_next_draft(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+
+    message.fill("first")
+    message.press("Enter")
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+    expect(message).to_be_focused()
+
+    message.fill("[slow] second")
+    message.press("Enter")
+    expect(page.locator(".live-message")).to_contain_text("E2E answer")
+    expect(message).to_be_enabled()
+    expect(message).to_be_focused()
+    message.fill("next draft")
+
+    page.get_by_role("button", name="Stop").click()
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+    expect(message).to_have_value("next draft")
+
+
 def test_chat_stop_then_retry_uses_one_operation_owner(
     page: Page,
     admin_base_url: str,

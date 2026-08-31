@@ -508,6 +508,30 @@
       textarea.scrollHeight > textarea.clientHeight ? "auto" : "hidden";
   }
 
+  function composerFocusIsUnclaimed() {
+    const active = document.activeElement;
+    return !active || active === document.body || active === document.documentElement;
+  }
+
+  function captureComposerSelection() {
+    const textarea = document.getElementById("chatComposer");
+    if (!textarea || document.activeElement !== textarea) return null;
+    return {
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+      direction: textarea.selectionDirection,
+    };
+  }
+
+  function restoreComposerSelection(selection) {
+    const textarea = document.getElementById("chatComposer");
+    if (!textarea || textarea.disabled || !selection) return;
+    const start = Math.min(selection.start, textarea.value.length);
+    const end = Math.min(selection.end, textarea.value.length);
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(start, end, selection.direction);
+  }
+
   function renderTranscript() {
     const scroller = document.getElementById("chatTranscript");
     if (!scroller) return;
@@ -934,7 +958,7 @@
     send.disabled = Boolean(blocked) || !textarea.value.trim();
     send.hidden = Boolean(state.operation);
     stop.hidden = !state.operation;
-    textarea.disabled = Boolean(state.operation);
+    textarea.disabled = Boolean(state.operation && !state.operation.accepted);
     status.textContent =
       state.operation?.action === "compact"
         ? state.operation.status
@@ -976,6 +1000,7 @@
     if (!state.session || state.operation) return;
     invalidateEstimate();
     let failure = null;
+    const activeElementId = document.activeElement?.id;
     const operation = {
       id: crypto.randomUUID(),
       sessionId: state.session.id,
@@ -988,6 +1013,9 @@
       accepted: false,
       failureMessage: "",
       renderFrame: null,
+      returnFocusToComposer:
+        action === "send" &&
+        (activeElementId === "chatComposer" || activeElementId === "chatSend"),
     };
     if (action === "send") {
       state.draftOperationId = operation.id;
@@ -1024,8 +1052,18 @@
       if (error.name !== "AbortError") failure = error;
     } finally {
       cancelOperationRender(operation);
+      const composerSelection =
+        captureComposerSelection() ||
+        (operation.returnFocusToComposer && composerFocusIsUnclaimed()
+          ? {
+              start: state.draft.length,
+              end: state.draft.length,
+              direction: "none",
+            }
+          : null);
       if (state.operation === operation) state.operation = null;
       if (state.session?.id === operation.sessionId) await reloadSession();
+      restoreComposerSelection(composerSelection);
       const persistedFailure = state.turns[state.turns.length - 1]?.generation;
       const failureIsInline =
         operation.failureMessage &&
@@ -1090,15 +1128,21 @@
       state.session.revision = payload.revision;
     }
     let liveDelta = false;
+    let restoreComposerFocus = false;
     if (event === "turn.started") {
       operation.accepted = true;
-      if (operation.action === "send") {
+      if (
+        operation.action === "send" &&
+        state.draftOperationId === operation.id
+      ) {
         state.draft = "";
         state.draftSessionId = operation.sessionId;
         state.draftOperationId = null;
         const textarea = document.getElementById("chatComposer");
         if (textarea) textarea.value = "";
       }
+      restoreComposerFocus =
+        operation.returnFocusToComposer && composerFocusIsUnclaimed();
     } else if (event === "segment.started") {
       operation.segments[payload.ordinal] = {
         kind: payload.kind,
@@ -1130,6 +1174,18 @@
       return;
     }
     renderOperationStructure(operation);
+    if (restoreComposerFocus) {
+      const textarea = document.getElementById("chatComposer");
+      restoreComposerSelection(
+        textarea
+          ? {
+              start: textarea.value.length,
+              end: textarea.value.length,
+              direction: "none",
+            }
+          : null,
+      );
+    }
   }
 
   function commitPendingDeltas(operation) {
