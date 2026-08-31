@@ -196,15 +196,18 @@ textarea {
 }
 
 .brand-mark {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: var(--radius-md);
-  background: var(--silver-gradient);
-  color: #0b0e13;
-  box-shadow: var(--shadow-sm);
-  flex-shrink: 0;
+.brand-mark {
+  display: block;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 }
 
 .brand-icon {
@@ -324,6 +327,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+.brand-mark:focus-visible,
 .nav-link:focus-visible {
   outline: 2px solid var(--silver-400);
   outline-offset: 2px;
