@@ -467,16 +467,22 @@ def unconfigure_claude_desktop_config(
         # still removed below.
         block_fcc_owned = isinstance(inference_raw, dict) and inference_dict == written
 
-        # A user-owned discovery flag (the adoption marker set when the key
-        # was absent before the first merge and the user later chose a
-        # non-``True`` value) is handed off verbatim: it is neither
-        # deleted as FCC's nor restored from any recorded value, since
-        # every value the user set in between is stale by unconfigure
-        # time and the final one is indistinguishable from configure's
-        # own always-``True`` write.
+        # A discovery flag is FCC's only while a current ``True`` is
+        # attributable to configure's own always-``True`` write. Two states
+        # break that attribution and hand the flag off verbatim instead —
+        # neither deleted as FCC's nor restored from any recorded value,
+        # since destroying an explicit user choice is the worse failure:
+        # (1) the adoption marker (the key was absent before the first
+        # merge and the user later chose a non-``True`` value); (2) a
+        # recorded non-``True`` original with a current ``True`` — the
+        # current value may be configure's untouched write (restore the
+        # original) or the user's explicit re-enable (the original is
+        # stale), and no file state can tell them apart.
+        recorded_discovery = backup.get("discovery")
         discovery_fcc_owned = (
             data.get(_DISCOVERY_KEY) is True
             and backup.get("discoveryUserOwned") is not True
+            and not ("discovery" in backup and recorded_discovery is not True)
         )
         if discovery_fcc_owned:
             del data[_DISCOVERY_KEY]

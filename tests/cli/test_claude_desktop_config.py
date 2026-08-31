@@ -416,10 +416,12 @@ def test_configure_unconfigure_roundtrip_restores_disabled_discovery(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
-    # Regression guard for the Greptile "discovery value restores
-    # incorrectly" finding: a user who explicitly disabled model discovery
-    # must get ``false`` back after unconfigure — presence alone would
-    # restore ``true`` and permanently flip the preference.
+    # A pre-install disabled flag is snapshotted, but a current ``True`` at
+    # unconfigure time is unattributable: it may be configure's own write
+    # (user untouched) or the user's explicit re-enable, and no file state
+    # distinguishes them. Per the Greptile ruling the ambiguous case
+    # preserves the current ``True`` — restoring the snapshotted ``false``
+    # would destroy an explicit re-enable, the worse failure.
     original = {
         "modelDiscoveryEnabled": False,
         "inference": {"provider": "anthropic"},
@@ -443,7 +445,10 @@ def test_configure_unconfigure_roundtrip_restores_disabled_discovery(
         is True
     )
     restored = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert restored == original
+    assert restored == {
+        "modelDiscoveryEnabled": True,
+        "inference": {"provider": "anthropic"},
+    }
 
 
 @pytest.mark.parametrize(
@@ -1121,7 +1126,7 @@ def test_remerge_absorbs_user_edited_managed_keys(
     )
     assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
     assert json.loads(fake_config.read_text(encoding="utf-8")) == {
-        "modelDiscoveryEnabled": False,
+        "modelDiscoveryEnabled": True,
         "inference": {
             "provider": "user-later-provider",
             "userExtra": "keep",
@@ -1133,7 +1138,14 @@ def test_remerge_keeps_frozen_snapshot_without_user_edits(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
-    """An untouched re-merge never rewrites the frozen original snapshot."""
+    """An untouched re-merge never rewrites the frozen original snapshot.
+
+    The discovery flag's original ``False`` is snapshotted, but the flag
+    is handed off with its current ``True`` at unconfigure: that value is
+    unattributable between configure's own write and a user re-enable,
+    and the Greptile ruling preserves it rather than risk destroying an
+    explicit choice.
+    """
 
     original = {
         "modelDiscoveryEnabled": False,
@@ -1153,7 +1165,10 @@ def test_remerge_keeps_frozen_snapshot_without_user_edits(
         is False
     )
     assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-    assert json.loads(fake_config.read_text(encoding="utf-8")) == original
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+        "modelDiscoveryEnabled": True,
+        "inference": {"provider": "user-provider", "userExtra": "keep"},
+    }
 
 
 def test_remerge_marks_user_disabled_discovery_user_owned(
@@ -1236,6 +1251,41 @@ def test_unconfigure_keeps_user_redisabled_discovery_verbatim(
     assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
     assert json.loads(fake_config.read_text(encoding="utf-8")) == {
         "modelDiscoveryEnabled": False,
+        "inference": {"provider": "p"},
+    }
+
+
+def test_unconfigure_preserves_present_original_discovery_reenable(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """A re-enable over a snapshotted ``False`` original survives unconfigure.
+
+    Regression guard for the Greptile "unconfigure overwrites a later
+    re-enable" finding: the flag was ``False`` before install (snapshot
+    records it), configure wrote ``True``, and the user re-enabled it to
+    ``True`` — byte-identical to configure's own write — before
+    uninstalling. The flag is handed off verbatim: restoring the
+    snapshotted ``False`` would silently flip the user's explicit final
+    preference back off.
+    """
+
+    fake_config.write_text(
+        json.dumps({"modelDiscoveryEnabled": False, "inference": {"provider": "p"}}),
+        encoding="utf-8",
+    )
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    current = json.loads(fake_config.read_text(encoding="utf-8"))
+    current["modelDiscoveryEnabled"] = True
+    fake_config.write_text(json.dumps(current), encoding="utf-8")
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+        "modelDiscoveryEnabled": True,
         "inference": {"provider": "p"},
     }
 
