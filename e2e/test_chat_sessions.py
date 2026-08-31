@@ -172,6 +172,14 @@ def test_chat_model_picker_searches_and_selects_in_one_control(
     expect(page.locator("select#chatModel")).to_have_count(0)
     expect(page.locator("#chatNotice")).to_be_hidden()
 
+    page.reload()
+    expect(model).to_have_value("open_router/e2e-default")
+    model.click()
+    options = page.get_by_role("listbox").get_by_role("option")
+    expect(options).to_have_count(1)
+    expect(options).to_have_text("open_router/e2e-default")
+    model.press("Escape")
+
     model.fill("not-a-catalog-model")
     expect(page.get_by_text("No matching models.", exact=True)).to_be_visible()
     page.get_by_label("Thinking").click()

@@ -91,7 +91,15 @@ def test_configured_provider_check_keeps_readiness_and_adds_models(
     expect(meta).to_have_text("OPENROUTER_API_KEY")
 
     page.get_by_role("button", name="Model Config", exact=True).click()
+    fable = page.get_by_role(
+        "combobox",
+        name="Fable Override default",
+        exact=True,
+    )
     page.get_by_role("button", name="Show Fable Override options", exact=True).click()
+    expect(page.get_by_role("listbox").get_by_role("option")).to_have_count(1)
+    expect(page.get_by_role("option", name="None", exact=True)).to_be_visible()
+    fable.fill("vendor/model-a")
     expect(
         page.get_by_role("option", name="open_router/vendor/model-a", exact=True)
     ).to_be_visible()
