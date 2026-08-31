@@ -25,6 +25,8 @@ from free_claude_code.providers.openai_chat import (
     validate_extra_body_does_not_override_reasoning_fields,
 )
 
+from .tpm import correct_tpm_completion_budget
+
 _GROQ_EFFORTS = (
     (ReasoningEffort.MINIMAL, "low"),
     (ReasoningEffort.LOW, "low"),
@@ -134,6 +136,30 @@ class GroqProvider(OpenAIChatProvider):
         )
         logger.warning("GROQ_STREAM: {} after upstream rejection", action)
         return retry_body
+
+    def _next_create_retry_body(
+        self,
+        error: Exception,
+        body: dict[str, Any],
+        used_retry_kinds: set[str],
+    ) -> dict[str, Any] | None:
+        retry_body = super()._next_create_retry_body(error, body, used_retry_kinds)
+        if retry_body is not None or "groq_tpm" in used_retry_kinds:
+            return retry_body
+
+        correction = correct_tpm_completion_budget(error, body)
+        if correction is None:
+            return None
+        used_retry_kinds.add("groq_tpm")
+        logger.warning(
+            "GROQ_STREAM: reducing max_completion_tokens after TPM rejection "
+            "limit={} requested={} previous={} corrected={}",
+            correction.limit,
+            correction.requested,
+            correction.previous_max_completion_tokens,
+            correction.corrected_max_completion_tokens,
+        )
+        return correction.body
 
 
 def _parse_reasoning_vocabulary(error: Exception) -> frozenset[str] | None:
