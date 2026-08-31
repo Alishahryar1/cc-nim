@@ -73,7 +73,7 @@
       return Array.from(this.listbox.querySelectorAll('[role="option"]'));
     }
 
-    open(query = "") {
+    open(query = this.input.value) {
       if (this.input.disabled) return;
       this.registry.forEach((combobox) => {
         if (combobox !== this && combobox.isOpen) combobox.close();
