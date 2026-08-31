@@ -1239,6 +1239,51 @@ def test_unconfigure_keeps_user_final_discovery_reenable(
     }
 
 
+def test_remerge_after_scalar_to_dict_replacement_drops_raw_target(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """A user dict replacing a scalar-origin block survives re-merge and unconfigure.
+
+    Regression guard for the Greptile "reconfiguration restores a stale
+    inference value" finding: the first merge recorded the original
+    non-object ``inference`` verbatim as ``inferenceRaw``. When the user
+    then replaces the whole block with their own dict, the re-merge must
+    drop the stale verbatim target (it would otherwise take precedence on
+    unconfigure and destroy the user's dict) and must not absorb absent
+    managed keys as ``null`` placeholders into the per-key restore targets.
+    """
+
+    fake_config.write_text(json.dumps({"inference": "legacy-string"}), encoding="utf-8")
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    user_block = {
+        "provider": "user-routing",
+        "inferenceAnthropicApiKey": "user-key",
+        "extra": "keep",
+    }
+    current = json.loads(fake_config.read_text(encoding="utf-8"))
+    current["inference"] = dict(user_block)
+    fake_config.write_text(json.dumps(current), encoding="utf-8")
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    remerged = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert "inferenceRaw" not in remerged["fccPriorConfig"]
+
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    restored = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert restored["inference"] == user_block
+    assert "fccPriorConfig" not in restored
+
+
 def test_remerge_rotation_is_not_a_user_edit(
     fake_config: Path,
     fake_settings: Settings,

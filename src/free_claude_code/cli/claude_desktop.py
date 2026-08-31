@@ -280,12 +280,26 @@ def configure_claude_desktop_config(
         prior_inference = prior_inference if isinstance(prior_inference, dict) else {}
         absorbed = dict(prior_inference)
         for key in managed:
-            current_value = inference_dict.get(key)
+            if key not in inference_dict:
+                # Absent from the user's block: leave the recorded target
+                # alone — restoring a target over an absent key would invent
+                # a literal ``null`` placeholder in the restored mapping.
+                continue
+            current_value = inference_dict[key]
             if current_value == last_written.get(key):
                 continue  # Still FCC's written value; target unchanged.
             absorbed[key] = current_value
         if absorbed != prior_inference:
             backup["inference"] = absorbed
+            changed = True
+        if "inferenceRaw" in backup:
+            # The first merge recorded a non-object original verbatim, but
+            # the block is a mapping NOW: the user replaced the scalar with
+            # their own dict, so the verbatim restore target is stale —
+            # dropping it leaves the per-key targets (absorbed above) as the
+            # only restore path and unconfigure can no longer clobber the
+            # user's dict with the long-gone scalar.
+            del backup["inferenceRaw"]
             changed = True
         # The discovery flag is frozen, not absorbed: configure always
         # writes ``True``, so a current ``True`` is byte-identical to

@@ -5,7 +5,6 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from free_claude_code.cli import desktop_console
-from free_claude_code.cli.claude_desktop import configure_claude_desktop_config
 from free_claude_code.cli.desktop_assets import export_app_icon
 
 
@@ -23,9 +22,12 @@ def launch(argv: Sequence[str] | None = None) -> None:
         print("FCC Desktop is supported on Windows, macOS, and Linux.", file=sys.stderr)
         raise SystemExit(1)
 
-    # Merge the FCC gateway routing block before any Claude Desktop session
-    # starts so model discovery and inference run through this server.
-    configure_claude_desktop_config()
+    # The Claude Desktop routing merge is intentionally NOT done here: this
+    # runs before any lifecycle has started or verified a TLS front, so a
+    # merge now would resolve the plain-HTTP fallback and write the
+    # reusable gateway credential into the config pointing at a cleartext
+    # listener. Each lifecycle below merges only behind a verified HTTPS
+    # front (see ``desktop._merge_verified_gateway``).
 
     if sys.platform == "linux":
         desktop_console.launch()
