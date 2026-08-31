@@ -367,12 +367,90 @@ async def test_regeneration_keeps_visible_answer_until_atomic_swap(tmp_path: Pat
                 error_code=None,
                 error_message=None,
             )
-        await store.finish_regeneration(replacement_id, stop_reason="end_turn")
+        await store.finish_regeneration(
+            replacement_id,
+            status=GenerationStatus.COMPLETED,
+            stop_reason="end_turn",
+            error_code=None,
+            error_message=None,
+        )
         visible = (await store.get_transcript(session.id)).turns[0].generation
         assert visible.id == replacement_id
         assert visible.status is GenerationStatus.COMPLETED
         assert visible.stop_reason == "end_turn"
         assert visible.segments[0].text == "replacement"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_regeneration_atomically_replaces_visible_answer(tmp_path: Path):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        original_id = _id()
+        await store.begin_send(
+            session.id,
+            expected_revision=session.revision,
+            turn_id=_id(),
+            generation_id=original_id,
+            operation_id=_id(),
+            user_text="hello",
+            requested_model=session.model,
+            reasoning=session.reasoning,
+            effective_output_limit=1024,
+        )
+        session = await store.finish_generation(
+            original_id,
+            status=GenerationStatus.COMPLETED,
+            stop_reason="end_turn",
+            error_code=None,
+            error_message=None,
+        )
+        replacement_id = _id()
+        await store.begin_regenerate(
+            session.id,
+            expected_revision=session.revision,
+            generation_id=replacement_id,
+            requested_model=session.model,
+            reasoning=session.reasoning,
+            effective_output_limit=1024,
+        )
+        await store.replace_generation_segments(
+            replacement_id, (ChatSegment(0, SegmentKind.TEXT, "partial"),)
+        )
+
+        finished = await store.finish_regeneration(
+            replacement_id,
+            status=GenerationStatus.FAILED,
+            stop_reason=None,
+            error_code="provider_error",
+            error_message="provider failed",
+        )
+        repeated = await store.finish_regeneration(
+            replacement_id,
+            status=GenerationStatus.FAILED,
+            stop_reason=None,
+            error_code="provider_error",
+            error_message="provider failed",
+        )
+
+        visible = (await store.get_transcript(session.id)).turns[0].generation
+        assert repeated.revision == finished.revision
+        assert visible.id == replacement_id
+        assert visible.status is GenerationStatus.FAILED
+        assert visible.error_code == "provider_error"
+        assert visible.error_message == "provider failed"
+        assert visible.segments[0].text == "partial"
+        with closing(sqlite3.connect(tmp_path / "chat.db")) as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM chat_generations WHERE turn_id = "
+                "(SELECT turn_id FROM chat_generations WHERE id = ?)",
+                (replacement_id,),
+            ).fetchone() == (1,)
     finally:
         await store.close()
 

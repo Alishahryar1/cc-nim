@@ -108,7 +108,13 @@ class _ModelListingProvider(BaseProvider):
         )
         fragmented = "[fragmented]" in user_content
         self._slow_used = self._slow_used or slow
-        text = "Earlier details retained." if summary else "E2E answer"
+        failed_regeneration = "[fail-regenerate]" in user_content and attempt > 1
+        if summary:
+            text = "Earlier details retained."
+        elif failed_regeneration:
+            text = "Partial replacement"
+        else:
+            text = "E2E answer"
         frames = [
             format_sse_event(
                 "message_start",
@@ -179,7 +185,7 @@ class _ModelListingProvider(BaseProvider):
                 },
             )
             return
-        if not summary and "[fail-turn]" in user_content:
+        if not summary and ("[fail-turn]" in user_content or failed_regeneration):
             yield format_sse_event(
                 "error",
                 {

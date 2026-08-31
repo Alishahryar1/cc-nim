@@ -587,6 +587,27 @@ def test_regeneration_is_visible_and_recovers_in_another_tab(
         other.close()
 
 
+def test_failed_regeneration_replaces_the_reply_without_a_page_notice(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    page.get_by_role("textbox", name="Message", exact=True).fill("[fail-regenerate]")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
+
+    page.get_by_role("button", name="Regenerate").click()
+
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+    expect(page.get_by_text("E2E answer", exact=True)).to_have_count(0)
+    expect(page.get_by_text("Partial replacement", exact=True)).to_be_visible()
+    expect(
+        page.locator(".assistant-message .chat-generation-status.failed")
+    ).to_have_text("E2E provider failed")
+    expect(page.locator("#chatNotice")).to_be_hidden()
+    expect(page.get_by_text("E2E provider failed", exact=True)).to_have_count(1)
+
+
 def test_manual_compaction_is_visible_and_recovers_in_another_tab(
     page: Page,
     admin_base_url: str,
