@@ -23,7 +23,10 @@ class FakeRequestRuntime(RequestRuntimePort):
         self._settings = settings
         self._cached_infos = cached_infos
 
-    async def acquire(self) -> RequestRuntimeLease:
+    async def acquire(
+        self, *, include_model_infos: bool = False
+    ) -> RequestRuntimeLease:
+        del include_model_infos
         raise AssertionError("Catalog publication must not acquire a provider lease.")
 
     def current_settings(self) -> Settings:

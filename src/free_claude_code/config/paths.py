@@ -16,6 +16,9 @@ OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
 CONFIG_LOCK_FILENAME = "config.lock"
 FCC_TEMP_DIRNAME = "tmp"
 AIDER_TEMP_DIRNAME = "aider"
+CHAT_STATE_DIRNAME = "chat"
+CHAT_DATABASE_FILENAME = "chat.db"
+CHAT_LOCK_FILENAME = "chat.lock"
 
 
 def config_dir_path() -> Path:
@@ -40,6 +43,24 @@ def aider_temp_dir_path() -> Path:
     """Return the base directory for managed per-launch Aider files."""
 
     return config_dir_path() / FCC_TEMP_DIRNAME / AIDER_TEMP_DIRNAME
+
+
+def chat_state_dir_path() -> Path:
+    """Return the managed Chat Sessions state directory."""
+
+    return config_dir_path() / CHAT_STATE_DIRNAME
+
+
+def chat_database_path() -> Path:
+    """Return the managed Chat Sessions database path."""
+
+    return chat_state_dir_path() / CHAT_DATABASE_FILENAME
+
+
+def chat_lock_path() -> Path:
+    """Return the exclusive Chat Sessions process-lock path."""
+
+    return chat_state_dir_path() / CHAT_LOCK_FILENAME
 
 
 def legacy_env_paths() -> tuple[Path, ...]:

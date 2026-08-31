@@ -35,6 +35,7 @@ from free_claude_code.core.anthropic.streaming import (
 )
 from free_claude_code.core.anthropic.usage import anthropic_input_usage_fields
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesRequest,
     ResponsesChatRequest,
@@ -116,6 +117,7 @@ class _CollectedRecoveryOutput:
     text: str
     thinking: str
     tool_calls: tuple[CompletedOpenAIToolCall, ...]
+    request_body: JsonObject
 
 
 def _iter_visible_text_events(
@@ -770,10 +772,13 @@ class OpenAIChatProvider(BaseProvider):
         body: dict,
         execution: ProviderExecution,
         operation_kind: ProviderOperationKind,
+        *,
+        used_retry_kinds: set[str] | None = None,
     ) -> tuple[Any, dict, ProviderAttempt]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
-        used_retry_kinds: set[str] = set()
+        if used_retry_kinds is None:
+            used_retry_kinds = set()
 
         while execution.can_attempt:
             attempt = await execution.open_attempt(operation_kind)
@@ -1019,6 +1024,7 @@ class _OpenAIChatStreamRunner:
         body = self._body
         request_stream_usage(body)
         output_reasoning = self._reasoning.output_enabled
+        used_retry_kinds: set[str] = set()
         trace_event(
             stage="provider",
             event="provider.request.sent",
@@ -1041,6 +1047,7 @@ class _OpenAIChatStreamRunner:
                     body,
                     execution,
                     ProviderOperationKind.GENERATION,
+                    used_retry_kinds=used_retry_kinds,
                 )
                 scope = ProviderAttemptScope(
                     attempt,
@@ -1288,16 +1295,20 @@ class _OpenAIChatStreamRunner:
         include_reasoning: bool,
         execution: ProviderExecution,
         operation_kind: ProviderOperationKind,
+        used_retry_kinds: set[str] | None = None,
     ) -> _CollectedRecoveryOutput:
         """Collect one complete buffered continuation response."""
+        if used_retry_kinds is None:
+            used_retry_kinds = set()
         last_error: Exception | None = None
         while execution.can_attempt:
             scope: ProviderAttemptScope | None = None
             try:
-                stream, accepted_body, attempt = await self._provider._create_stream(
+                stream, body, attempt = await self._provider._create_stream(
                     body,
                     execution,
                     operation_kind,
+                    used_retry_kinds=used_retry_kinds,
                 )
                 scope = ProviderAttemptScope(
                     attempt,
@@ -1335,9 +1346,7 @@ class _OpenAIChatStreamRunner:
                 completed_tool_calls = tool_calls.completed_calls(
                     self._tool_schemas,
                     tool_names=self._tool_names,
-                    tool_argument_aliases=self._provider._tool_argument_aliases(
-                        accepted_body
-                    ),
+                    tool_argument_aliases=self._provider._tool_argument_aliases(body),
                 )
                 if tool_calls.has_calls and completed_tool_calls is None:
                     raise TruncatedProviderStreamError(
@@ -1351,6 +1360,7 @@ class _OpenAIChatStreamRunner:
                     text="".join(text_parts),
                     thinking="".join(thinking_parts),
                     tool_calls=completed_tool_calls or (),
+                    request_body=body,
                 )
             except Exception as error:
                 last_error = error
@@ -1380,7 +1390,12 @@ class _OpenAIChatStreamRunner:
                     await scope.aclose(active_error=sys.exception())
         if last_error is not None:
             raise last_error
-        return _CollectedRecoveryOutput(text="", thinking="", tool_calls=())
+        return _CollectedRecoveryOutput(
+            text="",
+            thinking="",
+            tool_calls=(),
+            request_body=body,
+        )
 
     async def _recovery_events(
         self,
@@ -1516,6 +1531,7 @@ class _OpenAIChatStreamRunner:
             )
             accepted_suffix: str | None = None
             repair_attempt = 0
+            used_retry_kinds: set[str] = set()
             while execution.can_attempt:
                 repair_attempt += 1
                 recovered = await self._collect_recovery_output(
@@ -1523,6 +1539,7 @@ class _OpenAIChatStreamRunner:
                     include_reasoning=False,
                     execution=execution,
                     operation_kind=ProviderOperationKind.TOOL_REPAIR,
+                    used_retry_kinds=used_retry_kinds,
                 )
                 repair = accept_tool_json_repair(
                     repair_prefix,
@@ -1541,6 +1558,7 @@ class _OpenAIChatStreamRunner:
                         attempt=repair_attempt,
                     )
                     break
+                recovery_body = recovered.request_body
             if accepted_suffix is None:
                 return None
             to_emit = (

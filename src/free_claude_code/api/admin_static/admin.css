@@ -64,6 +64,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -104,7 +108,6 @@ textarea {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   min-height: 100vh;
-  padding-bottom: 96px; /* Space for action bar */
 }
 
 /* Sidebar Navigation */
@@ -127,16 +130,16 @@ textarea {
 }
 
 .brand-mark {
-  display: grid;
+  display: block;
+  flex: 0 0 auto;
   width: 40px;
   height: 40px;
-  place-items: center;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-  color: #ffffff;
-  font-weight: 800;
-  font-size: 15px;
-  box-shadow: var(--glow-accent);
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .brand h1 {
@@ -192,6 +195,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+.brand-mark:focus-visible,
 .nav-link:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -201,6 +205,7 @@ textarea:focus-visible,
 .main {
   min-width: 0;
   padding: 40px 48px;
+  padding-bottom: calc(40px + 96px); /* Fixed action bar clearance */
 }
 
 .topbar {
@@ -583,10 +588,6 @@ textarea:focus-visible,
   padding: 6px;
 }
 
-.model-combobox-list[hidden] {
-  display: none;
-}
-
 .model-combobox-option {
   border-radius: var(--radius-sm);
   padding: 9px 10px;
@@ -802,7 +803,6 @@ textarea:focus-visible,
   .app-shell {
     display: flex;
     flex-direction: column;
-    padding-bottom: 180px; /* More room for stacked action bar */
   }
 
   .sidebar {
@@ -820,6 +820,7 @@ textarea:focus-visible,
 
   .main {
     padding: 24px 20px;
+    padding-bottom: calc(24px + 180px); /* Stacked action bar clearance */
   }
 
   .action-bar {
