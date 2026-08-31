@@ -116,6 +116,7 @@ class _CollectedRecoveryOutput:
     text: str
     thinking: str
     tool_calls: tuple[CompletedOpenAIToolCall, ...]
+    accepted_body: dict[str, Any]
 
 
 def _iter_visible_text_events(
@@ -1353,6 +1354,7 @@ class _OpenAIChatStreamRunner:
                     text="".join(text_parts),
                     thinking="".join(thinking_parts),
                     tool_calls=completed_tool_calls or (),
+                    accepted_body=body,
                 )
             except Exception as error:
                 last_error = error
@@ -1382,7 +1384,12 @@ class _OpenAIChatStreamRunner:
                     await scope.aclose(active_error=sys.exception())
         if last_error is not None:
             raise last_error
-        return _CollectedRecoveryOutput(text="", thinking="", tool_calls=())
+        return _CollectedRecoveryOutput(
+            text="",
+            thinking="",
+            tool_calls=(),
+            accepted_body=body,
+        )
 
     async def _recovery_events(
         self,
@@ -1526,6 +1533,7 @@ class _OpenAIChatStreamRunner:
                     execution=execution,
                     operation_kind=ProviderOperationKind.TOOL_REPAIR,
                 )
+                recovery_body = recovered.accepted_body
                 repair = accept_tool_json_repair(
                     repair_prefix,
                     recovered.text,

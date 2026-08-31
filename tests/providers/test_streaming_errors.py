@@ -70,8 +70,14 @@ def _recovery_output(
     text: str = "",
     thinking: str = "",
     tool_calls: tuple[dict, ...] = (),
+    accepted_body: dict | None = None,
 ) -> SimpleNamespace:
-    return SimpleNamespace(text=text, thinking=thinking, tool_calls=tool_calls)
+    return SimpleNamespace(
+        text=text,
+        thinking=thinking,
+        tool_calls=tool_calls,
+        accepted_body=accepted_body or {},
+    )
 
 
 class ClosableAsyncStreamMock(AsyncStreamMock):
@@ -2096,6 +2102,63 @@ class TestStreamingExceptionHandling:
             for event in parsed
         )
         assert not any(event.event == "error" for event in parsed)
+
+    @pytest.mark.asyncio
+    async def test_tool_repair_retry_preserves_accepted_request_body(self):
+        """A schema retry reuses corrections accepted by the prior collection."""
+        provider = _make_provider()
+        request = _make_request(
+            tools=[
+                {
+                    "name": "echo_smoke",
+                    "description": "Echo",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                        "additionalProperties": False,
+                    },
+                }
+            ]
+        )
+        stream_mock = AsyncStreamMock(
+            [
+                _make_tool_calls_chunk(
+                    name="echo_smoke",
+                    arguments='{"message":',
+                    tool_id="call_repair",
+                )
+            ]
+        )
+        collection_count = 0
+
+        async def collect(body, **_kwargs):
+            nonlocal collection_count
+            collection_count += 1
+            if collection_count == 1:
+                corrected_body = {**body, "max_completion_tokens": 6_370}
+                return _recovery_output(text="1}", accepted_body=corrected_body)
+            return _recovery_output(text='"ok"}', accepted_body=body)
+
+        with (
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                return_value=stream_mock,
+            ),
+            patch.object(
+                _OpenAIChatStreamRunner,
+                "_collect_recovery_output",
+                new_callable=AsyncMock,
+                side_effect=collect,
+            ) as mock_collect,
+        ):
+            events = await _collect_stream(provider, request)
+
+        assert mock_collect.await_count == 2
+        assert mock_collect.await_args_list[1].args[0]["max_completion_tokens"] == 6_370
+        assert '"partial_json": "\\"ok\\"}"' in "".join(events)
 
     @pytest.mark.asyncio
     async def test_stream_rate_limit_uses_the_execution_retry_session(self):

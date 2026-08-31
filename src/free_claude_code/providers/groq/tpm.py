@@ -6,9 +6,12 @@ from dataclasses import dataclass
 
 _TPM_LIMIT_HEADER = "x-ratelimit-limit-tokens"
 _MAX_DECIMAL_DIGITS = 19
+_TPM_PREFIX = r"tokens\s+per\s+minute\s*\(\s*tpm\s*\)\s*:\s*"
+_TPM_MARKER = re.compile(_TPM_PREFIX, re.IGNORECASE)
 _TPM_CLAUSE = re.compile(
-    r"tokens\s+per\s+minute\s*\(\s*tpm\s*\)\s*:\s*"
-    r"limit\s+([0-9]+)\s*,\s*requested\s+([0-9]+)(?=\s*(?:[,;]|$))",
+    _TPM_PREFIX
+    + r"limit\s+([0-9]+)\s*,\s*requested\s+([0-9]+)"
+    + r"(?=\s*(?:,\s+(?![0-9])|$))",
     re.IGNORECASE,
 )
 _OUTPUT_FIELDS = frozenset({"max_completion_tokens", "max_tokens"})
@@ -43,6 +46,8 @@ def correct_tpm_completion_budget(
 
     message = detail.get("message")
     if not isinstance(message, str):
+        return None
+    if sum(1 for _ in _TPM_MARKER.finditer(message)) != 1:
         return None
     matches = tuple(_TPM_CLAUSE.finditer(message))
     if len(matches) != 1:

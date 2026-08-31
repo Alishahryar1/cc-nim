@@ -94,14 +94,19 @@ def _provider(*, max_attempts: int = 5) -> GroqProvider:
     )
 
 
-def _chunk(*, content: str | None = None, finish_reason: str | None = None):
+def _chunk(
+    *,
+    content: str | None = None,
+    finish_reason: str | None = None,
+    tool_calls: list[object] | None = None,
+):
     return MagicMock(
         choices=[
             MagicMock(
                 delta=MagicMock(
                     content=content,
                     reasoning_content=None,
-                    tool_calls=None,
+                    tool_calls=tool_calls,
                 ),
                 finish_reason=finish_reason,
             )
@@ -119,6 +124,18 @@ async def _failing_stream():
     if False:
         yield _chunk()
     raise httpx.ReadError("early cutoff")
+
+
+async def _incomplete_tool_stream():
+    function = MagicMock()
+    function.name = "echo_smoke"
+    function.arguments = '{"message":'
+    tool_call = MagicMock()
+    tool_call.index = 0
+    tool_call.id = "call_repair"
+    tool_call.function = function
+    yield _chunk(content="Working on it. " + "x" * 70_000)
+    yield _chunk(tool_calls=[tool_call])
 
 
 def test_exact_observed_failure_reduces_only_completion_budget() -> None:
@@ -155,8 +172,8 @@ def test_accepts_bounded_case_and_whitespace_variation() -> None:
 
 @pytest.mark.parametrize(
     "requested",
-    ["26206.5", "26206e3", "26206tokens"],
-    ids=["decimal", "exponent", "suffix"],
+    ["26206.5", "26206e3", "26206tokens", "26206,000", "26206, 000"],
+    ids=["decimal", "exponent", "suffix", "grouped", "spaced_grouped"],
 )
 def test_rejects_requested_values_with_trailing_numeric_syntax(
     requested: str,
@@ -183,6 +200,12 @@ def test_rejects_requested_values_with_trailing_numeric_syntax(
                 "tokens per minute (TPM): Limit 8000, Requested 26206"
             )
         ),
+        _error(
+            message=(
+                "tokens per minute (TPM): Limit 8000, Requested 26206; "
+                "tokens per minute (TPM): Limit nope, Requested 99999"
+            )
+        ),
     ],
     ids=[
         "wrong_status",
@@ -192,6 +215,7 @@ def test_rejects_requested_values_with_trailing_numeric_syntax(
         "not_over_limit",
         "zero_limit",
         "ambiguous_clauses",
+        "valid_and_malformed_clauses",
     ],
 )
 def test_rejects_unrecognized_or_ambiguous_errors(
@@ -375,6 +399,45 @@ async def test_precommit_stream_retry_cannot_reset_the_tpm_correction_guard() ->
     assert create.await_args_list[0].kwargs["max_completion_tokens"] == _PREVIOUS
     assert create.await_args_list[1].kwargs["max_completion_tokens"] == corrected
     assert create.await_args_list[2].kwargs["max_completion_tokens"] == corrected
+
+
+@pytest.mark.asyncio
+async def test_tool_repair_reuses_tpm_corrected_budget() -> None:
+    provider = _provider()
+    request = make_messages_request(
+        _MODEL,
+        max_tokens=_PREVIOUS,
+        tools=[
+            {
+                "name": "echo_smoke",
+                "description": "Echo",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                    "additionalProperties": False,
+                },
+            }
+        ],
+    )
+    create = AsyncMock(
+        side_effect=[
+            _incomplete_tool_stream(),
+            _error(),
+            _successful_stream("1}"),
+            _successful_stream('"ok"}'),
+        ]
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        raw = "".join([event async for event in provider.stream_messages(request)])
+
+    budgets = [call.kwargs["max_completion_tokens"] for call in create.await_args_list]
+    events = parse_sse_text(raw)
+    assert budgets == [_PREVIOUS, _PREVIOUS, _CORRECTED, _CORRECTED]
+    assert '"partial_json": "\\"ok\\"}"' in raw
+    assert [event.event for event in events].count("message_start") == 1
+    assert [event.event for event in events].count("message_stop") == 1
 
 
 @pytest.mark.asyncio
