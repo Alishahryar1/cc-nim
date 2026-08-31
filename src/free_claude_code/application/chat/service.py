@@ -332,12 +332,18 @@ class ChatService:
                 declared_media_type=declared_media_type,
                 source=source,
             )
-            try:
-                return await self._store.add_staged_attachment(
+            metadata_commit = asyncio.create_task(
+                self._store.add_staged_attachment(
                     session_id,
                     attachment_id=attachment_id,
                     filename=filename,
                     file_info=file_info,
+                ),
+                name=f"fcc-chat-stage-attachment-{attachment_id}",
+            )
+            try:
+                attachment, cancellation = await _await_task_despite_cancellation(
+                    metadata_commit
                 )
             except BaseException:
                 placeholder = ChatAttachment(
@@ -355,6 +361,9 @@ class ChatService:
                 with contextlib.suppress(Exception):
                     await self._attachment_files.delete_attachment(placeholder)
                 raise
+            if cancellation is not None:
+                raise cancellation
+            return attachment
 
     async def remove_attachment(self, session_id: str, attachment_id: str) -> None:
         self._require_available()

@@ -563,6 +563,52 @@ async def test_failed_attachment_metadata_commit_removes_published_files(
 
 
 @pytest.mark.asyncio
+async def test_cancelled_attachment_metadata_commit_preserves_owned_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_commit = asyncio.Event()
+    try:
+        session = await service.create_session()
+        commit_finished = asyncio.Event()
+        original_add_staged_attachment = store.add_staged_attachment
+
+        async def delayed_return(*args, **kwargs):
+            attachment = await original_add_staged_attachment(*args, **kwargs)
+            commit_finished.set()
+            await release_commit.wait()
+            return attachment
+
+        monkeypatch.setattr(store, "add_staged_attachment", delayed_return)
+        upload = asyncio.create_task(
+            service.stage_attachment(
+                session.id,
+                filename="owned.txt",
+                declared_media_type="text/plain",
+                source=BytesIO(b"committed ownership"),
+            )
+        )
+        await asyncio.wait_for(commit_finished.wait(), timeout=1)
+
+        upload.cancel()
+        await asyncio.sleep(0.05)
+        assert not upload.done()
+        release_commit.set()
+        with pytest.raises(asyncio.CancelledError):
+            await upload
+
+        staged = await store.list_staged_attachments(session.id)
+        assert len(staged) == 1
+        content = await service.attachment_content(session.id, staged[0].id)
+        assert content.data == b"committed ownership"
+    finally:
+        release_commit.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_completion_persistence_exhaustion_never_downgrades_to_failed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
