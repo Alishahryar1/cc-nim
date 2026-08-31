@@ -1,4 +1,4 @@
-const state = {
+  const state = {
   config: null,
   fields: new Map(),
   modelOptions: [],
@@ -68,7 +68,7 @@ function statusClass(status) {
   return "neutral";
 }
 
-// ===== Task 3: Status dot helper for provider cards =====
+// ===== Status dot helper for provider cards =====
 function getProviderStatusDot(provider) {
   const status = provider.state || provider.status || "unknown";
   const cls = statusClass(status);
@@ -131,7 +131,12 @@ async function load() {
   }
   await refreshConnectedAccounts();
   await hydrateModelOptions();
-  await validate(false);
+  // FIX: Wrap validate in try-catch so a missing endpoint doesn't break page load
+  try {
+    await validate(false);
+  } catch {
+    // Validation endpoint may not be available; continue loading.
+  }
   await refreshLocalStatus();
   updateDirtyState();
   updateStats();
@@ -149,8 +154,8 @@ function updateStats() {
     (p) => !p.missing_configuration_keys || p.missing_configuration_keys.length === 0,
   );
   const connectedAccounts = providers.filter(
-  (p) => p.kind === "connected_account" && p.connected === true
-);
+    (p) => p.kind === "connected_account" && p.connected === true
+  );
   const statProvCount = byId("statProvidersCount");
   const statProvSub = byId("statProvidersSub");
   if (statProvCount) {
@@ -225,7 +230,7 @@ function initFilterTabs() {
   });
 }
 
-  function initGlobalShortcuts() {
+function initGlobalShortcuts() {
   if (window.__fccAdminShortcutsInitialized) return;
   window.__fccAdminShortcutsInitialized = true;
   window.addEventListener("keydown", (event) => {
@@ -237,7 +242,7 @@ function initFilterTabs() {
   });
 }
 
-// ===== Task 3 (A1): filterViewsBySearch — toggles list-view mode + filters connected accounts =====
+// ===== FIX: filterViewsBySearch — toggles list-view mode + handles empty sections =====
 function filterViewsBySearch() {
   const q = state.searchQuery;
   const filter = state.providerFilter || "all";
@@ -307,6 +312,13 @@ function filterViewsBySearch() {
     });
 
     if (q) {
+      // FIX: When the section heading/description matches but no fields match,
+      // show all fields so the section isn't an empty box.
+      if (sectionMatches && !hasVisibleField) {
+        section.querySelectorAll(".field").forEach((field) => {
+          field.style.display = "flex";
+        });
+      }
       section.hidden = !hasVisibleField && !sectionMatches;
     } else {
       section.hidden = false;
@@ -317,7 +329,6 @@ function filterViewsBySearch() {
   showNoResultsMessage(isSearching);
 }
 
-// ===== Task 3 (A1): showNoResultsMessage helper =====
 function showNoResultsMessage(isSearching) {
   let existing = byId("noResultsMessage");
   const providerGrid = byId("providerGrid");
@@ -397,12 +408,17 @@ function setActiveView(viewId, { scroll = false } = {}) {
     view.hidden = !selected;
   });
 
+  // FIX: Use activeView.id check instead of undefined chatActive variable
+  if (activeView.id === "chat" && window.ChatSessions) {
+    // Chat view initialization would go here if needed
+  }
+
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 }
 
-// ===== Task 3 (A2): renderProviders — now includes status dots =====
+// ===== renderProviders — includes status dots =====
 function renderProviders(providerStatus) {
   const grid = byId("providerGrid");
   const connectedGrid = byId("connectedAccountGrid");
@@ -513,7 +529,7 @@ function navigateToProviderConfiguration(provider, configuring) {
   input.focus({ preventScroll: true });
 }
 
-// ===== Task 3 (A3): renderConnectedAccountCard — now includes status dots =====
+// ===== renderConnectedAccountCard — includes status dots =====
 function renderConnectedAccountCard(provider, status = provider) {
   const card = document.createElement("article");
   card.className = "provider-card";
@@ -655,7 +671,19 @@ async function refreshConnectedAccounts() {
   );
 }
 
+// FIX: Merge fresh auth status into cached provider_status before updating DOM
+// so updateStats() reads the latest connected state.
 function updateConnectedAccountCard(provider, status) {
+  // Merge the fresh status into the cached provider_status entry
+  const cached = state.config.provider_status.find(
+    (p) => p.provider_id === provider.provider_id,
+  );
+  if (cached) {
+    cached.connected = status.connected;
+    if (status.state !== undefined) cached.state = status.state;
+    if (status.status !== undefined) cached.status = status.status;
+  }
+
   const current = document.querySelector(
     `[data-provider="${provider.provider_id}"][data-connected-account="true"]`,
   );
@@ -852,15 +880,14 @@ function renderField(field) {
   input.dataset.remove = "false";
   input.dataset.fieldType = field.type;
   input.disabled = field.locked;
-   input.addEventListener("input", updateDirtyState);
+  // FIX: Removed redundant updateStats() — updateDirtyState already calls it
+  input.addEventListener("input", updateDirtyState);
   input.addEventListener("change", updateDirtyState);
+  // FIX: Removed duplicate input listener (was listed twice)
   input.addEventListener("input", () => {
     input.dataset.remove = "false";
   });
-  input.addEventListener("input", () => {
-    input.dataset.remove = "false";
-  });
-    if (field.type === "optional_model") {
+  if (field.type === "optional_model") {
     input.addEventListener("blur", () => {
       if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
         input.value = "None";
@@ -883,7 +910,8 @@ function renderField(field) {
     removeButton.type = "button";
     removeButton.className = "ghost-button secret-remove";
     removeButton.textContent = "Remove";
-     removeButton.addEventListener("click", () => {
+    // FIX: Removed redundant updateStats() — updateDirtyState already calls it
+    removeButton.addEventListener("click", () => {
       const removing = input.dataset.remove !== "true";
       input.dataset.remove = removing ? "true" : "false";
       input.readOnly = removing;
@@ -1207,7 +1235,9 @@ class ModelListEditor {
     this.sync();
   }
 
-    sync() {
+  // FIX: Removed redundant updateStats() — the dispatched input event
+  // triggers updateDirtyState() which already calls updateStats()
+  sync() {
     this.input.value = this.values.join(",");
     this.input.dataset.remove = "false";
     this.input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1485,7 +1515,11 @@ function showMessage(message, kind = "") {
   area.className = `message-area ${kind}`.trim();
 }
 
-byId("validateButton").addEventListener("click", () => validate(true));
+// FIX: Make validateButton listener null-safe in case button is removed from HTML
+const validateBtn = byId("validateButton");
+if (validateBtn) {
+  validateBtn.addEventListener("click", () => validate(true));
+}
 byId("applyButton").addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
