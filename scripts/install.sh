@@ -1249,12 +1249,22 @@ configure_claude_desktop_app() {
 }
 
 install_claude_desktop_cert() {
-    # Electron's TLS stack does not reliably honor NODE_TLS_REJECT_UNAUTHORIZED
-    # nor the operating system certificate store: Chromium-based apps read the
-    # per-user NSS database (~/.pki/nssdb). Best-effort, never fatal: pick the
-    # active Caddy certificate and trust it in both stores so users who launch
-    # ``claude-desktop`` directly (or via ``fcc-claude-desktop``) see FCC as
-    # trusted.
+    # Electron's TLS stack on Linux reads the per-user NSS database
+    # (~/.pki/nssdb). That store is SHARED by every Chromium-based app the
+    # user runs, so trusting the FCC-managed CA there — or anywhere outside
+    # Claude Desktop — is an explicit, opt-in decision: the installer never
+    # extends CA trust silently. Firefox profile stores and the system CA
+    # store are NOT touched at all; users who want broader trust can add the
+    # certificate themselves after understanding the scope.
+    case "${FCC_TRUST_DESKTOP_CERT:-}" in
+        1|true|TRUE|yes|YES)
+            ;;
+        *)
+            printf 'note: skipping Claude Desktop certificate trust (set FCC_TRUST_DESKTOP_CERT=1 to trust the FCC-managed CA in your NSS user store — this affects all Chromium-based apps that read it).\n' >&2
+            return 0
+            ;;
+    esac
+
     home="${HOME:-}"
     cert_src=""
     for candidate in \
@@ -1270,7 +1280,6 @@ install_claude_desktop_cert() {
     fi
 
     install_claude_desktop_cert_nss
-    install_claude_desktop_cert_system
 }
 
 trust_cert_in_nss_db() {
@@ -1306,50 +1315,6 @@ install_claude_desktop_cert_nss() {
     fi
 
     trust_cert_in_nss_db "$nss_home/.pki"
-    firefox_home="$nss_home/.mozilla/firefox"
-    if [ -d "$firefox_home" ]; then
-        for profile_dir in "$firefox_home"/*/;
-        do
-            [ -f "${profile_dir}cert9.db" ] || continue
-            certutil -A -d "sql:${profile_dir%/}" -t "C,," -n "FCC-Caddy" -i "$cert_src" >/dev/null 2>&1 || true
-        done
-    fi
-}
-
-install_claude_desktop_cert_system() {
-    case "$cert_src" in
-        /etc/caddy/*) cert_dst="/usr/local/share/ca-certificates/fcc-caddy-localhost.crt" ;;
-        *) cert_dst="/usr/local/share/ca-certificates/fcc-caddy-root.crt" ;;
-    esac
-    if [ -e "$cert_dst" ] && cmp -s "$cert_src" "$cert_dst"; then
-        return 0
-    fi
-
-    if [ "$(id -u)" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
-        printf 'note: skipping system cert trust step (%s requires root or sudo).\n' "$cert_src" >&2
-        return 0
-    fi
-
-    copy_cmd="cp"
-    update_cmd="update-ca-certificates"
-    if [ "$(id -u)" -ne 0 ]; then
-        copy_cmd="sudo cp"
-        update_cmd="sudo update-ca-certificates"
-    fi
-
-    if [ "$dry_run" -eq 1 ]; then
-        print_command "$copy_cmd" "$cert_src" "$cert_dst"
-        print_command "$update_cmd" --fresh
-        return 0
-    fi
-
-    if ! $copy_cmd "$cert_src" "$cert_dst" 2>/dev/null; then
-        printf 'note: cert trust step failed (cp returned %d) — claude-desktop TLS may still reject Caddy.\n' "$?" >&2
-        return 0
-    fi
-    if ! $update_cmd --fresh >/dev/null 2>&1; then
-        printf 'note: update-ca-certificates failed — claude-desktop TLS may still reject Caddy.\n' >&2
-    fi
 }
 
 shell_quote() {

@@ -1500,7 +1500,54 @@ def test_install_sh_dry_run_never_executes_commands(
     assert "Free Claude Code is installed and verified." not in result.stdout
 
 
-def test_install_sh_trusts_managed_caddy_cert_in_nss(
+def test_install_sh_skips_cert_trust_by_default(
+    posix_harness: PosixHarness,
+) -> None:
+    """CA trust is opt-in: the default install never mutates any trust store.
+
+    Regression guard for the Greptile "CA trust escapes Claude Desktop"
+    security finding: the NSS user database is shared by every
+    Chromium-based app, so trusting the FCC-managed CA there must be an
+    explicit decision. Without the opt-in the installer touches nothing —
+    no certutil, no Firefox profile stores, no system CA directory.
+    """
+
+    def fake_logging_tool(name: str) -> None:
+        _write_executable(
+            posix_harness.bin_dir / name,
+            f"""#!/bin/sh
+echo "{name}:$*" >> "$CALL_LOG"
+exit 0
+""",
+        )
+
+    # cp is intentionally NOT faked: the curl stub uses the real cp to stage
+    # the uv installer, and shadowing it would break unrelated install steps.
+    for tool in ("certutil", "sudo", "update-ca-certificates"):
+        fake_logging_tool(tool)
+    managed_root = (
+        pathlib.Path(posix_harness.env["HOME"])
+        / ".fcc"
+        / "caddy"
+        / "data"
+        / "caddy"
+        / "pki"
+        / "authorities"
+        / "local"
+    )
+    managed_root.mkdir(parents=True)
+    (managed_root / "root.crt").write_text("-----BEGIN CERTIFICATE-----\n")
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "FCC_TRUST_DESKTOP_CERT=1" in result.stderr
+    calls = posix_harness.calls()
+    assert not any(call.startswith("certutil:") for call in calls), calls
+    assert not any("update-ca-certificates" in call for call in calls), calls
+    assert not any("ca-certificates" in call for call in calls), calls
+
+
+def test_install_sh_trusts_managed_caddy_cert_in_nss_on_opt_in(
     posix_harness: PosixHarness,
 ) -> None:
     """Managed-front root cert is trusted in Chromium/Electron's NSS database."""
@@ -1530,18 +1577,23 @@ exit 0
     )
     managed_root.mkdir(parents=True)
     (managed_root / "root.crt").write_text("-----BEGIN CERTIFICATE-----\n")
+    posix_harness.env["FCC_TRUST_DESKTOP_CERT"] = "1"
     result = posix_harness.run()
 
     assert result.returncode == 0, result.stderr
     home = posix_harness.env["HOME"]
-    certutil_calls = [
-        call for call in posix_harness.calls() if call.startswith("certutil:")
-    ]
+    all_calls = posix_harness.calls()
+    certutil_calls = [call for call in all_calls if call.startswith("certutil:")]
     assert any(
         call.startswith("certutil:-A ") and f"sql:{home}/.pki/nssdb" in call
         for call in certutil_calls
     ), certutil_calls
     assert any("-n FCC-Caddy" in call for call in certutil_calls)
+    # Trust stays scoped to the NSS user database: no Firefox profile
+    # enumeration, no writes to the system CA store.
+    assert not any(".mozilla/firefox" in call for call in all_calls), all_calls
+    assert not any("ca-certificates" in call for call in all_calls), all_calls
+    assert not any(call.startswith("sudo:") for call in all_calls), all_calls
 
 
 def test_install_sh_rejects_broken_existing_client_without_replacing_it(
