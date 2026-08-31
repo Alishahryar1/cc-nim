@@ -130,6 +130,22 @@ def test_exact_tpm_rejection_corrects_only_completion_budget(wrapped: bool) -> N
         (
             _status_error(
                 detail=_detail(
+                    "tokens per minute (TPM): Limit 8000, Requested 26206,000"
+                )
+            ),
+            _body(),
+        ),
+        (
+            _status_error(
+                detail=_detail(
+                    "tokens per minute (TPM): Limit 8000, Requested 26206, 000"
+                )
+            ),
+            _body(),
+        ),
+        (
+            _status_error(
+                detail=_detail(
                     "tokens per minute (TPM): Limit 8000, Requested 26206; "
                     "tokens per minute (TPM): Limit 8000, Requested 26206"
                 )
@@ -145,6 +161,12 @@ def test_exact_tpm_rejection_corrects_only_completion_budget(wrapped: bool) -> N
         (
             _status_error(
                 detail=_detail("tokens per minute (TPM): Limit 8000, Requested 9000")
+            ),
+            _body(),
+        ),
+        (
+            _status_error(
+                detail=_detail("tokens per minute (TPM): Limit 8000, Requested 24576")
             ),
             _body(),
         ),
@@ -175,9 +197,12 @@ def test_exact_tpm_rejection_corrects_only_completion_budget(wrapped: bool) -> N
         "wrong-code",
         "missing-clause",
         "malformed-requested-boundary",
+        "grouped-requested-no-space",
+        "grouped-requested-with-space",
         "ambiguous-clause",
         "no-overage",
         "requested-under-output-cap",
+        "requested-equals-output-cap",
         "oversized-number",
         "non-integer-max",
         "boolean-max",

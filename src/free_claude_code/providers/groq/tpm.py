@@ -12,7 +12,8 @@ _TPM_MARKER = re.compile(_TPM_PREFIX, re.IGNORECASE)
 _TPM_CLAUSE = re.compile(
     _TPM_PREFIX
     + rf"limit\s+([0-9]{{1,{_MAX_DECIMAL_DIGITS}}})(?![0-9])\s*,\s*"
-    + rf"requested\s+([0-9]{{1,{_MAX_DECIMAL_DIGITS}}})(?=\s*(?:,|$))",
+    + rf"requested\s+([0-9]{{1,{_MAX_DECIMAL_DIGITS}}})"
+    + r"(?=\s*(?:,(?!\s*[0-9])|$))",
     re.IGNORECASE,
 )
 _OUTPUT_FIELDS = frozenset({"max_completion_tokens", "max_tokens"})
@@ -63,7 +64,7 @@ def correct_tpm_completion_budget(
     previous = body.get("max_completion_tokens")
     if not isinstance(previous, int) or isinstance(previous, bool) or previous <= 0:
         return None
-    if requested < previous:
+    if requested <= previous:
         return None
     extra_body = body.get("extra_body")
     if isinstance(extra_body, Mapping) and any(

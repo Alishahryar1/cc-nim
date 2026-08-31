@@ -1671,12 +1671,20 @@ class TestStreamingExceptionHandling:
             "stream_options": {"include_usage": True},
         }
 
-        with patch.object(
-            provider._client.chat.completions,
-            "create",
-            new_callable=AsyncMock,
-            side_effect=[usage_rejection, failed_stream, successful_stream],
-        ) as create:
+        with (
+            patch.object(
+                provider,
+                "_create_stream",
+                new_callable=AsyncMock,
+                wraps=provider._create_stream,
+            ) as create_stream,
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                side_effect=[usage_rejection, failed_stream, successful_stream],
+            ) as create,
+        ):
             recovered = await runner._collect_recovery_output(
                 body,
                 include_reasoning=True,
@@ -1690,6 +1698,11 @@ class TestStreamingExceptionHandling:
         }
         assert "stream_options" not in create.await_args_list[1].kwargs
         assert "stream_options" not in create.await_args_list[2].kwargs
+        assert create_stream.await_count == 2
+        assert (
+            create_stream.await_args_list[0].kwargs["used_retry_kinds"]
+            is create_stream.await_args_list[1].kwargs["used_retry_kinds"]
+        )
         assert recovered.text == "visible"
         assert failed_stream.closed
         assert successful_stream.closed
@@ -1743,12 +1756,20 @@ class TestStreamingExceptionHandling:
         )
         execution = provider._admission.start_execution()
 
-        with patch.object(
-            provider._client.chat.completions,
-            "create",
-            new_callable=AsyncMock,
-            side_effect=[usage_rejection, invalid_repair, valid_repair],
-        ) as create:
+        with (
+            patch.object(
+                provider,
+                "_create_stream",
+                new_callable=AsyncMock,
+                wraps=provider._create_stream,
+            ) as create_stream,
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                side_effect=[usage_rejection, invalid_repair, valid_repair],
+            ) as create,
+        ):
             events = await runner._repair_tool_args(
                 body=body,
                 output=assembler.output,
@@ -1763,6 +1784,11 @@ class TestStreamingExceptionHandling:
         }
         assert "stream_options" not in create.await_args_list[1].kwargs
         assert "stream_options" not in create.await_args_list[2].kwargs
+        assert create_stream.await_count == 2
+        assert (
+            create_stream.await_args_list[0].kwargs["used_retry_kinds"]
+            is create_stream.await_args_list[1].kwargs["used_retry_kinds"]
+        )
         assert invalid_repair.closed
         assert valid_repair.closed
 
