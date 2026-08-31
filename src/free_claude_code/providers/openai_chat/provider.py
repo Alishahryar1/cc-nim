@@ -119,6 +119,32 @@ class _CollectedRecoveryOutput:
     accepted_body: dict[str, Any]
 
 
+def _carry_request_corrections(
+    base_body: dict[str, Any],
+    attempted_body: dict[str, Any],
+    accepted_body: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply only accepted retry changes to a fresh recovery request base."""
+    if attempted_body == accepted_body:
+        return base_body
+
+    updated = dict(base_body)
+    for key in attempted_body.keys() | accepted_body.keys():
+        attempted_has_key = key in attempted_body
+        accepted_has_key = key in accepted_body
+        if (
+            attempted_has_key
+            and accepted_has_key
+            and attempted_body[key] == accepted_body[key]
+        ):
+            continue
+        if accepted_has_key:
+            updated[key] = accepted_body[key]
+        else:
+            updated.pop(key, None)
+    return updated
+
+
 def _iter_visible_text_events(
     output: ChatStreamOutput,
     text: str,
@@ -1500,6 +1526,7 @@ class _OpenAIChatStreamRunner:
     ) -> list[str] | None:
         schemas = self._tool_schemas
         events: list[str] = []
+        repair_base_body = body
         for tool_index, state in output.started_tool_states():
             block = output.tool_block_for_tool_index(tool_index)
             emitted_prefix = block.content if block is not None else ""
@@ -1518,7 +1545,7 @@ class _OpenAIChatStreamRunner:
 
             schema = schemas.get(state.name)
             recovery_body = make_tool_repair_body(
-                body,
+                repair_base_body,
                 tool_name=state.name,
                 prefix=repair_prefix,
                 input_schema=schema.input_schema if schema is not None else None,
@@ -1527,11 +1554,17 @@ class _OpenAIChatStreamRunner:
             repair_attempt = 0
             while execution.can_attempt:
                 repair_attempt += 1
+                attempted_body = recovery_body
                 recovered = await self._collect_recovery_output(
-                    recovery_body,
+                    attempted_body,
                     include_reasoning=False,
                     execution=execution,
                     operation_kind=ProviderOperationKind.TOOL_REPAIR,
+                )
+                repair_base_body = _carry_request_corrections(
+                    repair_base_body,
+                    attempted_body,
+                    recovered.accepted_body,
                 )
                 recovery_body = recovered.accepted_body
                 repair = accept_tool_json_repair(

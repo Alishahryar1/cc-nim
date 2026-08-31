@@ -126,16 +126,19 @@ async def _failing_stream():
     raise httpx.ReadError("early cutoff")
 
 
-async def _incomplete_tool_stream():
-    function = MagicMock()
-    function.name = "echo_smoke"
-    function.arguments = '{"message":'
-    tool_call = MagicMock()
-    tool_call.index = 0
-    tool_call.id = "call_repair"
-    tool_call.function = function
+async def _incomplete_tool_stream(*, tool_count: int = 1):
+    tool_calls: list[object] = []
+    for index in range(tool_count):
+        function = MagicMock()
+        function.name = "echo_smoke"
+        function.arguments = '{"message":'
+        tool_call = MagicMock()
+        tool_call.index = index
+        tool_call.id = f"call_repair_{index}"
+        tool_call.function = function
+        tool_calls.append(tool_call)
     yield _chunk(content="Working on it. " + "x" * 70_000)
-    yield _chunk(tool_calls=[tool_call])
+    yield _chunk(tool_calls=tool_calls)
 
 
 def test_exact_observed_failure_reduces_only_completion_budget() -> None:
@@ -436,6 +439,45 @@ async def test_tool_repair_reuses_tpm_corrected_budget() -> None:
     events = parse_sse_text(raw)
     assert budgets == [_PREVIOUS, _PREVIOUS, _CORRECTED, _CORRECTED]
     assert '"partial_json": "\\"ok\\"}"' in raw
+    assert [event.event for event in events].count("message_start") == 1
+    assert [event.event for event in events].count("message_stop") == 1
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_repairs_share_tpm_corrected_budget() -> None:
+    provider = _provider()
+    request = make_messages_request(
+        _MODEL,
+        max_tokens=_PREVIOUS,
+        tools=[
+            {
+                "name": "echo_smoke",
+                "description": "Echo",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                    "additionalProperties": False,
+                },
+            }
+        ],
+    )
+    create = AsyncMock(
+        side_effect=[
+            _incomplete_tool_stream(tool_count=2),
+            _error(),
+            _successful_stream('"first"}'),
+            _successful_stream('"second"}'),
+        ]
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        raw = "".join([event async for event in provider.stream_messages(request)])
+
+    budgets = [call.kwargs["max_completion_tokens"] for call in create.await_args_list]
+    events = parse_sse_text(raw)
+    assert budgets == [_PREVIOUS, _PREVIOUS, _CORRECTED, _CORRECTED]
+    assert raw.count('"partial_json": "\\"') == 2
     assert [event.event for event in events].count("message_start") == 1
     assert [event.event for event in events].count("message_stop") == 1
 
