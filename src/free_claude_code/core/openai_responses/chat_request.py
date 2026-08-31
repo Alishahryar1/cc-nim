@@ -3,9 +3,16 @@
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import cast
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.openai_chat import (
+    IMAGE_TOOL_RESULT_MARKER,
+    close_chat_tool_result_turns,
+    computer_screenshot_label,
+    image_tool_result_label,
+)
 from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.trace import trace_event
 
@@ -94,17 +101,26 @@ class _ResponsesChatInputBuilder:
         self._reasoning_replay = reasoning_replay
         self._structured_reasoning_details = structured_reasoning_details
         self._pending_reasoning = _PendingReasoning()
+        self._pending_rich_output_parts: list[dict[str, object]] = []
         self._quarantined_call_ids: set[str] = set()
 
     def add(self, item: JsonValue) -> None:
         if isinstance(item, str):
+            self._flush_rich_outputs()
             self._flush_reasoning()
             self.messages.append({"role": "user", "content": item})
             return
         if not isinstance(item, Mapping):
+            self._flush_rich_outputs()
             return
 
         item_type = item.get("type")
+        if item_type not in {
+            "function_call_output",
+            "custom_tool_call_output",
+            "computer_call_output",
+        }:
+            self._flush_rich_outputs()
         if item_type in (None, "message") or "role" in item:
             self._add_message(item)
             return
@@ -117,17 +133,20 @@ class _ResponsesChatInputBuilder:
         if item_type in {"function_call_output", "custom_tool_call_output"}:
             self._add_tool_output(item, function=item_type == "function_call_output")
             return
+        if item_type == "computer_call_output":
+            self._add_computer_output(item)
+            return
         if item_type in {"input_text", "output_text", "text"}:
             self._flush_reasoning()
             self.messages.append({"role": "user", "content": _text_from_part(item)})
             return
         if item_type == "input_image":
-            image = _image_part(item)
-            if image is not None:
-                self._flush_reasoning()
-                self.messages.append({"role": "user", "content": [image]})
+            image = _image_part(item, context="input_image")
+            self._flush_reasoning()
+            self.messages.append({"role": "user", "content": [image]})
 
     def finish(self) -> tuple[list[str], list[dict[str, object]]]:
+        self._flush_rich_outputs()
         self._flush_reasoning()
         return self.system_parts, self.messages
 
@@ -208,12 +227,40 @@ class _ResponsesChatInputBuilder:
                 self._apply_pending_reasoning(previous)
             else:
                 self._flush_reasoning()
+        output = item.get("output")
+        rich_parts = (
+            _rich_function_output_parts(output, call_id=call_id) if function else None
+        )
         self.messages.append(
             {
                 "role": "tool",
                 "tool_call_id": call_id,
-                "content": _tool_output_text(item.get("output")),
+                "content": (
+                    IMAGE_TOOL_RESULT_MARKER
+                    if rich_parts is not None
+                    else _tool_output_text(output)
+                ),
             }
+        )
+        if rich_parts is not None:
+            self._pending_rich_output_parts.extend(rich_parts)
+
+    def _add_computer_output(self, item: Mapping[str, JsonValue]) -> None:
+        call_id = call_id_from_item(item)
+        output = item.get("output")
+        if not isinstance(output, Mapping) or output.get("type") != (
+            "computer_screenshot"
+        ):
+            raise ResponsesConversionError(
+                "computer_call_output.output must be a computer_screenshot object"
+            )
+        image = _image_part(output, context="computer_call_output.output")
+        self._flush_reasoning()
+        self._pending_rich_output_parts.extend(
+            [
+                {"type": "text", "text": computer_screenshot_label(call_id)},
+                image,
+            ]
         )
 
     def _last_tool_call_message(self) -> dict[str, object] | None:
@@ -233,6 +280,17 @@ class _ResponsesChatInputBuilder:
         self._apply_pending_reasoning(message)
         if len(message) > 2 or message.get("content"):
             self.messages.append(message)
+
+    def _flush_rich_outputs(self) -> None:
+        if not self._pending_rich_output_parts:
+            return
+        self.messages.append(
+            {
+                "role": "user",
+                "content": list(self._pending_rich_output_parts),
+            }
+        )
+        self._pending_rich_output_parts.clear()
 
     def _apply_pending_reasoning(self, message: dict[str, object]) -> None:
         text, encrypted = self._pending_reasoning.take()
@@ -259,7 +317,11 @@ def build_responses_chat_request(
         builder.system_parts.append(request.instructions)
     for item in _input_items(request.input):
         builder.add(item)
-    system_parts, messages = builder.finish()
+    system_parts, raw_messages = builder.finish()
+    messages = cast(
+        list[dict[str, object]],
+        close_chat_tool_result_turns(cast(list[JsonObject], raw_messages)),
+    )
     if not messages:
         raise ResponsesConversionError(
             "Responses request must contain usable input for Chat Completions"
@@ -340,12 +402,8 @@ def _message_content(
         ):
             parts.append({"type": "text", "text": _text_from_part(part)})
             continue
-        if (
-            allow_images
-            and part_type == "input_image"
-            and (image := _image_part(part)) is not None
-        ):
-            parts.append(image)
+        if allow_images and part_type == "input_image":
+            parts.append(_image_part(part, context="input_image"))
 
     if not parts:
         return ""
@@ -371,20 +429,26 @@ def _text_from_part(part: Mapping[str, JsonValue]) -> str:
     return ""
 
 
-def _image_part(part: Mapping[str, JsonValue]) -> dict[str, object] | None:
+def _image_part(part: Mapping[str, JsonValue], *, context: str) -> dict[str, object]:
     source = part.get("image_url")
     if isinstance(source, str) and source:
         image_url: dict[str, object] = {"url": source}
     elif isinstance(source, Mapping):
         url = source.get("url")
         if not isinstance(url, str) or not url:
-            return None
+            raise ResponsesConversionError(
+                f"{context}.image_url requires a non-empty URL"
+            )
         image_url = {"url": url}
         source_detail = source.get("detail")
         if isinstance(source_detail, str):
             image_url["detail"] = source_detail
     else:
-        return None
+        if part.get("file_id") is not None:
+            raise ResponsesConversionError(
+                f"{context}.file_id cannot be represented in Chat Completions"
+            )
+        raise ResponsesConversionError(f"{context}.image_url requires a non-empty URL")
     detail = part.get("detail")
     if isinstance(detail, str):
         image_url["detail"] = detail
@@ -409,6 +473,32 @@ def _tool_output_text(value: JsonValue) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value, separators=(",", ":"))
+
+
+def _rich_function_output_parts(
+    value: JsonValue, *, call_id: str
+) -> list[dict[str, object]] | None:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
+        return None
+    if not any(
+        isinstance(part, Mapping) and part.get("type") == "input_image"
+        for part in value
+    ):
+        return None
+
+    result: list[dict[str, object]] = [
+        {"type": "text", "text": image_tool_result_label(call_id)}
+    ]
+    for part in value:
+        if isinstance(part, Mapping) and part.get("type") == "input_text":
+            result.append({"type": "text", "text": _text_from_part(part)})
+        elif isinstance(part, Mapping) and part.get("type") == "input_image":
+            result.append(
+                _image_part(part, context="function_call_output.output.input_image")
+            )
+        else:
+            result.append({"type": "text", "text": _tool_output_text(part)})
+    return result
 
 
 def _apply_reasoning_text(

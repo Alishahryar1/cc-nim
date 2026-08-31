@@ -4,7 +4,7 @@ import asyncio
 import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
@@ -12,6 +12,7 @@ import httpx2
 from loguru import logger
 from openai import AsyncOpenAI, DefaultAsyncHttpx2Client
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import (
     ContentBlockToolUse,
@@ -32,10 +33,12 @@ from free_claude_code.core.anthropic.streaming import (
     parse_complete_tool_input,
     tool_schemas_by_name,
 )
+from free_claude_code.core.anthropic.usage import anthropic_input_usage_fields
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesRequest,
     ResponsesChatRequest,
+    ResponsesConversionError,
     build_responses_chat_request,
 )
 from free_claude_code.core.openai_tool_names import (
@@ -546,12 +549,27 @@ class OpenAIChatProvider(BaseProvider):
             thinking_tag=listing.thinking_tag,
             non_thinking_tag=listing.non_thinking_tag,
             thinking_boolean_path=listing.thinking_boolean_path,
+            input_modalities_path=listing.input_modalities_path,
+            thinking_sequence_path=listing.thinking_sequence_path,
+            fixed_input_modalities=listing.fixed_input_modalities,
+            input_modality_boolean_paths=listing.input_modality_boolean_paths,
+            context_window_tokens_path=listing.context_window_tokens_path,
+            max_output_tokens_path=listing.max_output_tokens_path,
+            context_window_tokens_resolver=listing.context_window_tokens_resolver,
         )
         model_infos_by_id = {
             model_info.model_id: model_info for model_info in live_model_infos
         }
         for model_info in model_infos_from_ids(listing.additional_model_ids):
-            model_infos_by_id.setdefault(model_info.model_id, model_info)
+            existing = model_infos_by_id.get(model_info.model_id)
+            if existing is None:
+                model_infos_by_id[model_info.model_id] = model_info
+                continue
+            model_infos_by_id[model_info.model_id] = replace(
+                existing,
+                context_window_tokens=None,
+                max_output_tokens=None,
+            )
         return frozenset(model_infos_by_id.values())
 
     async def _list_models_payload(self) -> Any:
@@ -647,11 +665,16 @@ class OpenAIChatProvider(BaseProvider):
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> ResponsesChatRequest:
         """Build a Chat body directly from Responses ingress."""
-        translated = build_responses_chat_request(
-            request,
-            reasoning_replay=self._profile.request_policy.reasoning_replay,
-            structured_reasoning_details=self._profile.structured_reasoning_details,
-        )
+        try:
+            translated = build_responses_chat_request(
+                request,
+                reasoning_replay=self._profile.request_policy.reasoning_replay,
+                structured_reasoning_details=(
+                    self._profile.structured_reasoning_details
+                ),
+            )
+        except ResponsesConversionError as exc:
+            raise InvalidRequestError(str(exc)) from exc
         body = translated.body
         apply_openai_chat_body_policy(body, self._profile.request_policy)
         self._profile.apply_reasoning_to_body(body, reasoning)
@@ -718,9 +741,29 @@ class OpenAIChatProvider(BaseProvider):
         """Return provider-specific per-tool argument aliases for this request."""
         return {}
 
+    def _cached_input_tokens(self, usage_info: object) -> int | None:
+        """Return the provider's cached-input count from final Chat usage."""
+        return nested_usage_int(
+            usage_info,
+            "prompt_tokens_details",
+            "cached_tokens",
+        )
+
+    def _cache_write_input_tokens(self, usage_info: object) -> int | None:
+        """Return the provider's cache-write count from final Chat usage."""
+        return nested_usage_int(
+            usage_info,
+            "prompt_tokens_details",
+            "cache_write_tokens",
+        )
+
     def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
-        """Return provider-specific Anthropic usage fields for final SSE usage."""
-        return {}
+        """Split standard prompt cache counts for final Anthropic usage."""
+        return anthropic_input_usage_fields(
+            usage_int(usage_info, "prompt_tokens"),
+            cache_read_tokens=self._cached_input_tokens(usage_info),
+            cache_creation_tokens=self._cache_write_input_tokens(usage_info),
+        )
 
     async def _create_stream(
         self,
@@ -1080,13 +1123,10 @@ class _OpenAIChatStreamRunner:
         usage = ChatStreamUsage(
             input_tokens=completion.input_tokens,
             output_tokens=completion.output_tokens,
-            cached_tokens=(
-                nested_usage_int(
-                    assembler.usage_info,
-                    "prompt_tokens_details",
-                    "cached_tokens",
-                )
-                or 0
+            cached_tokens=self._provider._cached_input_tokens(assembler.usage_info)
+            or 0,
+            cache_write_tokens=self._provider._cache_write_input_tokens(
+                assembler.usage_info
             ),
             reasoning_tokens=(
                 nested_usage_int(

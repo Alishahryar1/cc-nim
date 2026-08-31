@@ -195,7 +195,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         ("test_probe_and_models_routes",),
         ("test_grok_cli_headless_e2e",),
         ("clients",),
-        ("stable Grok Build 1.0.5+",),
+        ("Grok Build 1.0.5+",),
         "skip only when Grok Build is absent; the local fake upstream must pass",
     ),
     FeatureCoverage(
@@ -220,6 +220,23 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         ("providers",),
         ("configured provider credentials/endpoints", "optional FCC_SMOKE_MODEL_*"),
         "selected providers missing credentials are failing missing_env",
+    ),
+    FeatureCoverage(
+        "vision_protocol_matrix",
+        "Direct and tool-result images remain visual across protocol translation",
+        (
+            "tests/contracts/test_protocol_matrix.py",
+            "tests/core/anthropic/test_image_sources.py",
+            "tests/core/openai_responses/test_chat_request.py",
+        ),
+        (),
+        (
+            "test_nvidia_nim_vision_tool_result_e2e",
+            "test_nvidia_nim_vision_function_output_e2e",
+        ),
+        ("nvidia_nim_vision",),
+        ("NVIDIA_NIM_API_KEY", "FCC_SMOKE_MODEL_NVIDIA_NIM_VISION"),
+        "skip unless the dedicated vision target and explicit model are configured",
     ),
     FeatureCoverage(
         "per_model_mapping",
@@ -285,7 +302,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
             "test_provider_interrupted_tool_turn_resume_e2e",
             "test_gemini_thought_signature_tool_continuation_e2e",
             "test_provider_reasoning_tool_continuation_e2e",
-            "test_nvidia_nim_stepfun_tool_use_e2e",
         ),
         ("tools", "providers"),
         ("configured tool-capable provider",),

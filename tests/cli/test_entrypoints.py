@@ -182,6 +182,145 @@ def test_serve_respects_admin_browser_setting(open_admin_browser: bool) -> None:
     )
 
 
+def test_server_startup_repairs_invalid_managed_provider_proxy(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli import commands
+    from free_claude_code.config.env_files import dotenv_values_from_file
+    from free_claude_code.config.paths import managed_env_path
+
+    monkeypatch.delenv("OPENAI_PROXY", raising=False)
+    invalid_proxy = "invalid://user:leaked-secret@proxy.example:8080"
+    managed = managed_env_path()
+    managed.parent.mkdir(parents=True)
+    managed.write_text(
+        "\n".join(
+            (
+                "FCC_CONFIG_SCHEMA=1",
+                "MODEL=nvidia_nim/test-model",
+                f"OPENAI_PROXY={invalid_proxy}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    handed_off_settings: list[Settings] = []
+
+    def run_once(
+        _self: commands.ServerSupervisor,
+        settings: Settings,
+        *,
+        open_admin_browser: bool,
+        restart_generation: int,
+    ) -> bool:
+        assert open_admin_browser is False
+        assert restart_generation == 0
+        handed_off_settings.append(settings)
+        return False
+
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(commands.ServerSupervisor, "_run_once", run_once),
+        patch.object(commands, "kill_all_best_effort"),
+    ):
+        commands.ServerSupervisor().run(open_admin_browser=False)
+
+    assert len(handed_off_settings) == 1
+    assert handed_off_settings[0].openai_proxy is None
+    assert "OPENAI_PROXY" not in dotenv_values_from_file(managed)
+    assert "OPENAI_PROXY" in caplog.text
+    assert invalid_proxy not in caplog.text
+    assert "leaked-secret" not in caplog.text
+
+
+def test_load_server_settings_skips_reload_when_no_repair_occurs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from free_claude_code.cli import commands
+
+    settings = _launcher_settings()
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(commands, "get_settings", return_value=settings) as get_settings,
+        patch.object(
+            commands,
+            "repair_invalid_managed_provider_proxies",
+            return_value=(),
+        ) as repair,
+        patch.object(commands, "clear_settings_cache") as clear_cache,
+    ):
+        loaded = commands.load_server_settings()
+
+    assert loaded is settings
+    get_settings.assert_called_once_with()
+    repair.assert_called_once_with()
+    clear_cache.assert_not_called()
+    assert "Removed invalid managed provider proxy settings" not in caplog.text
+
+
+def test_load_server_settings_reloads_once_and_warns_after_repair(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from free_claude_code.cli import commands
+    from free_claude_code.config.paths import managed_env_path
+
+    invalid_proxy = "invalid://user:leaked-secret@proxy.example:8080"
+    stale = Settings(openai_proxy=invalid_proxy)
+    repaired = Settings()
+    get_settings = MagicMock(side_effect=(stale, repaired))
+
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(commands, "get_settings", get_settings),
+        patch.object(
+            commands,
+            "repair_invalid_managed_provider_proxies",
+            return_value=("OPENAI_PROXY", "GROQ_PROXY"),
+        ),
+        patch.object(commands, "clear_settings_cache") as clear_cache,
+    ):
+        loaded = commands.load_server_settings()
+
+    assert loaded is repaired
+    assert get_settings.call_count == 2
+    clear_cache.assert_called_once_with()
+    warning = next(
+        record.message
+        for record in caplog.records
+        if "Removed invalid managed provider proxy settings" in record.message
+    )
+    assert str(managed_env_path()) in warning
+    assert "OPENAI_PROXY, GROQ_PROXY" in warning
+    assert invalid_proxy not in warning
+    assert "leaked-secret" not in warning
+
+
+def test_load_server_settings_leaves_process_owned_invalid_proxy_explicit(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli import commands
+    from free_claude_code.config.paths import managed_env_path
+
+    process_proxy = "invalid://process-proxy"
+    monkeypatch.setenv("OPENAI_PROXY", process_proxy)
+    managed = managed_env_path()
+    managed.parent.mkdir(parents=True)
+    managed.write_text(
+        "FCC_CONFIG_SCHEMA=1\nOPENAI_PROXY=invalid://managed-proxy\n",
+        encoding="utf-8",
+    )
+    baseline = managed.read_bytes()
+
+    with caplog.at_level("WARNING"):
+        settings = commands.load_server_settings()
+
+    assert settings.openai_proxy == process_proxy
+    assert managed.read_bytes() == baseline
+    assert "Removed invalid managed provider proxy settings" not in caplog.text
+
+
 def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
     from free_claude_code.cli import commands
 

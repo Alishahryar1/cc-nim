@@ -40,6 +40,22 @@ def _models_payload() -> JsonObject:
     }
 
 
+def test_muse_install_hint_covers_native_windows_and_posix() -> None:
+    from free_claude_code.cli.launchers import muse
+
+    with (
+        patch.object(
+            muse, "resolve_client_binary", side_effect=SystemExit(1)
+        ) as resolve_client_binary,
+        pytest.raises(SystemExit),
+    ):
+        muse.launch([])
+
+    install_hint = resolve_client_binary.call_args.kwargs["install_hint"]
+    assert "scripts/install-muse.ps1" in install_hint
+    assert "https://dev.meta.ai/install.sh" in install_hint
+
+
 @pytest.mark.parametrize(
     ("argv", "str_mode", "command_index"),
     [

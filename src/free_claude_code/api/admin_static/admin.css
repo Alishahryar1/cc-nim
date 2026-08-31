@@ -106,6 +106,7 @@ html {
     scroll-behavior: auto;
   }
 }
+
 body {
   margin: 0;
   min-width: 320px;
@@ -947,10 +948,6 @@ textarea:focus-visible,
   background: #141822;
   box-shadow: var(--shadow-lg);
   padding: 5px;
-}
-
-.model-combobox-list[hidden] {
-  display: none;
 }
 
 .model-combobox-option {

@@ -7,9 +7,11 @@ from free_claude_code.core.anthropic import (
     OpenAIConversionError,
     ReasoningReplayMode,
     build_base_request_body,
-    is_synthetic_openai_tool_turn_boundary,
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.openai_chat import (
+    is_synthetic_chat_tool_turn_boundary,
+)
 
 # --- Mock Classes ---
 
@@ -1132,6 +1134,263 @@ def test_convert_user_message_image_sources(source, expected_url):
     ]
 
 
+@pytest.mark.parametrize(
+    "data",
+    (
+        "data:IMAGE/PNG;BASE64,aGVs\r\nbG8=",
+        "  aG\tVs\r\nbG8=  ",
+    ),
+)
+def test_convert_user_message_canonicalizes_equivalent_base64(data):
+    messages = [
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="image",
+                    source={
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": data,
+                    },
+                )
+            ],
+        )
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert result[0]["content"][0]["image_url"]["url"] == (
+        "data:image/png;base64,aGVsbG8="
+    )
+
+
+def test_convert_image_tool_result_to_schema_valid_chat_history():
+    image_url = "https://images.example.test/tool.png"
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_image", name="Read", input={})],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_image",
+                    content=[
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": image_url},
+                        }
+                    ],
+                )
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert result[1] == {
+        "role": "tool",
+        "tool_call_id": "call_image",
+        "content": "[Image-bearing tool output follows in user content.]",
+    }
+    assert is_synthetic_chat_tool_turn_boundary(result[2])
+    assert result[3]["content"] == [
+        {
+            "type": "text",
+            "text": 'Image-bearing output for tool call "call_image":',
+        },
+        {"type": "image_url", "image_url": {"url": image_url}},
+    ]
+    assert image_url not in result[1]["content"]
+
+
+def test_convert_mixed_image_tool_result_preserves_part_order_once():
+    image_url = "data:image/png;base64,aGVsbG8="
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_mixed", name="Read", input={})],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_mixed",
+                    content=[
+                        {"type": "text", "text": "before"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "aGVsbG8=",
+                            },
+                        },
+                        {"type": "text", "text": "after"},
+                    ],
+                )
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert result[3]["content"] == [
+        {
+            "type": "text",
+            "text": 'Image-bearing output for tool call "call_mixed":',
+        },
+        {"type": "text", "text": "before"},
+        {"type": "image_url", "image_url": {"url": image_url}},
+        {"type": "text", "text": "after"},
+    ]
+    assert (
+        sum(
+            part.get("text") == "before"
+            for message in result
+            if isinstance(message.get("content"), list)
+            for part in message["content"]
+        )
+        == 1
+    )
+
+
+def test_convert_parallel_image_tool_results_closes_all_tools_before_images():
+    messages = [
+        MockMessage(
+            "assistant",
+            [
+                MockBlock(type="tool_use", id="call_a", name="ReadA", input={}),
+                MockBlock(type="tool_use", id="call_b", name="ReadB", input={}),
+            ],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_b",
+                    content=[
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": "https://x/b.png"},
+                        }
+                    ],
+                ),
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_a",
+                    content=[
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": "https://x/a.png"},
+                        }
+                    ],
+                ),
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert [message["tool_call_id"] for message in result[1:3]] == [
+        "call_a",
+        "call_b",
+    ]
+    assert result[4]["content"] == [
+        {
+            "type": "text",
+            "text": 'Image-bearing output for tool call "call_a":',
+        },
+        {"type": "image_url", "image_url": {"url": "https://x/a.png"}},
+        {
+            "type": "text",
+            "text": 'Image-bearing output for tool call "call_b":',
+        },
+        {"type": "image_url", "image_url": {"url": "https://x/b.png"}},
+    ]
+
+
+def test_convert_image_tool_result_precedes_following_user_text():
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_image", name="Read", input={})],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_image",
+                    content=[
+                        {
+                            "type": "image",
+                            "source": {"type": "url", "url": "https://x/a.png"},
+                        }
+                    ],
+                ),
+                MockBlock(type="text", text="Now describe it."),
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert result[3]["content"][-1] == {
+        "type": "text",
+        "text": "Now describe it.",
+    }
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        {"type": "base64", "media_type": "image/png", "data": "SECRET_BAD"},
+        {"type": "file", "file_id": "file_1"},
+    ),
+)
+def test_convert_image_tool_result_rejects_unportable_source_safely(source):
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_image", name="Read", input={})],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_image",
+                    content=[{"type": "image", "source": source}],
+                )
+            ],
+        ),
+    ]
+
+    with pytest.raises(OpenAIConversionError) as exc_info:
+        AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert "SECRET_BAD" not in str(exc_info.value)
+
+
 def test_convert_user_message_preserves_interleaved_image_text_order():
     messages = [
         MockMessage(
@@ -1142,7 +1401,7 @@ def test_convert_user_message_preserves_interleaved_image_text_order():
                     source={
                         "type": "base64",
                         "media_type": "image/jpeg",
-                        "data": "FIRST",
+                        "data": "RklSU1Q=",
                     },
                 ),
                 MockBlock(type="text", text="Compare the first image with this one."),
@@ -1163,7 +1422,7 @@ def test_convert_user_message_preserves_interleaved_image_text_order():
             "content": [
                 {
                     "type": "image_url",
-                    "image_url": {"url": "data:image/jpeg;base64,FIRST"},
+                    "image_url": {"url": "data:image/jpeg;base64,RklSU1Q="},
                 },
                 {
                     "type": "text",
@@ -1216,15 +1475,15 @@ def test_convert_user_image_before_tool_result_preserves_message_order():
     [
         (
             {"type": "base64", "media_type": "", "data": "AAAA"},
-            "non-empty media_type",
+            "media type",
         ),
         (
             {"type": "base64", "media_type": "image/png", "data": ""},
-            "non-empty data",
+            "data must be non-empty",
         ),
-        ({"type": "url", "url": ""}, "non-empty url"),
-        ({"type": "file", "file_id": "file_1"}, "Unsupported image source type"),
-        ({}, "Unsupported image source type"),
+        ({"type": "url", "url": ""}, "URL must be a non-empty"),
+        ({"type": "file", "file_id": "file_1"}, "cannot cross"),
+        ({}, "cannot cross"),
     ],
 )
 def test_convert_user_message_rejects_unconvertible_image_sources(source, error):
@@ -1340,7 +1599,7 @@ def test_user_after_completed_tool_result_gets_neutral_assistant_boundary():
         "user",
     ]
     assert result[3] == {"role": "assistant", "content": " "}
-    assert is_synthetic_openai_tool_turn_boundary(result[3])
+    assert is_synthetic_chat_tool_turn_boundary(result[3])
     assert json.loads(json.dumps(result[3])) == {
         "role": "assistant",
         "content": " ",

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.json_types import JsonObject
@@ -15,7 +16,14 @@ from free_claude_code.core.reasoning import (
     ReasoningEffort,
     ReasoningPolicy,
 )
+from free_claude_code.providers.openai_chat import (
+    NO_REASONING,
+    OpenAIChatProfile,
+    OpenAIChatProvider,
+    OpenAIChatRequestPolicy,
+)
 from tests.api.support import create_test_app
+from tests.providers.support import immediate_admission, make_provider_config
 
 _PUBLIC_MODEL = "nvidia_nim/test-model"
 _UPSTREAM_MODEL = "test-model"
@@ -163,6 +171,43 @@ def test_create_response_preflight_rejection_stays_an_ordinary_http_error() -> N
     }
     assert "x-should-retry" not in response.headers
     assert provider.requests == []
+
+
+def test_create_response_rejects_unportable_image_as_invalid_request() -> None:
+    with patch(
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI",
+        return_value=MagicMock(),
+    ):
+        provider = OpenAIChatProvider(
+            make_provider_config(
+                api_key="test-key",
+                base_url="https://provider.invalid/v1",
+            ),
+            profile=OpenAIChatProfile(
+                OpenAIChatRequestPolicy(
+                    provider_name="TEST_CHAT",
+                    reasoning_replay=ReasoningReplayMode.DISABLED,
+                ),
+                NO_REASONING,
+            ),
+            admission=immediate_admission(provider_name="TEST_CHAT"),
+        )
+    app = create_test_app()
+    with (
+        patch("free_claude_code.api.routes.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": _PUBLIC_MODEL,
+                "input": [{"type": "input_image", "file_id": "file_1"}],
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["type"] == "invalid_request_error"
+    assert "file_id" in response.json()["error"]["message"]
 
 
 def test_create_response_preserves_unknown_top_level_extensions(

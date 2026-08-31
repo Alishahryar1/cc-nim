@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 from .common import proxy_v1_url
 from .model_catalog import ClientModel
@@ -28,11 +29,7 @@ def build_opencode_config(
         raise ValueError("OpenCode requires at least one routable FCC model")
 
     model_config: JsonObject = {
-        model.wire_slug: {
-            "name": model.display_name,
-            "reasoning": model.allows_reasoning,
-        }
-        for model in models
+        model.wire_slug: _model_config(model) for model in models
     }
     provider_config: JsonObject = {
         "name": "Free Claude Code",
@@ -61,3 +58,31 @@ def build_opencode_config(
             "small_model": default_model,
         },
     )
+
+
+def _model_config(model: ClientModel) -> JsonObject:
+    config: JsonObject = {
+        "name": model.display_name,
+        "reasoning": model.supports_reasoning is not False,
+    }
+    if model.input_modalities is not None:
+        config["modalities"] = {
+            "input": [
+                modality.value
+                for modality in ModelInputModality
+                if modality in model.input_modalities
+            ]
+        }
+    if model.context_window_tokens is not None or model.max_output_tokens is not None:
+        # OpenCode requires both fields and uses zero when either limit is unknown.
+        config["limit"] = {
+            "context": (
+                model.context_window_tokens
+                if model.context_window_tokens is not None
+                else 0
+            ),
+            "output": (
+                model.max_output_tokens if model.max_output_tokens is not None else 0
+            ),
+        }
+    return config

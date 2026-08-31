@@ -25,6 +25,27 @@ _PROFILE = OpenAIChatProfile(
 )
 
 
+def _deepseek_cache_partition(
+    usage_info: object,
+) -> tuple[int, int, int | None] | None:
+    cache_hit_tokens = usage_int(usage_info, "prompt_cache_hit_tokens")
+    cache_miss_tokens = usage_int(usage_info, "prompt_cache_miss_tokens")
+    if (
+        cache_hit_tokens is None
+        or cache_hit_tokens < 0
+        or cache_miss_tokens is None
+        or cache_miss_tokens < 0
+    ):
+        return None
+
+    prompt_tokens = usage_int(usage_info, "prompt_tokens")
+    if prompt_tokens is None or prompt_tokens < 0:
+        return cache_hit_tokens, cache_miss_tokens, None
+    if prompt_tokens != cache_hit_tokens + cache_miss_tokens:
+        return None
+    return cache_hit_tokens, cache_miss_tokens, prompt_tokens
+
+
 class DeepSeekProvider(OpenAIChatProvider):
     """DeepSeek using ``https://api.deepseek.com`` Chat Completions."""
 
@@ -58,25 +79,18 @@ class DeepSeekProvider(OpenAIChatProvider):
         finalize_deepseek_chat_body(body, reasoning)
         return body
 
+    def _cached_input_tokens(self, usage_info: object) -> int | None:
+        cache_partition = _deepseek_cache_partition(usage_info)
+        if cache_partition is None:
+            return None
+        cache_hit_tokens, _, prompt_tokens = cache_partition
+        return cache_hit_tokens if prompt_tokens is not None else None
+
     def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
-        cache_hit_tokens = usage_int(usage_info, "prompt_cache_hit_tokens")
-        cache_miss_tokens = usage_int(usage_info, "prompt_cache_miss_tokens")
-        if (
-            cache_hit_tokens is None
-            or cache_hit_tokens < 0
-            or cache_miss_tokens is None
-            or cache_miss_tokens < 0
-        ):
+        cache_partition = _deepseek_cache_partition(usage_info)
+        if cache_partition is None:
             return {}
-
-        prompt_tokens = usage_int(usage_info, "prompt_tokens")
-        if (
-            prompt_tokens is not None
-            and prompt_tokens >= 0
-            and prompt_tokens != cache_hit_tokens + cache_miss_tokens
-        ):
-            return {}
-
+        cache_hit_tokens, cache_miss_tokens, _ = cache_partition
         return {
             "input_tokens": cache_miss_tokens,
             "cache_read_input_tokens": cache_hit_tokens,

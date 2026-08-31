@@ -640,10 +640,12 @@ def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
     assert cache.cached_model_ids() == {
         "open_router": frozenset({"reasoning-model", "plain-model"})
     }
-    assert (
-        cache.cached_model_supports_thinking("open_router", "reasoning-model") is True
+    assert cache.cached_model_info(
+        "open_router", "reasoning-model"
+    ) == ProviderModelInfo("reasoning-model", supports_thinking=True)
+    assert cache.cached_model_info("open_router", "plain-model") == ProviderModelInfo(
+        "plain-model", supports_thinking=False
     )
-    assert cache.cached_model_supports_thinking("open_router", "plain-model") is False
     assert cache.cached_prefixed_model_infos() == (
         ProviderModelInfo("open_router/plain-model", supports_thinking=False),
         ProviderModelInfo("open_router/reasoning-model", supports_thinking=True),
@@ -670,7 +672,9 @@ def test_runtime_metadata_cache_keeps_unknown_thinking_support() -> None:
     cache.cache_model_infos("open_router", _infos("plain-model"))
 
     assert cache.cached_model_ids() == {"open_router": frozenset({"plain-model"})}
-    assert cache.cached_model_supports_thinking("open_router", "plain-model") is None
+    assert cache.cached_model_info("open_router", "plain-model") == ProviderModelInfo(
+        "plain-model"
+    )
     assert cache.cached_prefixed_model_infos() == (
         ProviderModelInfo("open_router/plain-model", supports_thinking=None),
     )

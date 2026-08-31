@@ -30,13 +30,13 @@ def _models() -> tuple[ClientModel, ...]:
             wire_slug="nvidia_nim/vendor/main-model",
             provider_model_ref="nvidia_nim/vendor/main-model",
             display_name="Main model",
-            allows_reasoning=True,
+            supports_reasoning=True,
         ),
         ClientModel(
             wire_slug="ollama_cloud/qwen3-coder:480b",
             provider_model_ref="ollama_cloud/qwen3-coder:480b",
             display_name="Colon model",
-            allows_reasoning=False,
+            supports_reasoning=False,
         ),
     )
 

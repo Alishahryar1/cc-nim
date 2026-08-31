@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import NEBIUS_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
@@ -127,7 +128,14 @@ async def test_lists_only_text_output_models(
 
     model_infos = await nebius_provider.list_model_infos()
 
-    assert model_infos == frozenset({ProviderModelInfo(_MODEL)})
+    assert model_infos == frozenset(
+        {
+            ProviderModelInfo(
+                _MODEL,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            )
+        }
+    )
     nebius_provider._client.get.assert_awaited_once_with(
         "/models",
         cast_to=object,
@@ -216,7 +224,14 @@ async def test_model_catalog_uses_documented_url_auth_and_verbose_query(
     finally:
         await nebius_provider.cleanup()
 
-    assert model_infos == frozenset({ProviderModelInfo(_MODEL)})
+    assert model_infos == frozenset(
+        {
+            ProviderModelInfo(
+                _MODEL,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            )
+        }
+    )
     assert len(requests) == 1
     assert str(requests[0].url) == (
         "https://api.tokenfactory.nebius.com/v1/models?verbose=true"

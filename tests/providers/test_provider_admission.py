@@ -8,6 +8,8 @@ from email.utils import format_datetime
 from unittest.mock import patch
 
 import httpx
+import httpx2
+import openai
 import pytest
 
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
@@ -454,6 +456,51 @@ async def test_non_retryable_error_is_attempted_once() -> None:
         )
 
     assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_413_does_not_retry_sleep_or_open_recovery() -> None:
+    controller = _controller()
+    attempts = 0
+    request = httpx2.Request("POST", "https://provider.test/chat/completions")
+    response = httpx2.Response(
+        413,
+        request=request,
+        headers={"retry-after": "237", "x-should-retry": "false"},
+    )
+    error = openai.APIStatusError(
+        "Request too large for token rate limit",
+        response=response,
+        body={
+            "error": {
+                "type": "tokens",
+                "code": "rate_limit_exceeded",
+                "message": "Request requires 55940 tokens but limit is 8000",
+            }
+        },
+    )
+
+    async def reject() -> None:
+        nonlocal attempts
+        attempts += 1
+        raise error
+
+    with (
+        patch("free_claude_code.providers.admission.asyncio.sleep") as sleep,
+        patch("free_claude_code.providers.admission.trace_event") as trace,
+        pytest.raises(openai.APIStatusError),
+    ):
+        await controller.start_execution(request_id="req_413").run_call(
+            reject,
+            operation_kind=ProviderOperationKind.GENERATION,
+        )
+
+    assert attempts == 1
+    sleep.assert_not_awaited()
+    assert all(
+        call.kwargs.get("event") != "provider.recovery.opened"
+        for call in trace.call_args_list
+    )
 
 
 @pytest.mark.asyncio

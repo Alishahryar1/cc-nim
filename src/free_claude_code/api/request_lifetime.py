@@ -5,6 +5,7 @@ import asyncio
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _INFERENCE_PATHS = frozenset({"/v1/messages", "/v1/responses"})
+_CHAT_STREAM_ACTIONS = frozenset({"send", "retry", "regenerate", "compact"})
 
 
 class InferenceRequestLifetimeMiddleware:
@@ -77,10 +78,23 @@ class InferenceRequestLifetimeMiddleware:
 
 
 def _owns_inference_lifetime(scope: Scope) -> bool:
+    path = scope.get("path")
     return (
         scope["type"] == "http"
         and scope.get("method") == "POST"
-        and scope.get("path") in _INFERENCE_PATHS
+        and (path in _INFERENCE_PATHS or _is_chat_stream_path(path))
+    )
+
+
+def _is_chat_stream_path(path: object) -> bool:
+    if not isinstance(path, str):
+        return False
+    parts = path.split("/")
+    return (
+        len(parts) == 7
+        and parts[1:5] == ["admin", "api", "chat", "sessions"]
+        and bool(parts[5])
+        and parts[6] in _CHAT_STREAM_ACTIONS
     )
 
 
