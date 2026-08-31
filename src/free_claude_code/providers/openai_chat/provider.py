@@ -1294,7 +1294,7 @@ class _OpenAIChatStreamRunner:
         while execution.can_attempt:
             scope: ProviderAttemptScope | None = None
             try:
-                stream, accepted_body, attempt = await self._provider._create_stream(
+                stream, body, attempt = await self._provider._create_stream(
                     body,
                     execution,
                     operation_kind,
@@ -1335,9 +1335,7 @@ class _OpenAIChatStreamRunner:
                 completed_tool_calls = tool_calls.completed_calls(
                     self._tool_schemas,
                     tool_names=self._tool_names,
-                    tool_argument_aliases=self._provider._tool_argument_aliases(
-                        accepted_body
-                    ),
+                    tool_argument_aliases=self._provider._tool_argument_aliases(body),
                 )
                 if tool_calls.has_calls and completed_tool_calls is None:
                     raise TruncatedProviderStreamError(
