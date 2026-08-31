@@ -1300,6 +1300,7 @@ class _OpenAIChatStreamRunner:
                     execution,
                     operation_kind,
                 )
+                body = accepted_body
                 scope = ProviderAttemptScope(
                     attempt,
                     provider_name=self._provider._provider_name,

@@ -1645,6 +1645,55 @@ class TestStreamingExceptionHandling:
         assert all(stream.closed for stream in streams)
 
     @pytest.mark.asyncio
+    async def test_recovery_retry_preserves_create_correction(self):
+        """A recovery stream retry reuses the body accepted by create."""
+        provider = _make_provider()
+        runner = _make_stream_runner(provider)
+        execution = provider._admission.start_execution()
+        response = httpx2.Response(
+            status_code=400,
+            request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
+        )
+        usage_rejection = openai.BadRequestError(
+            "stream_options is unsupported",
+            response=response,
+            body={"error": {"message": "stream_options is unsupported"}},
+        )
+        failed_stream = ClosableAsyncStreamMock(
+            [],
+            error=httpx.ReadError("early cutoff"),
+        )
+        completed_stream = ClosableAsyncStreamMock(
+            [_make_chunk(content="world"), _make_chunk(finish_reason="stop")]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[usage_rejection, failed_stream, completed_stream],
+        ) as create:
+            result = await runner._collect_recovery_output(
+                {
+                    "messages": [],
+                    "stream_options": {"include_usage": True},
+                },
+                include_reasoning=True,
+                execution=execution,
+                operation_kind=ProviderOperationKind.CONTINUATION,
+            )
+
+        assert create.await_count == 3
+        assert create.await_args_list[0].kwargs["stream_options"] == {
+            "include_usage": True
+        }
+        assert "stream_options" not in create.await_args_list[1].kwargs
+        assert "stream_options" not in create.await_args_list[2].kwargs
+        assert result.text == "world"
+        assert failed_stream.closed is True
+        assert completed_stream.closed is True
+
+    @pytest.mark.asyncio
     async def test_recovery_collect_text_accepts_finish_reason(self):
         """Recovery collectors return text only after the upstream terminal marker."""
         stream = ClosableAsyncStreamMock(

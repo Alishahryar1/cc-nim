@@ -154,6 +154,21 @@ def test_accepts_bounded_case_and_whitespace_variation() -> None:
 
 
 @pytest.mark.parametrize(
+    "requested",
+    ["26206.5", "26206e3", "26206tokens"],
+    ids=["decimal", "exponent", "suffix"],
+)
+def test_rejects_requested_values_with_trailing_numeric_syntax(
+    requested: str,
+) -> None:
+    error = _error(
+        message=f"tokens per minute (TPM): Limit 8000, Requested {requested}"
+    )
+
+    assert correct_tpm_completion_budget(error, _body()) is None
+
+
+@pytest.mark.parametrize(
     "error",
     [
         _error(status=429),
@@ -253,7 +268,7 @@ def test_rejects_present_header_that_cannot_be_validated() -> None:
 
 @pytest.mark.parametrize("source", ["message", "header"])
 def test_rejects_oversized_decimal_without_masking_the_413(source: str) -> None:
-    oversized = "9" * 5_000
+    oversized = "9" * 20
     error = (
         _error(
             message=(

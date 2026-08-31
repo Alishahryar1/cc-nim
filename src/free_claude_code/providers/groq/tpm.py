@@ -5,9 +5,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 _TPM_LIMIT_HEADER = "x-ratelimit-limit-tokens"
+_MAX_DECIMAL_DIGITS = 19
 _TPM_CLAUSE = re.compile(
     r"tokens\s+per\s+minute\s*\(\s*tpm\s*\)\s*:\s*"
-    r"limit\s+([0-9]+)\s*,\s*requested\s+([0-9]+)",
+    r"limit\s+([0-9]+)\s*,\s*requested\s+([0-9]+)(?=\s*(?:[,;]|$))",
     re.IGNORECASE,
 )
 _OUTPUT_FIELDS = frozenset({"max_completion_tokens", "max_tokens"})
@@ -121,7 +122,7 @@ def _header_agrees(error: Exception, limit: int) -> bool:
 
 
 def _ascii_decimal(value: str) -> int | None:
-    if not value.isascii() or not value.isdecimal():
+    if not value.isascii() or not value.isdecimal() or len(value) > _MAX_DECIMAL_DIGITS:
         return None
     try:
         return int(value)
