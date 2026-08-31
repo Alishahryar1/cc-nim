@@ -63,6 +63,8 @@ def correct_tpm_completion_budget(
     previous = body.get("max_completion_tokens")
     if not isinstance(previous, int) or isinstance(previous, bool) or previous <= 0:
         return None
+    if requested < previous:
+        return None
     extra_body = body.get("extra_body")
     if isinstance(extra_body, Mapping) and any(
         field in extra_body for field in _OUTPUT_FIELDS

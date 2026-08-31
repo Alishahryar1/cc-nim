@@ -144,6 +144,12 @@ def test_exact_tpm_rejection_corrects_only_completion_budget(wrapped: bool) -> N
         ),
         (
             _status_error(
+                detail=_detail("tokens per minute (TPM): Limit 8000, Requested 9000")
+            ),
+            _body(),
+        ),
+        (
+            _status_error(
                 detail=_detail(
                     "tokens per minute (TPM): Limit 80000000000000000000, "
                     "Requested 90000000000000000000"
@@ -171,6 +177,7 @@ def test_exact_tpm_rejection_corrects_only_completion_budget(wrapped: bool) -> N
         "malformed-requested-boundary",
         "ambiguous-clause",
         "no-overage",
+        "requested-under-output-cap",
         "oversized-number",
         "non-integer-max",
         "boolean-max",
@@ -294,7 +301,7 @@ async def test_distinct_bodies_get_independent_tpm_corrections() -> None:
     provider = _provider()
     execution = provider._admission.start_execution()
     second_error = _status_error(
-        detail=_detail("tokens per minute (TPM): Limit 8000, Requested 18000")
+        detail=_detail("tokens per minute (TPM): Limit 8000, Requested 22000")
     )
     create = AsyncMock(side_effect=[_status_error(), object(), second_error, object()])
 
@@ -315,4 +322,4 @@ async def test_distinct_bodies_get_independent_tpm_corrections() -> None:
 
     assert execution.attempts_started == 4
     assert first_body["max_completion_tokens"] == _CORRECTED_MAX
-    assert second_body["max_completion_tokens"] == 10_000
+    assert second_body["max_completion_tokens"] == 6_000

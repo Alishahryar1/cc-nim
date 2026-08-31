@@ -35,6 +35,7 @@ from free_claude_code.core.anthropic.streaming import (
 )
 from free_claude_code.core.anthropic.usage import anthropic_input_usage_fields
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesRequest,
     ResponsesChatRequest,
@@ -116,6 +117,7 @@ class _CollectedRecoveryOutput:
     text: str
     thinking: str
     tool_calls: tuple[CompletedOpenAIToolCall, ...]
+    request_body: JsonObject
 
 
 def _iter_visible_text_events(
@@ -1349,6 +1351,7 @@ class _OpenAIChatStreamRunner:
                     text="".join(text_parts),
                     thinking="".join(thinking_parts),
                     tool_calls=completed_tool_calls or (),
+                    request_body=body,
                 )
             except Exception as error:
                 last_error = error
@@ -1378,7 +1381,12 @@ class _OpenAIChatStreamRunner:
                     await scope.aclose(active_error=sys.exception())
         if last_error is not None:
             raise last_error
-        return _CollectedRecoveryOutput(text="", thinking="", tool_calls=())
+        return _CollectedRecoveryOutput(
+            text="",
+            thinking="",
+            tool_calls=(),
+            request_body=body,
+        )
 
     async def _recovery_events(
         self,
@@ -1539,6 +1547,7 @@ class _OpenAIChatStreamRunner:
                         attempt=repair_attempt,
                     )
                     break
+                recovery_body = recovered.request_body
             if accepted_suffix is None:
                 return None
             to_emit = (

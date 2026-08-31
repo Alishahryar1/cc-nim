@@ -10,6 +10,7 @@ import openai
 from loguru import logger
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.reasoning import (
     ReasoningEffort,
     ReasoningPolicy,
@@ -140,9 +141,9 @@ class GroqProvider(OpenAIChatProvider):
     def _next_create_retry_body(
         self,
         error: Exception,
-        body: dict[str, Any],
+        body: JsonObject,
         used_retry_kinds: set[str],
-    ) -> dict[str, Any] | None:
+    ) -> JsonObject | None:
         retry_body = super()._next_create_retry_body(error, body, used_retry_kinds)
         if retry_body is not None or "groq_tpm" in used_retry_kinds:
             return retry_body
