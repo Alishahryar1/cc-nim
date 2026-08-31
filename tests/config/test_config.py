@@ -500,3 +500,25 @@ def test_settings_defaults_do_not_contain_empty_enum_strings() -> None:
     for _name, value in Settings():
         if isinstance(value, Enum):
             assert value.value
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("claude-desktop", "claude-desktop"),
+        ("/claude-desktop", "claude-desktop"),
+        ("claude-desktop/", "claude-desktop"),
+        ("/claude-desktop/", "claude-desktop"),
+        ("//gateway//", "gateway"),
+    ],
+)
+def test_desktop_gateway_prefix_strips_boundary_slashes(
+    value: str, expected: str
+) -> None:
+    assert Settings(desktop_gateway_prefix=value).desktop_gateway_prefix == expected
+
+
+@pytest.mark.parametrize("value", ["/", "//", "///"])
+def test_desktop_gateway_prefix_requires_a_path_segment(value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(desktop_gateway_prefix=value)

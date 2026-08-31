@@ -147,6 +147,7 @@ class ApplicationRuntime:
             self.provider_manager.start_model_list_refresh()
             if self._chat_service is not None:
                 await self._chat_service.start()
+            self._seed_picker_aliases_from_cache()
             await self._start_messaging_if_configured()
             logging.getLogger("uvicorn.error").info(
                 "Admin UI: %s (local-only)",
@@ -341,6 +342,14 @@ class ApplicationRuntime:
             "admin_url": local_admin_url(settings) if automatic else None,
             "fields": list(fields),
         }
+
+    def _seed_picker_aliases_from_cache(self) -> None:
+        """Publish picker aliases for exactly the cached model inventory.
+
+        Delegates to the provider manager so startup seeding and every later
+        model-catalog republication share one ownership path.
+        """
+        self.provider_manager.refresh_picker_aliases()
 
     async def _start_messaging_if_configured(self) -> None:
         try:

@@ -1,4 +1,4 @@
-"""pystray adapter for the Windows tray and macOS menu bar."""
+"""pystray adapter for the Windows tray, macOS menu bar, and Linux status area."""
 
 from io import BytesIO
 
@@ -54,6 +54,37 @@ def _create_icon() -> Image.Image:
 
     with Image.open(BytesIO(app_icon_bytes(".png"))) as image:
         return image.convert("RGBA")
+
+
+_TRAY_BACKEND_HINT = (
+    "no supported tray backend is available; install "
+    "'gir1.2-ayatanaappindicator3-0.1' (Debian/Ubuntu) or "
+    "'libappindicator-gtk3' (Fedora), or use an X11 session"
+)
+
+
+def tray_is_available() -> tuple[bool, str]:
+    """Probe whether a native tray icon can be constructed on this desktop.
+
+    Constructing the pystray ``Icon`` resolves the platform backend module;
+    on Linux that import fails when no AppIndicator/GTK/X11 backend exists.
+    The probe discards the constructed icon without ever showing it.
+
+    Returns ``(True, "")`` when a tray can run, otherwise ``(False, reason)``
+    with an actionable message for console fallback mode.
+    """
+
+    try:
+        image = _create_icon()
+    except Exception as exc:
+        return False, f"tray icon artwork failed to load: {exc}"
+    try:
+        Icon("free-claude-code", image, "Free Claude Code")
+    except Exception as exc:
+        if isinstance(exc, ImportError):
+            return False, _TRAY_BACKEND_HINT
+        return False, str(exc)
+    return True, ""
 
 
 def launch() -> None:

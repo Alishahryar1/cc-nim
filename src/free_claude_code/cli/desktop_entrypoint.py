@@ -4,6 +4,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from free_claude_code.cli import desktop_console
 from free_claude_code.cli.desktop_assets import export_app_icon
 
 
@@ -17,10 +18,17 @@ def launch(argv: Sequence[str] | None = None) -> None:
     if args:
         print("Usage: fcc-desktop [--export-icon PATH]", file=sys.stderr)
         raise SystemExit(2)
-    if sys.platform not in {"darwin", "win32"}:
-        print("FCC Desktop is supported on Windows and macOS.", file=sys.stderr)
+    if sys.platform not in {"darwin", "win32", "linux"}:
+        print("FCC Desktop is supported on Windows, macOS, and Linux.", file=sys.stderr)
         raise SystemExit(1)
 
-    from free_claude_code.cli.desktop_tray import launch as launch_tray
+    if sys.platform == "linux":
+        desktop_console.launch()
+        return
 
-    launch_tray()
+    # Import lazily so a headless Linux session without a pystray backend
+    # can still run ``--export-icon`` and the console-mode fallback; the
+    # tray adapter is only needed on this native-tray branch.
+    from free_claude_code.cli import desktop_tray
+
+    desktop_tray.launch()
