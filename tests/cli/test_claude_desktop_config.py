@@ -421,6 +421,81 @@ def test_unconfigure_restores_non_object_inference_entry(
     )
 
 
+def test_unconfigure_cleans_scalar_origin_after_user_adds_field(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """A user-added field must not shield FCC's routing keys from removal.
+
+    Configure clobbers a scalar ``inference`` with its managed mapping; the
+    user then adds an unrelated field, so the mapping no longer equals what
+    configure wrote. Unconfigure must still remove every managed key that
+    holds its written value while preserving the user's field.
+    """
+
+    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    data["inference"]["userAddedAfterConfigure"] = "must-survive"
+    fake_config.write_text(json.dumps(data), encoding="utf-8")
+
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+
+    result = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert result["inference"] == {"userAddedAfterConfigure": "must-survive"}
+
+
+def test_unconfigure_cleans_null_origin_after_user_adds_field(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """Same per-key cleanup for a ``null`` pre-merge ``inference`` origin."""
+
+    fake_config.write_text(json.dumps({"inference": None}), encoding="utf-8")
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    data["inference"]["userAddedAfterConfigure"] = "must-survive"
+    fake_config.write_text(json.dumps(data), encoding="utf-8")
+
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+
+    result = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert result["inference"] == {"userAddedAfterConfigure": "must-survive"}
+
+
+def test_unconfigure_keeps_user_edited_managed_key_over_scalar_origin(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """A user-edited managed key survives; untouched managed keys go."""
+
+    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    data["inference"]["inferenceGatewayBaseUrl"] = "user-edited-url"
+    fake_config.write_text(json.dumps(data), encoding="utf-8")
+
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+
+    result = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert result["inference"] == {"inferenceGatewayBaseUrl": "user-edited-url"}
+
+
 def test_save_config_writes_owner_only_permissions(
     fake_config: Path,
     fake_settings: Settings,

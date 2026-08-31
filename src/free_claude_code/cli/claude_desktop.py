@@ -521,13 +521,30 @@ def unconfigure_claude_desktop_config(path: Path | None = None) -> bool:
         changed = (
             _restore_inference_keys(data, record.inference_keys, written) or changed
         )
-    elif data.get(_INFERENCE_KEY) == written:
-        # Configure clobbered a non-object entry and the entry is still
-        # exactly what configure wrote; restore what it replaced.
-        data[_INFERENCE_KEY] = record.inference_scalar
-        changed = True
-    # Any other current value is a post-merge user replacement or removal;
-    # it is no longer FCC's to touch, so it stays as-is.
+    else:
+        # Configure clobbered a non-object entry with its mapping. Per-key
+        # ownership applies exactly as in the object path: a managed key
+        # still holding what configure wrote is FCC's to remove, while a
+        # user-added field (the reason the mapping no longer equals
+        # ``written``) is preserved. Whole-mapping equality would leave
+        # every FCC routing key installed the moment the user adds one
+        # unrelated field.
+        current = _current_inference_object(data)
+        if current is not None:
+            for key in record.inference_keys:
+                if key in current and current[key] == written.get(key):
+                    del current[key]
+                    changed = True
+            if not current:
+                # Nothing user-owned remains in the mapping, so restore the
+                # original scalar (or ``null``) exactly as configure found
+                # it. ``del`` would drop the whole entry instead.
+                data[_INFERENCE_KEY] = record.inference_scalar
+                changed = True
+            elif changed:
+                data[_INFERENCE_KEY] = current
+    # A non-object current value is a post-merge user replacement; it is no
+    # longer FCC's to touch, so it stays as-is.
 
     if changed:
         _save_config(config_path, data)
