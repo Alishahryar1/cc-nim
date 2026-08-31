@@ -31,11 +31,13 @@ from .ports import ApiServices
 router = APIRouter()
 
 STATIC_DIR = Path(__file__).resolve().parent / "admin_static"
+PACKAGE_ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 _ADMIN_ASSET_VERSION_PLACEHOLDER = "__FCC_VERSION__"
 _ADMIN_ASSET_FILENAMES = frozenset(
     {
         "admin.css",
         "admin.js",
+        "app-icon.svg",
         "chat_sessions.css",
         "chat_sessions.js",
         "model_combobox.js",
@@ -64,7 +66,8 @@ class ConnectedAccountLoginPayload(BaseModel):
 
 
 def _asset_path(filename: str) -> Path:
-    path = STATIC_DIR / filename
+    asset_dir = PACKAGE_ASSETS_DIR if filename == "app-icon.svg" else STATIC_DIR
+    path = asset_dir / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Admin asset not found")
     return path

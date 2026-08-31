@@ -130,16 +130,16 @@ textarea {
 }
 
 .brand-mark {
-  display: grid;
+  display: block;
+  flex: 0 0 auto;
   width: 40px;
   height: 40px;
-  place-items: center;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-  color: #ffffff;
-  font-weight: 800;
-  font-size: 15px;
-  box-shadow: var(--glow-accent);
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .brand h1 {
@@ -195,6 +195,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
+.brand-mark:focus-visible,
 .nav-link:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
