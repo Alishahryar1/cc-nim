@@ -1,4 +1,4 @@
-  const state = {
+const state = {
   config: null,
   fields: new Map(),
   modelOptions: [],
@@ -134,11 +134,11 @@ async function load() {
   renderNav();
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
- const configPathEl = byId("configPath");
+  const configPathEl = byId("configPath");
   if (configPathEl) {
     configPathEl.textContent = config.paths.managed;
   }
-await refreshConnectedAccounts();
+  await refreshConnectedAccounts();
   await hydrateModelOptions();
   // FIX: Wrap validate in try-catch so a missing endpoint doesn't break page load
   try {
@@ -254,12 +254,10 @@ function initGlobalShortcuts() {
   });
 }
 
-// ===== FIX: filterViewsBySearch — toggles list-view mode + handles empty sections =====
 function filterViewsBySearch() {
   const q = state.searchQuery;
   const filter = state.providerFilter || "all";
 
-  // Toggle list-view mode on the provider grid when searching
   const providerGrid = byId("providerGrid");
   const connectedAccountGrid = byId("connectedAccountGrid");
   const isSearching = !!q;
@@ -271,7 +269,6 @@ function filterViewsBySearch() {
     connectedAccountGrid.classList.toggle("list-view", isSearching);
   }
 
-  // Filter provider cards
   document.querySelectorAll("#providerGrid .provider-card").forEach((card) => {
     const providerId = card.dataset.provider;
     const provider = state.config?.provider_status?.find((p) => p.provider_id === providerId);
@@ -291,11 +288,9 @@ function filterViewsBySearch() {
       searchMatch = text.includes(q);
     }
 
-    // Completely hide non-matching cards
     card.hidden = !(filterMatch && searchMatch);
   });
 
-  // Also filter connected account cards
   document.querySelectorAll("#connectedAccountGrid .provider-card").forEach((card) => {
     let searchMatch = true;
     if (q) {
@@ -305,7 +300,6 @@ function filterViewsBySearch() {
     card.hidden = !searchMatch;
   });
 
-  // Filter fields in settings sections
   document.querySelectorAll(".settings-section").forEach((section) => {
     let hasVisibleField = false;
     const sectionText = (section.textContent || "").toLowerCase();
@@ -324,8 +318,6 @@ function filterViewsBySearch() {
     });
 
     if (q) {
-      // FIX: When the section heading/description matches but no fields match,
-      // show all fields so the section isn't an empty box.
       if (sectionMatches && !hasVisibleField) {
         section.querySelectorAll(".field").forEach((field) => {
           field.style.display = "flex";
@@ -337,7 +329,6 @@ function filterViewsBySearch() {
     }
   });
 
-  // Show a "no results" message when searching and nothing matches
   showNoResultsMessage(isSearching);
 }
 
@@ -420,15 +411,12 @@ function setActiveView(viewId, { scroll = false } = {}) {
     view.hidden = !selected;
   });
 
-  // FIX: Use activeView.id check instead of undefined chatActive variable
-  if (activeView.id === "chat" && window.ChatSessions) {
-    // Chat view initialization would go here if needed
-  }
-
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
-  if (chatActive && window.ChatSessions) {
+
+  // FIX BUG 1: Use activeView.id check instead of undefined chatActive variable
+  if (activeView.id === "chat" && window.ChatSessions) {
     window.ChatSessions.activate(window.location.pathname);
   }
 }
@@ -466,7 +454,6 @@ function renderProviders(providerStatus) {
     const title = document.createElement("div");
     title.className = "provider-title";
 
-    // Status dot
     const dotInfo = getProviderStatusDot(provider);
     const dot = document.createElement("span");
     dot.className = "status-dot";
@@ -565,7 +552,6 @@ function renderConnectedAccountCard(provider, status = provider) {
   const title = document.createElement("div");
   title.className = "provider-title";
 
-  // Status dot
   const dotInfo = getProviderStatusDot(status);
   const dot = document.createElement("span");
   dot.className = "status-dot";
@@ -697,10 +683,9 @@ async function refreshConnectedAccounts() {
   );
 }
 
-// FIX: Merge fresh auth status into cached provider_status before updating DOM
+// FIX BUG 2: Merge fresh auth status into cached provider_status before updating DOM
 // so updateStats() reads the latest connected state.
 function updateConnectedAccountCard(provider, status) {
-  // Merge the fresh status into the cached provider_status entry
   const cached = state.config.provider_status.find(
     (p) => p.provider_id === provider.provider_id,
   );
@@ -906,10 +891,8 @@ function renderField(field) {
   input.dataset.remove = "false";
   input.dataset.fieldType = field.type;
   input.disabled = field.locked;
-  // FIX: Removed redundant updateStats() — updateDirtyState already calls it
   input.addEventListener("input", updateDirtyState);
   input.addEventListener("change", updateDirtyState);
-  // FIX: Removed duplicate input listener (was listed twice)
   input.addEventListener("input", () => {
     input.dataset.remove = "false";
   });
@@ -936,7 +919,6 @@ function renderField(field) {
     removeButton.type = "button";
     removeButton.className = "ghost-button secret-remove";
     removeButton.textContent = "Remove";
-    // FIX: Removed redundant updateStats() — updateDirtyState already calls it
     removeButton.addEventListener("click", () => {
       const removing = input.dataset.remove !== "true";
       input.dataset.remove = removing ? "true" : "false";
@@ -1097,8 +1079,6 @@ class ModelListEditor {
     this.sync();
   }
 
-  // FIX: Removed redundant updateStats() — the dispatched input event
-  // triggers updateDirtyState() which already calls updateStats()
   sync() {
     this.input.value = this.values.join(",");
     this.input.dataset.remove = "false";
@@ -1198,6 +1178,25 @@ function updateDirtyState() {
     count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
   byId("applyButton").disabled = count === 0;
   updateStats();
+}
+
+async function validate(showResult = true) {
+  const result = await api("/admin/api/config/validate", {
+    method: "POST",
+    body: JSON.stringify({ values: changedValues() }),
+  });
+  if (showResult) {
+    showValidationResult(result);
+  }
+  return result;
+}
+
+function showValidationResult(result) {
+  if (result.valid) {
+    showMessage("Config shape is valid", "ok");
+  } else {
+    showMessage(result.errors.join("; "), "error");
+  }
 }
 
 async function apply() {
@@ -1358,6 +1357,7 @@ function showMessage(message, kind = "") {
   area.textContent = message;
   area.className = `message-area ${kind}`.trim();
 }
+
 byId("applyButton").addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
