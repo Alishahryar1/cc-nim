@@ -88,6 +88,7 @@ class ProviderExecution:
         self._attempts_started = 0
         self._active_claim: _AttemptClaim | None = None
         self._last_failure: Exception | None = None
+        self._corrections_used: set[str] = set()
         self._state = ProviderExecutionState.ACTIVE
 
     @property
@@ -126,6 +127,14 @@ class ProviderExecution:
     @property
     def last_failure(self) -> Exception | None:
         return self._last_failure
+
+    def correction_was_used(self, kind: str) -> bool:
+        """Return whether this logical execution already used ``kind``."""
+        return kind in self._corrections_used
+
+    def record_correction(self, kind: str) -> None:
+        """Remember one deterministic correction for this logical execution."""
+        self._corrections_used.add(kind)
 
     async def open_attempt(
         self,

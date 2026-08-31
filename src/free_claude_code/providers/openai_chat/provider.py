@@ -773,7 +773,6 @@ class OpenAIChatProvider(BaseProvider):
     ) -> tuple[Any, dict, ProviderAttempt]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
-        used_retry_kinds: set[str] = set()
 
         while execution.can_attempt:
             attempt = await execution.open_attempt(operation_kind)
@@ -791,7 +790,7 @@ class OpenAIChatProvider(BaseProvider):
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                retry_body = self._next_create_retry_body(error, body, used_retry_kinds)
+                retry_body = self._next_create_retry_body(error, body, execution)
                 if retry_body is not None:
                     correction = await attempt.correct(error)
                     if correction is ProviderCorrectionAction.RETRY:
@@ -827,16 +826,18 @@ class OpenAIChatProvider(BaseProvider):
         self,
         error: Exception,
         body: dict,
-        used_retry_kinds: set[str],
+        execution: ProviderExecution,
     ) -> dict | None:
         retry_body = self._retry_body_for_output_cap(error, body)
         if retry_body is not None:
             return retry_body
 
-        if "stream_usage" not in used_retry_kinds and is_stream_usage_rejection(error):
+        if not execution.correction_was_used(
+            "stream_usage"
+        ) and is_stream_usage_rejection(error):
             retry_body = clone_without_stream_usage(body)
             if retry_body is not None:
-                used_retry_kinds.add("stream_usage")
+                execution.record_correction("stream_usage")
                 logger.warning(
                     "{}_STREAM: retrying without stream_options.include_usage "
                     "after upstream rejection",
@@ -844,10 +845,10 @@ class OpenAIChatProvider(BaseProvider):
                 )
                 return retry_body
 
-        if "provider_specific" not in used_retry_kinds:
+        if not execution.correction_was_used("provider_specific"):
             retry_body = self._get_retry_request_body(error, body)
             if retry_body is not None:
-                used_retry_kinds.add("provider_specific")
+                execution.record_correction("provider_specific")
                 return retry_body
 
         return None

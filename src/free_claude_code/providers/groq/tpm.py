@@ -46,8 +46,10 @@ def correct_tpm_completion_budget(
     matches = tuple(_TPM_CLAUSE.finditer(message))
     if len(matches) != 1:
         return None
-    limit = int(matches[0].group(1))
-    requested = int(matches[0].group(2))
+    limit = _ascii_decimal(matches[0].group(1))
+    requested = _ascii_decimal(matches[0].group(2))
+    if limit is None or requested is None:
+        return None
     if limit <= 0 or requested <= limit:
         return None
     if not _header_agrees(error, limit):
@@ -115,8 +117,16 @@ def _header_agrees(error: Exception, limit: int) -> bool:
         return True
     if len(values) != 1:
         return False
-    value = values[0].strip()
-    return value.isascii() and value.isdecimal() and int(value) == limit
+    return _ascii_decimal(values[0].strip()) == limit
+
+
+def _ascii_decimal(value: str) -> int | None:
+    if not value.isascii() or not value.isdecimal():
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _header_values(error: Exception, name: str) -> tuple[str, ...] | None:

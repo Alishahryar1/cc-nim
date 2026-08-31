@@ -3,12 +3,14 @@
 from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import httpx2
 import openai
 import pytest
 
 from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderOperationKind
 from free_claude_code.providers.groq import GroqProvider
@@ -111,6 +113,12 @@ def _chunk(*, content: str | None = None, finish_reason: str | None = None):
 async def _successful_stream(text: str = "visible"):
     yield _chunk(content=text)
     yield _chunk(finish_reason="stop")
+
+
+async def _failing_stream():
+    if False:
+        yield _chunk()
+    raise httpx.ReadError("early cutoff")
 
 
 def test_exact_observed_failure_reduces_only_completion_budget() -> None:
@@ -243,6 +251,22 @@ def test_rejects_present_header_that_cannot_be_validated() -> None:
     assert correct_tpm_completion_budget(error, _body()) is None
 
 
+@pytest.mark.parametrize("source", ["message", "header"])
+def test_rejects_oversized_decimal_without_masking_the_413(source: str) -> None:
+    oversized = "9" * 5_000
+    error = (
+        _error(
+            message=(
+                f"tokens per minute (TPM): Limit {oversized}, Requested {oversized}0"
+            )
+        )
+        if source == "message"
+        else _error(headers=[(_TPM_HEADER, oversized)])
+    )
+
+    assert correct_tpm_completion_budget(error, _body()) is None
+
+
 def test_requires_machine_status_not_body_status() -> None:
     error = _StatusError(
         "Groq rejected request",
@@ -314,6 +338,28 @@ async def test_second_tpm_rejection_is_terminal_without_a_third_create() -> None
         )
 
     assert create.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_precommit_stream_retry_cannot_reset_the_tpm_correction_guard() -> None:
+    provider = _provider()
+    request = make_messages_request(_MODEL, max_tokens=_PREVIOUS)
+    tpm_error = _error(message="tokens per minute (TPM): Limit 8000, Requested 9000")
+    create = AsyncMock(
+        side_effect=[tpm_error, _failing_stream(), tpm_error, _successful_stream()]
+    )
+
+    with (
+        patch.object(provider._client.chat.completions, "create", create),
+        pytest.raises(ExecutionFailure),
+    ):
+        _ = [event async for event in provider.stream_messages(request)]
+
+    corrected = _PREVIOUS - 1_000
+    assert create.await_count == 3
+    assert create.await_args_list[0].kwargs["max_completion_tokens"] == _PREVIOUS
+    assert create.await_args_list[1].kwargs["max_completion_tokens"] == corrected
+    assert create.await_args_list[2].kwargs["max_completion_tokens"] == corrected
 
 
 @pytest.mark.asyncio

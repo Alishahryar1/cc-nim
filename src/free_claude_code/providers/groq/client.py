@@ -14,7 +14,10 @@ from free_claude_code.core.reasoning import (
     ReasoningEffort,
     ReasoningPolicy,
 )
-from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.admission import (
+    ProviderAdmissionController,
+    ProviderExecution,
+)
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     NamedEffortReasoning,
@@ -141,16 +144,16 @@ class GroqProvider(OpenAIChatProvider):
         self,
         error: Exception,
         body: dict[str, Any],
-        used_retry_kinds: set[str],
+        execution: ProviderExecution,
     ) -> dict[str, Any] | None:
-        retry_body = super()._next_create_retry_body(error, body, used_retry_kinds)
-        if retry_body is not None or "groq_tpm" in used_retry_kinds:
+        retry_body = super()._next_create_retry_body(error, body, execution)
+        if retry_body is not None or execution.correction_was_used("groq_tpm"):
             return retry_body
 
         correction = correct_tpm_completion_budget(error, body)
         if correction is None:
             return None
-        used_retry_kinds.add("groq_tpm")
+        execution.record_correction("groq_tpm")
         logger.warning(
             "GROQ_STREAM: reducing max_completion_tokens after TPM rejection "
             "limit={} requested={} previous={} corrected={}",
