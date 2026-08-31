@@ -405,6 +405,76 @@ async def test_regeneration_retries_an_ambiguous_terminal_commit(
 
 
 @pytest.mark.asyncio
+async def test_failed_regeneration_replaces_original_with_failed_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        initial = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="01355e92-06c4-4820-b80a-fc8e0dff2553",
+            text="replace this answer",
+        )
+        assert (await _drain(initial))[-1] == "turn.completed"
+        before = await store.get_transcript(session.id)
+        original_id = before.turns[0].generation.id
+
+        async def failing_stream(*args, **kwargs):
+            del args, kwargs
+            yield "".join(
+                (
+                    format_sse_event(
+                        "message_start",
+                        {"type": "message_start", "message": {"content": []}},
+                    ),
+                    format_sse_event(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                    ),
+                    format_sse_event(
+                        "content_block_delta",
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": "partial"},
+                        },
+                    ),
+                    format_sse_event(
+                        "error",
+                        {
+                            "type": "error",
+                            "error": {"message": "provider failed"},
+                        },
+                    ),
+                )
+            )
+
+        monkeypatch.setattr(provider, "stream_messages", failing_stream)
+        replacement = await service.regenerate(
+            session.id,
+            expected_revision=before.session.revision,
+            operation_id="810b8d15-adab-4df6-9084-3189ca534d09",
+        )
+
+        assert (await _drain(replacement))[-1] == "turn.failed"
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert generation.id != original_id
+        assert generation.status is GenerationStatus.FAILED
+        assert generation.error_message == "provider failed"
+        assert generation.segments[-1].text == "partial"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_stopped_regeneration_retries_an_ambiguous_discard(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
