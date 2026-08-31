@@ -179,6 +179,18 @@ class _ModelListingProvider(BaseProvider):
                 },
             )
             return
+        if not summary and "[fail-turn]" in user_content:
+            yield format_sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "E2E provider failed",
+                    },
+                },
+            )
+            return
         if slow:
             await asyncio.Event().wait()
         yield format_sse_event(
