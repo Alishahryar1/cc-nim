@@ -333,6 +333,20 @@ def configure_claude_desktop_config(
             existing_backup.pop("inference", None)
             existing_backup["inferenceRaw"] = inference_raw
             changed = True
+            # The ownership-adoption rule is not dict-specific: a user who
+            # replaced the block may equally have made an explicit
+            # non-``True`` discovery choice since the absent-original
+            # first merge, and that choice must hand the flag off
+            # verbatim on unconfigure — the dict remerge path above
+            # applies the same condition.
+            if (
+                "discovery" not in existing_backup
+                and "discoveryUserOwned" not in existing_backup
+                and prior_discovery is not None
+                and prior_discovery is not True
+            ):
+                existing_backup["discoveryUserOwned"] = True
+                changed = True
 
     for key, value in managed.items():
         if inference_dict.get(key) != value:
@@ -413,6 +427,19 @@ def unconfigure_claude_desktop_config(
         for key, value in inference_raw.items():
             inference_dict[str(key)] = value
 
+    # A non-object ``inference`` under a recorded snapshot can only be the
+    # user's wholesale replacement of the mapping configure wrote
+    # (configure never persists a scalar or ``null``). It is theirs: the
+    # empty derived mapping below must NOT read as "FCC block fully
+    # removed, delete the key" — that would destroy the replacement — and
+    # the verbatim restore must not fire either (the recorded original
+    # predates the user's own replacement).
+    inference_user_replaced = (
+        backup is not None
+        and _INFERENCE_KEY in data
+        and not isinstance(inference_raw, dict)
+    )
+
     if backup is not None:
         # Snapshot path: a managed field is FCC's only while its current
         # value still matches what the merge wrote. A user who changed a
@@ -478,7 +505,7 @@ def unconfigure_claude_desktop_config(
                 del inference_dict[key]
                 changed = True
 
-    if _INFERENCE_KEY in data:
+    if _INFERENCE_KEY in data and not inference_user_replaced:
         if inference_dict:
             if data[_INFERENCE_KEY] != inference_dict:
                 data[_INFERENCE_KEY] = inference_dict

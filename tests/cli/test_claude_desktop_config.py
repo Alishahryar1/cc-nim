@@ -1328,6 +1328,86 @@ def test_unconfigure_keeps_user_final_discovery_reenable(
     }
 
 
+@pytest.mark.parametrize("replacement", ["user-scalar", None])
+def test_unconfigure_preserves_wholesale_scalar_or_null_replacement(
+    fake_config: Path,
+    fake_settings: Settings,
+    replacement: str | None,
+) -> None:
+    """A scalar/``null`` block replacement survives a direct unconfigure.
+
+    Regression guard for the Greptile "unconfigure deletes user
+    scalar/null inference replacements" finding: after configure writes
+    its mapping, the user replaces the whole ``inference`` block with a
+    scalar or ``null`` and uninstalls without a re-merge. The empty
+    derived mapping must not read as "FCC's block fully removed, delete
+    the key" — the replacement is the user's and stays verbatim.
+    """
+
+    fake_config.write_text(
+        json.dumps({"inference": {"provider": "p"}}), encoding="utf-8"
+    )
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    current = json.loads(fake_config.read_text(encoding="utf-8"))
+    current["inference"] = replacement
+    fake_config.write_text(json.dumps(current), encoding="utf-8")
+
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    restored = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert restored["inference"] == replacement
+    assert "fccPriorConfig" not in restored
+
+
+def test_remerge_after_scalar_replacement_marks_discovery_user_owned(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """A discovery flip alongside a scalar replacement still gets the handoff.
+
+    Regression guard for the Greptile "scalar/null remerge bypasses
+    discovery ownership" finding: with the flag absent before the first
+    merge, the user replaces the block with a scalar AND disables
+    discovery, a re-merge runs, and the user re-enables discovery before
+    uninstalling. The non-object remerge branch must apply the same
+    ownership-adoption rule as the dict remerge path, or unconfigure
+    treats the final ``True`` as FCC's and deletes it.
+    """
+
+    fake_config.write_text(
+        json.dumps({"inference": {"provider": "p"}}), encoding="utf-8"
+    )
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    current = json.loads(fake_config.read_text(encoding="utf-8"))
+    current["inference"] = "user-scalar"
+    current["modelDiscoveryEnabled"] = False
+    fake_config.write_text(json.dumps(current), encoding="utf-8")
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    current = json.loads(fake_config.read_text(encoding="utf-8"))
+    current["modelDiscoveryEnabled"] = True
+    fake_config.write_text(json.dumps(current), encoding="utf-8")
+
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    restored = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert restored["modelDiscoveryEnabled"] is True
+    assert restored["inference"] == "user-scalar"
+    assert "fccPriorConfig" not in restored
+
+
 def test_remerge_after_scalar_to_dict_replacement_drops_raw_target(
     fake_config: Path,
     fake_settings: Settings,
