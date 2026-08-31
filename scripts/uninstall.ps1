@@ -15,6 +15,7 @@ $FccCommands = @(
     "fcc-desktop",
     "fcc-server",
     "fcc-claude",
+    "fcc-claude-desktop",
     "fcc-codex",
     "fcc-pi",
     "fcc-opencode",

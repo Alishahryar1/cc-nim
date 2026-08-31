@@ -15,6 +15,7 @@ FCC_COMMANDS = (
     "fcc-desktop",
     "fcc-server",
     "fcc-claude",
+    "fcc-claude-desktop",
     "fcc-codex",
     "fcc-pi",
     "fcc-opencode",
@@ -160,6 +161,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-server"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-desktop"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-claude"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-claude-desktop"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-pi"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-opencode"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$tool_bin/fcc-cline"
@@ -1826,6 +1828,7 @@ if not exist "%UV_BIN_DIR%" mkdir "%UV_BIN_DIR%"
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-server.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-desktop.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-claude.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-claude-desktop.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-pi.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-opencode.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%UV_BIN_DIR%\fcc-cline.cmd" >nul
