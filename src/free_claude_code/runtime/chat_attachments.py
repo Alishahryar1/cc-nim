@@ -405,12 +405,21 @@ def _extract_pdf(path: Path) -> str:
             )
         if len(reader.pages) > _MAX_PDF_PAGES:
             raise ChatPayloadTooLargeError("PDF files may contain at most 400 pages.")
-        text = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+        pages: list[str] = []
+        extracted_characters = 0
+        for page in reader.pages:
+            page_text = _normalize_text(page.extract_text() or "")
+            extracted_characters += len(page_text) + (2 if pages else 0)
+            if extracted_characters > MAX_CHAT_ATTACHMENT_EXTRACTED_CHARACTERS:
+                raise ChatPayloadTooLargeError(
+                    "Attachment text exceeds 1,000,000 characters."
+                )
+            pages.append(page_text)
     except ChatPayloadTooLargeError, ChatUnsupportedAttachmentError:
         raise
     except Exception as exc:
         raise ChatUnsupportedAttachmentError("The PDF file is malformed.") from exc
-    return _normalize_text(text)
+    return "\n\n".join(pages)
 
 
 def _extract_docx(path: Path) -> str:

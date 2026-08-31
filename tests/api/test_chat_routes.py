@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from io import BytesIO
@@ -11,6 +12,7 @@ from starlette.types import Message, Scope
 
 from free_claude_code.api.chat_routes import _stream_response
 from free_claude_code.application.chat import (
+    MAX_CHAT_ATTACHMENT_BYTES,
     ChatAttachment,
     ChatAttachmentContent,
     ChatAttachmentKind,
@@ -357,6 +359,46 @@ class RejectedAttachmentChat(StubChat):
         raise self.error
 
 
+class AttachmentLimitChat(StubChat):
+    async def estimate(
+        self,
+        session_id: str,
+        *,
+        draft: str,
+        attachment_ids: tuple[str, ...] = (),
+    ) -> ChatContextEstimate:
+        if len(attachment_ids) > 5:
+            raise ChatPayloadTooLargeError(
+                "A message may contain at most five attachments."
+            )
+        return await super().estimate(
+            session_id,
+            draft=draft,
+            attachment_ids=attachment_ids,
+        )
+
+    async def send(
+        self,
+        session_id: str,
+        *,
+        expected_revision: int,
+        operation_id: str,
+        text: str,
+        attachment_ids: tuple[str, ...] = (),
+    ) -> StubStream:
+        if len(attachment_ids) > 5:
+            raise ChatPayloadTooLargeError(
+                "A message may contain at most five attachments."
+            )
+        return await super().send(
+            session_id,
+            expected_revision=expected_revision,
+            operation_id=operation_id,
+            text=text,
+            attachment_ids=attachment_ids,
+        )
+
+
 def _client(chat: StubChat | None = None) -> TestClient:
     return TestClient(
         create_test_app(chat=chat),
@@ -434,6 +476,57 @@ def test_chat_attachment_upload_requires_exactly_one_file():
     assert response.json()["detail"] == "Upload exactly one attachment file."
 
 
+def test_chat_attachment_upload_rejects_file_under_an_extra_field_name():
+    response = _client(StubChat()).post(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments",
+        files=[
+            ("file", ("one.txt", b"one", "text/plain")),
+            ("ignored", ("two.txt", b"two", "text/plain")),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Upload exactly one attachment file."
+
+
+def test_chat_attachment_upload_rejects_declared_oversize_before_parsing():
+    response = _client(StubChat()).post(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments",
+        files={"file": ("large.txt", b"small", "text/plain")},
+        headers={"Content-Length": str(MAX_CHAT_ATTACHMENT_BYTES + 65_537)},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "ChatPayloadTooLargeError"
+
+
+def test_chat_attachment_upload_stops_chunked_oversize_while_streaming():
+    boundary = "fcc-attachment-boundary"
+    prefix = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="file"; filename="large.txt"\r\n'
+        "Content-Type: text/plain\r\n\r\n"
+    ).encode()
+    suffix = f"\r\n--{boundary}--\r\n".encode()
+
+    def body():
+        yield prefix
+        yield b"x" * (MAX_CHAT_ATTACHMENT_BYTES + 65_537)
+        yield suffix
+
+    response = _client(StubChat()).post(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments",
+        content=body(),
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Transfer-Encoding": "chunked",
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "ChatPayloadTooLargeError"
+
+
 @pytest.mark.parametrize(
     ("error", "status"),
     [
@@ -452,6 +545,29 @@ def test_chat_attachment_errors_keep_specific_http_status(
 
     assert response.status_code == status
     assert response.json()["code"] == type(error).__name__
+
+
+@pytest.mark.parametrize("action", ("estimate", "send"))
+def test_chat_attachment_count_limit_is_reported_as_413(action: str):
+    attachment_ids = [str(uuid.uuid4()) for _index in range(6)]
+    payload = (
+        {"draft": "hello", "attachment_ids": attachment_ids}
+        if action == "estimate"
+        else {
+            "expected_revision": 1,
+            "operation_id": OPERATION_ID,
+            "text": "hello",
+            "attachment_ids": attachment_ids,
+        }
+    )
+
+    response = _client(AttachmentLimitChat()).post(
+        f"/admin/api/chat/sessions/{SESSION_ID}/{action}",
+        json=payload,
+    )
+
+    assert response.status_code == 413
+    assert response.json()["code"] == "ChatPayloadTooLargeError"
 
 
 def test_chat_detail_stays_readable_when_context_controls_need_repair():

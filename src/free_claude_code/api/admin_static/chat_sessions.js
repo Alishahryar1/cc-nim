@@ -29,6 +29,7 @@
     eventChannel: null,
     modelComboboxes: new Set(),
     uploadingAttachments: false,
+    stagedRequestVersion: 0,
   };
 
   const root = () => document.getElementById("chatRoot");
@@ -63,7 +64,7 @@
       state.eventChannel.addEventListener("message", handleCrossTabEvent);
     }
     state.initialized = true;
-    window.addEventListener("focus", refreshStagedAttachments);
+    window.addEventListener("focus", () => refreshStagedAttachments());
     if (chatIsVisible()) {
       await activate(window.location.pathname);
     }
@@ -310,6 +311,7 @@
 
   function applyDetail(detail) {
     invalidateEstimate();
+    state.stagedRequestVersion += 1;
     if (state.draftSessionId !== detail.session.id) {
       state.draft = "";
       state.draftSessionId = detail.session.id;
@@ -329,7 +331,12 @@
     state.context = detail.context;
     state.contextError = detail.context_error || "";
     state.serverOperationActive = Boolean(detail.active_operation);
-    if (state.draft && !state.operation) scheduleEstimate(true);
+    if (
+      !state.operation &&
+      (state.draft || (!state.context && !state.contextError))
+    ) {
+      scheduleEstimate(true);
+    }
   }
 
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
@@ -557,20 +564,31 @@
     );
   }
 
-  async function refreshStagedAttachments() {
+  async function refreshStagedAttachments({ signal, throwErrors = false } = {}) {
     if (!chatIsVisible() || !state.session) return;
     const sessionId = state.session.id;
+    const requestVersion = ++state.stagedRequestVersion;
     try {
-      const detail = await state.api(`/admin/api/chat/sessions/${sessionId}`);
-      if (state.session?.id !== sessionId) return;
-      state.stagedAttachments = detail.staged_attachments || [];
-      state.context = detail.context;
-      state.contextError = detail.context_error || "";
-      renderStagedAttachments();
-      updateContextMeter();
-      refreshComposerState();
+      const detail = await state.api(`/admin/api/chat/sessions/${sessionId}`, {
+        signal,
+      });
+      if (state.session?.id !== sessionId) return null;
+      if (requestVersion === state.stagedRequestVersion) {
+        state.stagedAttachments = detail.staged_attachments || [];
+        state.context = detail.context;
+        state.contextError = detail.context_error || "";
+        renderStagedAttachments();
+        updateContextMeter();
+        refreshComposerState();
+        if (!state.operation && !state.context && !state.contextError) {
+          scheduleEstimate(true);
+        }
+      }
+      return detail;
     } catch (error) {
+      if (throwErrors) throw error;
       if (state.session?.id === sessionId) setNotice(error.message, "error");
+      return null;
     }
   }
 
@@ -589,7 +607,16 @@
           `/admin/api/chat/sessions/${sessionId}/attachments`,
           { method: "POST", body: form },
         );
-        state.stagedAttachments.push(attachment);
+        if (state.session?.id !== sessionId) return;
+        state.stagedRequestVersion += 1;
+        const existing = state.stagedAttachments.findIndex(
+          (item) => item.id === attachment.id,
+        );
+        if (existing === -1) {
+          state.stagedAttachments.push(attachment);
+        } else {
+          state.stagedAttachments[existing] = attachment;
+        }
         renderStagedAttachments();
       }
       setNotice("");
@@ -613,6 +640,7 @@
         { method: "DELETE" },
       );
       if (state.session?.id !== sessionId) return;
+      state.stagedRequestVersion += 1;
       state.stagedAttachments = state.stagedAttachments.filter(
         (item) => item.id !== attachmentId,
       );
@@ -1144,7 +1172,6 @@
     const textarea = document.getElementById("chatComposer");
     const text = textarea?.value || "";
     if ((!text.trim() && !state.stagedAttachments.length) || !state.session) return;
-    await refreshStagedAttachments();
     const attachmentIds = state.stagedAttachments.map((item) => item.id);
     if (!text.trim() && !attachmentIds.length) return;
     await runOperation("send", { text, attachment_ids: attachmentIds });
@@ -1170,6 +1197,7 @@
     const operation = {
       id: crypto.randomUUID(),
       sessionId: state.session.id,
+      expectedRevision: state.session.revision,
       action,
       controller: new AbortController(),
       segments: [],
@@ -1193,13 +1221,38 @@
     state.operation = operation;
     renderSessionPreservingScroll();
     try {
+      if (action === "send") {
+        const detail = await refreshStagedAttachments({
+          signal: operation.controller.signal,
+          throwErrors: true,
+        });
+        if (
+          !detail ||
+          state.operation !== operation ||
+          state.session?.id !== operation.sessionId
+        ) {
+          return;
+        }
+        const stagedById = new Map(
+          (detail.staged_attachments || []).map((attachment) => [
+            attachment.id,
+            attachment,
+          ]),
+        );
+        if (operation.attachmentIds.some((id) => !stagedById.has(id))) {
+          throw new Error("An attachment changed in another tab. Refresh it.");
+        }
+        operation.attachments = operation.attachmentIds.map((id) =>
+          stagedById.get(id),
+        );
+      }
       const response = await fetch(
         `/admin/api/chat/sessions/${operation.sessionId}/${action}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            expected_revision: state.session.revision,
+            expected_revision: operation.expectedRevision,
             operation_id: operation.id,
             ...extra,
           }),
@@ -1214,7 +1267,12 @@
         failure = new Error(operation.failureMessage);
       }
     } catch (error) {
-      if (action === "send" && !operation.accepted) {
+      if (
+        action === "send" &&
+        !operation.accepted &&
+        state.operation === operation &&
+        state.session?.id === operation.sessionId
+      ) {
         state.draft = operation.userText;
         state.draftSessionId = operation.sessionId;
         state.draftOperationId = operation.id;

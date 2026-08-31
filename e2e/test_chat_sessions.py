@@ -36,6 +36,68 @@ def _hold_next_chat_operation(page: Page, action: str) -> None:
     )
 
 
+def _hold_next_chat_detail(page: Page, session_id: str) -> None:
+    page.evaluate(
+        """
+        sessionId => {
+          const originalFetch = window.fetch.bind(window);
+          window.fetch = (...args) => {
+            const input = args[0];
+            const options = args[1] || {};
+            const value = input instanceof Request ? input.url : String(input);
+            const method = String(options.method || input.method || "GET").toUpperCase();
+            const url = new URL(value, window.location.href);
+            if (
+              method !== "GET" ||
+              url.pathname !== `/admin/api/chat/sessions/${sessionId}`
+            ) {
+              return originalFetch(...args);
+            }
+            window.fetch = originalFetch;
+            window.__chatDetailHeld = true;
+            return new Promise((resolve, reject) => {
+              window.__releaseHeldChatDetail = () => {
+                originalFetch(...args).then(resolve, reject);
+              };
+            });
+          };
+        }
+        """,
+        session_id,
+    )
+
+
+def _hold_next_attachment_upload(page: Page, session_id: str) -> None:
+    page.evaluate(
+        """
+        sessionId => {
+          const originalFetch = window.fetch.bind(window);
+          window.fetch = (...args) => {
+            const input = args[0];
+            const options = args[1] || {};
+            const value = input instanceof Request ? input.url : String(input);
+            const method = String(options.method || input.method || "GET").toUpperCase();
+            const url = new URL(value, window.location.href);
+            if (
+              method !== "POST" ||
+              url.pathname !== `/admin/api/chat/sessions/${sessionId}/attachments`
+            ) {
+              return originalFetch(...args);
+            }
+            window.fetch = originalFetch;
+            window.__chatUploadHeld = true;
+            return new Promise((resolve, reject) => {
+              window.__releaseHeldChatUpload = () => {
+                originalFetch(...args).then(resolve, reject);
+              };
+            });
+          };
+        }
+        """,
+        session_id,
+    )
+
+
 def _select_model(page: Page, model_ref: str) -> None:
     model = page.get_by_role("combobox", name="Selected model")
     model.click()
@@ -509,6 +571,89 @@ def test_chat_can_send_a_staged_attachment_without_message_text(
         "notes.txt"
     )
     expect(staged).to_be_hidden()
+
+
+def test_send_keeps_an_attachment_uploaded_after_click_for_the_next_turn(
+    page: Page,
+    admin_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _new_chat(page, admin_base_url)
+    session_id = page.url.rsplit("/", 1)[-1]
+    first = tmp_path / "first.txt"
+    first.write_text("first facts", encoding="utf-8")
+    second = tmp_path / "second.txt"
+    second.write_text("second facts", encoding="utf-8")
+    page.get_by_label("Attach files").set_input_files(first)
+    expect(page.locator(".chat-staged-attachments")).to_contain_text("first.txt")
+
+    other = page.context.new_page()
+    try:
+        other.goto(page.url)
+        expect(other.get_by_role("textbox", name="Message", exact=True)).to_be_visible()
+        _hold_next_chat_detail(page, session_id)
+        page.get_by_role("textbox", name="Message", exact=True).fill("use the first")
+        page.get_by_role("button", name="Send").click()
+        page.wait_for_function("window.__chatDetailHeld === true")
+
+        other.get_by_label("Attach files").set_input_files(second)
+        expect(other.locator(".chat-staged-attachments")).to_contain_text("second.txt")
+        page.evaluate("window.__releaseHeldChatDetail()")
+
+        expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+        committed = page.locator(".user-message .chat-turn-attachment")
+        expect(committed).to_have_count(1)
+        expect(committed).to_contain_text("first.txt")
+        staged = page.locator(".chat-staged-attachments")
+        expect(staged).to_contain_text("second.txt")
+        expect(staged).not_to_contain_text("first.txt")
+    finally:
+        other.close()
+
+
+def test_delayed_attachment_upload_cannot_enter_a_new_chat(
+    page: Page,
+    admin_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _new_chat(page, admin_base_url)
+    old_session_id = page.url.rsplit("/", 1)[-1]
+    attachment = tmp_path / "old-session.txt"
+    attachment.write_text("old session only", encoding="utf-8")
+    _hold_next_attachment_upload(page, old_session_id)
+
+    page.get_by_label("Attach files").set_input_files(attachment)
+    page.wait_for_function("window.__chatUploadHeld === true")
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.get_by_role("button", name="New chat", exact=True).click()
+    expect(page).not_to_have_url(re.compile(f"/{old_session_id}$"))
+    page.evaluate("window.__releaseHeldChatUpload()")
+
+    expect(page.get_by_role("button", name="Attach")).to_be_enabled()
+    expect(page.locator(".chat-staged-attachments")).to_be_hidden()
+    expect(page.get_by_text("old-session.txt", exact=True)).to_have_count(0)
+
+
+def test_delayed_send_preflight_cannot_restore_draft_after_navigation(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    old_session_id = page.url.rsplit("/", 1)[-1]
+    _hold_next_chat_detail(page, old_session_id)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("old chat draft")
+    page.get_by_role("button", name="Send").click()
+    page.wait_for_function("window.__chatDetailHeld === true")
+    expect(message).to_be_disabled()
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.get_by_role("button", name="New chat", exact=True).click()
+    page.evaluate("window.__releaseHeldChatDetail()")
+
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    expect(message).to_have_value("")
+    expect(page.get_by_text("old chat draft", exact=True)).to_have_count(0)
 
 
 def test_chat_stop_then_retry_uses_one_operation_owner(

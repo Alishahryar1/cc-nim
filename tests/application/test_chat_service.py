@@ -6,9 +6,11 @@ from pathlib import Path
 
 import pytest
 
+import free_claude_code.application.chat.service as chat_service_module
 from free_claude_code.application.chat import (
     ChatConflictError,
     ChatNotFoundError,
+    ChatPayloadTooLargeError,
     ChatService,
     ChatUnavailableError,
     GenerationStatus,
@@ -277,11 +279,18 @@ class FakeRuntime:
 
 
 async def _service(
-    tmp_path: Path, provider: FakeChatProvider
+    tmp_path: Path,
+    provider: FakeChatProvider,
+    *,
+    attachment_files: LocalChatAttachmentFiles | None = None,
 ) -> tuple[ChatService, FakeRuntime, SQLiteChatStore]:
     runtime = FakeRuntime(provider)
     store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
-    service = ChatService(runtime, store, LocalChatAttachmentFiles(tmp_path))
+    service = ChatService(
+        runtime,
+        store,
+        attachment_files or LocalChatAttachmentFiles(tmp_path),
+    )
     await service.start()
     return service, runtime, store
 
@@ -361,6 +370,85 @@ async def test_attachment_only_send_commits_exact_files_and_builds_portable_bloc
         assert isinstance(content[0], ContentBlockText)
         assert "portable facts" in content[0].text
         assert isinstance(content[1], ContentBlockImage)
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_chat_detail_defers_attachment_materialization_until_estimate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    files = LocalChatAttachmentFiles(tmp_path)
+    service, _runtime, _store = await _service(
+        tmp_path,
+        provider,
+        attachment_files=files,
+    )
+    try:
+        session = await service.create_session()
+        await service.stage_attachment(
+            session.id,
+            filename="notes.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"portable facts"),
+        )
+
+        async def fail_materialize(_attachments):
+            raise AssertionError("detail must not materialize attachment content")
+
+        monkeypatch.setattr(files, "materialize", fail_materialize)
+        detail = await service.get_detail(session.id)
+
+        assert detail.context is None
+        assert detail.context_error is None
+        assert [item.filename for item in detail.staged_attachments] == ["notes.txt"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_uncompacted_attachment_text_is_bounded_before_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        chat_service_module,
+        "MAX_CHAT_ATTACHMENTS_COMBINED_EXTRACTED_CHARACTERS",
+        5,
+    )
+    provider = FakeChatProvider()
+    service, _runtime, _store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        first = await service.stage_attachment(
+            session.id,
+            filename="first.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"abc"),
+        )
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="752c8dd0-c880-4e1c-ad56-6f05fcdb1050",
+            text="",
+            attachment_ids=(first.id,),
+        )
+        await _drain(stream)
+        second = await service.stage_attachment(
+            session.id,
+            filename="second.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"def"),
+        )
+
+        with pytest.raises(ChatPayloadTooLargeError, match="Uncompacted"):
+            await service.estimate(
+                session.id,
+                draft="",
+                attachment_ids=(second.id,),
+            )
     finally:
         await service.close()
 

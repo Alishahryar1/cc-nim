@@ -250,6 +250,49 @@ async def test_pdf_upload_extracts_text_and_rejects_encryption_or_page_overflow(
 
 
 @pytest.mark.asyncio
+async def test_pdf_upload_stops_extracting_as_soon_as_text_limit_is_exceeded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    extracted_pages: list[int] = []
+
+    class FakePage:
+        def __init__(self, index: int) -> None:
+            self._index = index
+
+        def extract_text(self) -> str:
+            extracted_pages.append(self._index)
+            return "abc"
+
+    class FakeReader:
+        is_encrypted = False
+        pages = tuple(FakePage(index) for index in range(3))
+
+    def fake_reader(_path: Path) -> FakeReader:
+        return FakeReader()
+
+    monkeypatch.setattr(chat_attachments, "PdfReader", fake_reader)
+    monkeypatch.setattr(
+        chat_attachments,
+        "MAX_CHAT_ATTACHMENT_EXTRACTED_CHARACTERS",
+        5,
+    )
+    files = LocalChatAttachmentFiles(tmp_path)
+    await files.start(())
+
+    with pytest.raises(ChatPayloadTooLargeError, match="1,000,000"):
+        await files.store_upload(
+            session_id=_id(),
+            attachment_id=_id(),
+            filename="large.pdf",
+            declared_media_type="application/pdf",
+            source=BytesIO(b"%PDF-fixture"),
+        )
+
+    assert extracted_pages == [0, 1]
+
+
+@pytest.mark.asyncio
 async def test_upload_rejects_extension_or_declared_type_mismatch(tmp_path: Path):
     files = LocalChatAttachmentFiles(tmp_path)
     await files.start(())

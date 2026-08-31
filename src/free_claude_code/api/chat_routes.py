@@ -3,12 +3,13 @@
 import base64
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
 from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from free_claude_code.application.chat import (
     MAX_CHAT_ATTACHMENT_BYTES,
@@ -39,6 +40,14 @@ from .ports import ApiServices
 from .response_streams import ManagedStreamingResponse
 
 router = APIRouter()
+_ATTACHMENT_MULTIPART_OVERHEAD_BYTES = 64 * 1024
+_MAX_ATTACHMENT_REQUEST_BYTES = (
+    MAX_CHAT_ATTACHMENT_BYTES + _ATTACHMENT_MULTIPART_OVERHEAD_BYTES
+)
+
+
+class _AttachmentBodyTooLarge(MultiPartException):
+    """Abort multipart parsing while preserving parser-owned file cleanup."""
 
 
 class ChatSessionUpdatePayload(BaseModel):
@@ -58,12 +67,12 @@ class ChatOperationPayload(ChatRevisionPayload):
 
 class ChatSendPayload(ChatOperationPayload):
     text: str = Field(max_length=1_000_000)
-    attachment_ids: tuple[str, ...] = Field(default=(), max_length=5)
+    attachment_ids: tuple[str, ...] = ()
 
 
 class ChatEstimatePayload(BaseModel):
     draft: str = Field(default="", max_length=1_000_000)
-    attachment_ids: tuple[str, ...] = Field(default=(), max_length=5)
+    attachment_ids: tuple[str, ...] = ()
 
 
 class ChatStopPayload(BaseModel):
@@ -164,18 +173,39 @@ async def upload_chat_attachment(
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    form = await request.form()
-    uploads = form.getlist("file")
-    if len(uploads) != 1 or not isinstance(uploads[0], UploadFile):
-        for upload in uploads:
-            if isinstance(upload, UploadFile):
-                await upload.close()
-        raise ChatValidationError("Upload exactly one attachment file.")
-    file = uploads[0]
-    if file.size is not None and file.size > MAX_CHAT_ATTACHMENT_BYTES:
-        await file.close()
-        raise ChatPayloadTooLargeError("Attachments may be at most 10 MiB each.")
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_bytes = int(content_length)
+        except ValueError:
+            declared_bytes = 0
+        if declared_bytes > _MAX_ATTACHMENT_REQUEST_BYTES:
+            raise ChatPayloadTooLargeError("Attachments may be at most 10 MiB each.")
     try:
+        form = await MultiPartParser(
+            headers=request.headers,
+            stream=_bounded_attachment_body(request),
+            max_files=1,
+            max_fields=0,
+            max_part_size=_ATTACHMENT_MULTIPART_OVERHEAD_BYTES,
+        ).parse()
+    except _AttachmentBodyTooLarge as exc:
+        raise ChatPayloadTooLargeError(
+            "Attachments may be at most 10 MiB each."
+        ) from exc
+    except MultiPartException as exc:
+        raise ChatValidationError("Upload exactly one attachment file.") from exc
+    try:
+        items = form.multi_items()
+        if (
+            len(items) != 1
+            or items[0][0] != "file"
+            or not isinstance(items[0][1], UploadFile)
+        ):
+            raise ChatValidationError("Upload exactly one attachment file.")
+        file = items[0][1]
+        if file.size is not None and file.size > MAX_CHAT_ATTACHMENT_BYTES:
+            raise ChatPayloadTooLargeError("Attachments may be at most 10 MiB each.")
         attachment = await _chat(services).stage_attachment(
             session_id,
             filename=file.filename or "",
@@ -183,8 +213,17 @@ async def upload_chat_attachment(
             source=file.file,
         )
     finally:
-        await file.close()
+        await form.close()
     return _attachment_payload(attachment)
+
+
+async def _bounded_attachment_body(request: Request) -> AsyncGenerator[bytes]:
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > _MAX_ATTACHMENT_REQUEST_BYTES:
+            raise _AttachmentBodyTooLarge("Attachment request body is too large.")
+        yield chunk
 
 
 @router.delete("/admin/api/chat/sessions/{session_id}/attachments/{attachment_id}")

@@ -34,10 +34,12 @@ from .context import (
 )
 from .models import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
+    MAX_CHAT_ATTACHMENTS_COMBINED_BYTES,
     MAX_CHAT_ATTACHMENTS_COMBINED_EXTRACTED_CHARACTERS,
     MAX_CHAT_ATTACHMENTS_PER_TURN,
     ChatAttachment,
     ChatAttachmentContent,
+    ChatAttachmentKind,
     ChatAttachmentMaterial,
     ChatCompaction,
     ChatConflictError,
@@ -280,23 +282,21 @@ class ChatService:
         transcript, staged = await self._with_attachment_availability(
             transcript, staged, check=check
         )
-        prompt = (await self._store.load_preferences()).system_prompt
         context: ChatContextEstimate | None
         context_error: str | None = None
-        try:
-            materials = await self._attachment_files.materialize(
-                _context_attachments(transcript) + staged
-            )
-            context = self._context.prepare(
-                transcript,
-                system_prompt=prompt,
-                attachment_materials=materials,
-                draft="" if staged else None,
-                draft_attachments=staged,
-            ).estimate
-        except ChatValidationError as exc:
+        context_attachments = _context_attachments(transcript)
+        if context_attachments or staged:
             context = None
-            context_error = str(exc)
+        else:
+            try:
+                prompt = (await self._store.load_preferences()).system_prompt
+                context = self._context.prepare(
+                    transcript,
+                    system_prompt=prompt,
+                ).estimate
+            except ChatValidationError as exc:
+                context = None
+                context_error = str(exc)
         turns = transcript.turns[-_TURN_PAGE_LIMIT:]
         next_before = turns[0].sequence if has_more and turns else None
         return ChatSessionDetail(
@@ -571,7 +571,7 @@ class ChatService:
         }:
             raise ChatConflictError("Only the latest unfinished answer can be retried.")
         prompt = (await self._store.load_preferences()).system_prompt
-        materials = await self._attachment_files.materialize(
+        materials = await self._materialize_context_attachments(
             _context_attachments(transcript)
         )
         self._context.prepare(
@@ -606,7 +606,7 @@ class ChatService:
         if latest.generation.status is not GenerationStatus.COMPLETED:
             raise ChatConflictError("Only the latest completed answer can regenerate.")
         prompt = (await self._store.load_preferences()).system_prompt
-        materials = await self._attachment_files.materialize(
+        materials = await self._materialize_context_attachments(
             _context_attachments(transcript)
         )
         self._context.prepare(
@@ -699,10 +699,16 @@ class ChatService:
             raise ChatPayloadTooLargeError(
                 "Attachment text for one message may total at most 2,000,000 characters."
             )
-        materials = await self._attachment_files.materialize(
+        materials = await self._materialize_context_attachments(
             _context_attachments(transcript) + selected
         )
         return selected, materials
+
+    async def _materialize_context_attachments(
+        self, attachments: tuple[ChatAttachment, ...]
+    ) -> tuple[ChatAttachmentMaterial, ...]:
+        _require_attachment_context_fits(attachments)
+        return await self._attachment_files.materialize(attachments)
 
     async def _with_attachment_availability(
         self,
@@ -917,7 +923,7 @@ class ChatService:
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
             latest = _latest_turn(transcript)
-            materials = await self._attachment_files.materialize(
+            materials = await self._materialize_context_attachments(
                 _context_attachments(transcript)
             )
             prepared = builder.prepare(
@@ -990,7 +996,7 @@ class ChatService:
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
             latest = _latest_turn(transcript)
-            materials = await self._attachment_files.materialize(
+            materials = await self._materialize_context_attachments(
                 _context_attachments(transcript)
             )
             prepared = builder.prepare(
@@ -1065,7 +1071,7 @@ class ChatService:
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
             prompt = (await self._store.load_preferences()).system_prompt
-            materials = await self._attachment_files.materialize(
+            materials = await self._materialize_context_attachments(
                 _context_attachments(transcript)
             )
             await self._compact_transcript(
@@ -1933,6 +1939,29 @@ def _context_attachments(transcript: ChatTranscript) -> tuple[ChatAttachment, ..
         if turn.sequence > covered
         for attachment in turn.attachments
     )
+
+
+def _require_attachment_context_fits(
+    attachments: tuple[ChatAttachment, ...],
+) -> None:
+    image_bytes = sum(
+        attachment.byte_size
+        for attachment in attachments
+        if attachment.kind is ChatAttachmentKind.IMAGE
+    )
+    if image_bytes > MAX_CHAT_ATTACHMENTS_COMBINED_BYTES:
+        raise ChatPayloadTooLargeError(
+            "Uncompacted image attachments may total at most 25 MiB. "
+            "Compact the chat before adding more."
+        )
+    extracted_characters = sum(
+        attachment.extracted_characters or 0 for attachment in attachments
+    )
+    if extracted_characters > MAX_CHAT_ATTACHMENTS_COMBINED_EXTRACTED_CHARACTERS:
+        raise ChatPayloadTooLargeError(
+            "Uncompacted attachment text may total at most 2,000,000 characters. "
+            "Compact the chat before adding more."
+        )
 
 
 def _attachment_ids(values: tuple[str, ...]) -> tuple[str, ...]:
