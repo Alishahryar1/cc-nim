@@ -4,7 +4,9 @@ const state = {
   modelOptions: [],
   modelComboboxes: new Set(),
   authPollers: new Map(),
-  activeView: "providers",
+  activeView: window.location.pathname.startsWith("/admin/chat")
+    ? "chat"
+    : "providers",
   searchQuery: "",
   providerFilter: "all",
 };
