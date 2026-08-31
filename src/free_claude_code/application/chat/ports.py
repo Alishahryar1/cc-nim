@@ -134,7 +134,13 @@ class ChatStorePort(Protocol):
     async def discard_generation(self, generation_id: str) -> None: ...
 
     async def finish_regeneration(
-        self, generation_id: str, *, stop_reason: str | None
+        self,
+        generation_id: str,
+        *,
+        status: GenerationStatus,
+        stop_reason: str | None,
+        error_code: str | None,
+        error_message: str | None,
     ) -> ChatSession: ...
 
     async def upsert_compaction(

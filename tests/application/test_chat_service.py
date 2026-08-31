@@ -405,6 +405,76 @@ async def test_regeneration_retries_an_ambiguous_terminal_commit(
 
 
 @pytest.mark.asyncio
+async def test_failed_regeneration_replaces_original_with_failed_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        initial = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="01355e92-06c4-4820-b80a-fc8e0dff2553",
+            text="replace this answer",
+        )
+        assert (await _drain(initial))[-1] == "turn.completed"
+        before = await store.get_transcript(session.id)
+        original_id = before.turns[0].generation.id
+
+        async def failing_stream(*args, **kwargs):
+            del args, kwargs
+            yield "".join(
+                (
+                    format_sse_event(
+                        "message_start",
+                        {"type": "message_start", "message": {"content": []}},
+                    ),
+                    format_sse_event(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                    ),
+                    format_sse_event(
+                        "content_block_delta",
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": "partial"},
+                        },
+                    ),
+                    format_sse_event(
+                        "error",
+                        {
+                            "type": "error",
+                            "error": {"message": "provider failed"},
+                        },
+                    ),
+                )
+            )
+
+        monkeypatch.setattr(provider, "stream_messages", failing_stream)
+        replacement = await service.regenerate(
+            session.id,
+            expected_revision=before.session.revision,
+            operation_id="810b8d15-adab-4df6-9084-3189ca534d09",
+        )
+
+        assert (await _drain(replacement))[-1] == "turn.failed"
+        generation = (await store.get_transcript(session.id)).turns[0].generation
+        assert generation.id != original_id
+        assert generation.status is GenerationStatus.FAILED
+        assert generation.error_message == "provider failed"
+        assert generation.segments[-1].text == "partial"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_stopped_regeneration_retries_an_ambiguous_discard(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1408,6 +1478,7 @@ async def test_send_auto_compacts_without_removing_original_turns(tmp_path: Path
             "4e542b5b-8386-46d2-8643-67a523c216f0",
             "86293f1e-2899-47b9-8590-27450fc00989",
             "dd945983-b49c-4749-83b3-3051d3998bc2",
+            "3a4f8108-2cf4-45c1-b412-56a8551e7f8b",
         )
         for operation_id in operation_ids:
             stream = await service.send(
@@ -1430,7 +1501,7 @@ async def test_send_auto_compacts_without_removing_original_turns(tmp_path: Path
         transcript = await store.get_transcript(session.id)
         assert "compaction.started" in events
         assert "compaction.completed" in events
-        assert len(transcript.turns) == 4
+        assert len(transcript.turns) == 5
         assert transcript.compaction is not None
         assert transcript.compaction.covered_through_sequence >= 1
     finally:
@@ -1454,6 +1525,7 @@ async def test_stop_during_auto_compaction_commit_keeps_checkpoint_without_new_t
             "d3bb405e-245f-4dbf-bbdd-b72508926367",
             "d4fec5fe-a75a-4752-8c33-f51fd105774f",
             "79cd9bd9-df33-4ed4-8a5c-5e34770a30f7",
+            "71ac3c34-7be1-4c26-b69e-f6f7193fa353",
         ):
             stream = await service.send(
                 session.id,
@@ -1499,7 +1571,7 @@ async def test_stop_during_auto_compaction_commit_keeps_checkpoint_without_new_t
         transcript = await store.get_transcript(session.id)
         assert events[-2:] == ["compaction.completed", "turn.stopped"]
         assert transcript.compaction is not None
-        assert len(transcript.turns) == 3
+        assert len(transcript.turns) == 4
     finally:
         if blocker is not None:
             blocker.rollback()

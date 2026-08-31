@@ -26,6 +26,7 @@
     foreignPollTimer: null,
     serverOperationActive: false,
     eventChannel: null,
+    modelComboboxes: new Set(),
   };
 
   const root = () => document.getElementById("chatRoot");
@@ -62,8 +63,6 @@
     state.initialized = true;
     if (chatIsVisible()) {
       await activate(window.location.pathname);
-    } else {
-      await refresh();
     }
   }
 
@@ -120,11 +119,13 @@
   }
 
   function renderLoading() {
+    state.modelComboboxes.clear();
     const container = root();
     container.replaceChildren(node("div", "chat-empty", "Loading Chat Sessions…"));
   }
 
   function renderUnavailable() {
+    state.modelComboboxes.clear();
     const container = node("section", "chat-empty");
     container.append(
       node("h3", "", "Chat Sessions unavailable"),
@@ -150,6 +151,7 @@
   }
 
   function renderLibraryShell() {
+    state.modelComboboxes.clear();
     const header = node("header", "chat-library-header");
     const copy = node("div");
     copy.append(
@@ -329,6 +331,7 @@
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
     const session = state.session;
     if (!session) return;
+    state.modelComboboxes.clear();
     const shell = node("div", "chat-session-shell");
     const header = renderSessionHeader(session);
     const notice = node("div", "chat-notice");
@@ -388,51 +391,35 @@
   }
 
   function renderModelControl(session) {
-    const group = node("label", "chat-control chat-model-control");
-    group.appendChild(node("span", "", "Model"));
-    const filter = node("input", "chat-model-filter");
-    filter.type = "search";
-    filter.placeholder = "Filter models";
-    filter.setAttribute("aria-label", "Filter models");
-    const select = node("select");
-    select.id = "chatModel";
-    select.setAttribute("aria-label", "Selected model");
-    fillModelOptions(select, "", session.model);
-    filter.addEventListener("input", () =>
-      fillModelOptions(select, filter.value, state.session.model),
-    );
-    select.addEventListener("change", () => updateSession({ model: select.value }));
-    group.append(filter, select);
+    const group = node("div", "chat-control chat-model-control");
+    const label = node("label", "", "Model");
+    label.htmlFor = "chatModel";
+    const input = node("input", "chat-model-input");
+    input.id = "chatModel";
+    input.type = "text";
+    input.autocomplete = "off";
+    input.value = session.model;
+    input.setAttribute("aria-label", "Selected model");
+    let committedModel = session.model;
+    const availableModels = () =>
+      (state.bootstrap?.models || []).map((option) => option.model_ref);
+    const combobox = new window.FccModelCombobox(input, {
+      listboxId: "chat-model-options",
+      label: "model",
+      values: availableModels,
+      emptyMessage: () =>
+        availableModels().length ? "No matching models." : "No models available.",
+      registry: state.modelComboboxes,
+      onSelect: (model) => {
+        committedModel = model;
+        void updateSession({ model });
+      },
+      onClose: () => {
+        input.value = committedModel;
+      },
+    });
+    group.append(label, combobox.element);
     return group;
-  }
-
-  function fillModelOptions(select, query, selected) {
-    const folded = query.trim().toLowerCase();
-    const matches = (state.bootstrap.models || []).filter(
-      (option) => !folded || option.model_ref.toLowerCase().includes(folded),
-    );
-    const groups = new Map();
-    matches.forEach((option) => {
-      if (!groups.has(option.provider_id)) groups.set(option.provider_id, []);
-      groups.get(option.provider_id).push(option);
-    });
-    select.replaceChildren();
-    if (!(state.bootstrap.models || []).some((item) => item.model_ref === selected)) {
-      const unavailable = node("option", "", `${selected} (Unavailable)`);
-      unavailable.value = selected;
-      select.appendChild(unavailable);
-    }
-    [...groups.keys()].sort().forEach((provider) => {
-      const group = document.createElement("optgroup");
-      group.label = provider;
-      groups.get(provider).forEach((option) => {
-        const item = node("option", "", option.model_id);
-        item.value = option.model_ref;
-        group.appendChild(item);
-      });
-      select.appendChild(group);
-    });
-    select.value = selected;
   }
 
   function renderReasoningControl(session) {
@@ -476,7 +463,7 @@
       return;
     }
     const percent = Math.round((context.usage_ratio || 0) * 100);
-    element.textContent = `Context: ${percent}% · ${formatCount(context.estimated_input_tokens)} input + ${formatCount(context.completion_tokens)} output`;
+    element.textContent = `Context: ${percent}% · ${formatCount(context.estimated_input_tokens)} / ${formatCount(context.context_window_tokens)}`;
     element.className = `chat-context-meter${percent >= 85 ? " warn" : ""}`;
   }
 
@@ -484,7 +471,7 @@
     const wrapper = node("div", "chat-composer");
     const textarea = node("textarea");
     textarea.id = "chatComposer";
-    textarea.rows = 3;
+    textarea.rows = 2;
     textarea.placeholder = "Message this model";
     textarea.value = state.draft;
     textarea.setAttribute("aria-label", "Message");
@@ -514,6 +501,13 @@
     return wrapper;
   }
 
+  function resizeComposer(textarea) {
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+    textarea.style.overflowY =
+      textarea.scrollHeight > textarea.clientHeight ? "auto" : "hidden";
+  }
+
   function renderTranscript() {
     const scroller = document.getElementById("chatTranscript");
     if (!scroller) return;
@@ -533,7 +527,8 @@
     state.turns.forEach((turn, index) => {
       scroller.appendChild(renderUserMessage(turn));
       const replacingLatest =
-        index === state.turns.length - 1 && state.operation?.action === "retry";
+        index === state.turns.length - 1 &&
+        ["retry", "regenerate"].includes(state.operation?.action);
       if (!replacingLatest) scroller.appendChild(renderAssistantMessage(turn));
       if (
         state.compaction &&
@@ -554,7 +549,7 @@
     if (state.compaction && !dividerRendered) {
       scroller.insertBefore(renderCompaction(), scroller.firstChild);
     }
-    if (state.operation?.segments?.length) {
+    if (state.operation && state.operation.action !== "compact") {
       scroller.appendChild(renderLiveAssistant(state.operation));
     }
   }
@@ -623,6 +618,15 @@
   function renderLiveAssistant(operation) {
     const message = node("article", "chat-message assistant-message live-message");
     message.appendChild(node("div", "chat-message-label", "Assistant"));
+    if (!operation.segments.length || operation.status !== "Thinking…") {
+      const status = node(
+        "p",
+        "chat-muted chat-operation-status",
+        operation.status,
+      );
+      status.setAttribute("aria-live", "polite");
+      message.appendChild(status);
+    }
     operation.segments.forEach((segment, ordinal) => {
       const content = node("div", "chat-message-plain");
       content.dataset.liveSegment = String(ordinal);
@@ -902,8 +906,9 @@
     }
     if (state.contextError) return state.contextError;
     if (
-      state.context?.usage_ratio !== null &&
-      state.context?.usage_ratio > 1 &&
+      state.context?.usable_input_tokens !== null &&
+      state.context?.estimated_input_tokens >
+        state.context?.usable_input_tokens &&
       !state.context?.can_compact
     ) {
       return "This message exceeds the model context";
@@ -918,6 +923,7 @@
     const compact = document.getElementById("chatCompact");
     const status = document.getElementById("chatComposerStatus");
     if (!textarea || !send || !stop || !status) return;
+    resizeComposer(textarea);
     const blocked = sendBlockReason();
     const latest = state.turns[state.turns.length - 1];
     const busy = Boolean(
@@ -929,12 +935,19 @@
     send.hidden = Boolean(state.operation);
     stop.hidden = !state.operation;
     textarea.disabled = Boolean(state.operation);
-    status.textContent = state.operation ? state.operation.status : blocked;
-    document.querySelectorAll(".chat-controls button, .chat-controls select").forEach(
-      (control) => {
+    status.textContent =
+      state.operation?.action === "compact"
+        ? state.operation.status
+        : state.operation
+          ? ""
+          : blocked;
+    document
+      .querySelectorAll(
+        ".chat-controls button, .chat-controls input, .chat-controls select",
+      )
+      .forEach((control) => {
         control.disabled = busy;
-      },
-    );
+      });
     if (compact) {
       compact.disabled = busy || !state.context?.can_compact;
     }
@@ -1013,7 +1026,12 @@
       cancelOperationRender(operation);
       if (state.operation === operation) state.operation = null;
       if (state.session?.id === operation.sessionId) await reloadSession();
-      if (failure) setNotice(failure.message, "error");
+      const persistedFailure = state.turns[state.turns.length - 1]?.generation;
+      const failureIsInline =
+        operation.failureMessage &&
+        persistedFailure?.status === "failed" &&
+        persistedFailure.error_message === operation.failureMessage;
+      if (failure && !failureIsInline) setNotice(failure.message, "error");
     }
   }
 
@@ -1168,7 +1186,7 @@
     const operation = state.operation;
     if (!operation) return;
     operation.status = "Stopping…";
-    refreshComposerState();
+    renderOperationStructure(operation);
     try {
       await state.api(`/admin/api/chat/sessions/${operation.sessionId}/stop`, {
         method: "POST",
@@ -1263,7 +1281,10 @@
   }
 
   function formatCount(value) {
-    return new Intl.NumberFormat(undefined, { notation: "compact" }).format(value);
+    return new Intl.NumberFormat(undefined, {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(value);
   }
 
   function capitalize(value) {
@@ -1271,4 +1292,12 @@
   }
 
   window.ChatSessions = { initialize, activate, refresh };
+
+  document.addEventListener("pointerdown", (event) => {
+    state.modelComboboxes.forEach((combobox) => {
+      if (combobox.isOpen && !combobox.element.contains(event.target)) {
+        combobox.close();
+      }
+    });
+  });
 })();

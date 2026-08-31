@@ -262,6 +262,67 @@ def test_known_context_reserves_input_when_output_cap_is_unknown():
 
     assert prepared.routed.request.max_tokens == 15_360
     assert prepared.estimate.usable_input_tokens == 1_024
+    assert prepared.estimate.usage_ratio == (
+        prepared.estimate.estimated_input_tokens / 16_384
+    )
+
+
+def test_auto_compaction_uses_visible_context_ratio_with_fit_safety():
+    transcript = _transcript(reasoning=ChatReasoning.OFF)
+    transcript = ChatTranscript(
+        session=transcript.session,
+        turns=transcript.turns * 2,
+        compaction=None,
+    )
+    builder = ChatContextBuilder(
+        FakeRuntime(
+            configured=ProviderModelInfo(
+                "model",
+                context_window_tokens=100_000,
+                max_output_tokens=4_096,
+            )
+        )
+    )
+
+    below = builder.prepare(
+        transcript,
+        system_prompt="",
+        draft="token " * 83_000,
+    ).estimate
+    above = builder.prepare(
+        transcript,
+        system_prompt="",
+        draft="token " * 86_000,
+    ).estimate
+
+    assert below.usable_input_tokens is not None
+    assert below.usage_ratio is not None and below.usage_ratio < 0.85
+    assert below.estimated_input_tokens / below.usable_input_tokens > 0.85
+    assert below.should_auto_compact is False
+    assert above.usage_ratio is not None and above.usage_ratio > 0.85
+    assert above.should_auto_compact is True
+
+    tight = (
+        ChatContextBuilder(
+            FakeRuntime(
+                configured=ProviderModelInfo(
+                    "model",
+                    context_window_tokens=40_000,
+                    max_output_tokens=20_000,
+                )
+            )
+        )
+        .prepare(
+            transcript,
+            system_prompt="",
+            draft="token " * 24_000,
+        )
+        .estimate
+    )
+    assert tight.usable_input_tokens is not None
+    assert tight.usage_ratio is not None and tight.usage_ratio < 0.85
+    assert tight.estimated_input_tokens > tight.usable_input_tokens
+    assert tight.should_auto_compact is True
 
 
 def test_existing_compaction_replaces_only_covered_context():

@@ -106,6 +106,7 @@ html {
     scroll-behavior: auto;
   }
 }
+
 body {
   margin: 0;
   min-width: 320px;
@@ -949,10 +950,6 @@ textarea:focus-visible,
   padding: 5px;
 }
 
-.model-combobox-list[hidden] {
-  display: none;
-}
-
 .model-combobox-option {
   border-radius: var(--radius-xs);
   padding: 8px 10px;
@@ -1113,10 +1110,6 @@ textarea:focus-visible,
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.6);
-}
-
-.action-bar[hidden] {
-  display: none;
 }
 
 .action-meta {

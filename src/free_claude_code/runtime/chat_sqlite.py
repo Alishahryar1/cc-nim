@@ -655,8 +655,17 @@ class SQLiteChatStore:
         await self._run(operation)
 
     async def finish_regeneration(
-        self, generation_id: str, *, stop_reason: str | None
+        self,
+        generation_id: str,
+        *,
+        status: GenerationStatus,
+        stop_reason: str | None,
+        error_code: str | None,
+        error_message: str | None,
     ) -> ChatSession:
+        if status not in {GenerationStatus.COMPLETED, GenerationStatus.FAILED}:
+            raise ValueError("A regeneration must finish as Completed or Failed.")
+
         def operation(connection: sqlite3.Connection) -> ChatSession:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -673,7 +682,7 @@ class SQLiteChatStore:
                 raise ChatConflictError("Staged regeneration is unavailable.")
             session_id = _row_str(row, "session_id")
             if bool(_row_int(row, "visible")):
-                if _row_str(row, "status") == GenerationStatus.COMPLETED.value:
+                if _row_str(row, "status") == status.value:
                     connection.rollback()
                     return self._get_session(connection, session_id)
                 connection.rollback()
@@ -690,13 +699,15 @@ class SQLiteChatStore:
             connection.execute(
                 """
                 UPDATE chat_generations
-                SET visible = 1, status = ?, stop_reason = ?, error_code = NULL,
-                    error_message = NULL, finished_at = ?
+                SET visible = 1, status = ?, stop_reason = ?, error_code = ?,
+                    error_message = ?, finished_at = ?
                 WHERE id = ? AND visible = 0 AND status = ?
                 """,
                 (
-                    GenerationStatus.COMPLETED.value,
+                    status.value,
                     stop_reason,
+                    error_code,
+                    error_message,
                     now,
                     generation_id,
                     GenerationStatus.RUNNING.value,

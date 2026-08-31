@@ -862,7 +862,11 @@ class ChatService:
             await self._flush_terminal_segments(active)
             if active.regeneration:
                 return await self._finish_regeneration(
-                    generation_id, stop_reason=stop_reason
+                    generation_id,
+                    status=GenerationStatus.COMPLETED,
+                    stop_reason=stop_reason,
+                    error_code=None,
+                    error_message=None,
                 )
             return await self._finish_generation(
                 generation_id,
@@ -1313,10 +1317,16 @@ class ChatService:
             )
         if active.generation_id is not None:
             try:
+                await self._flush_terminal_segments(active)
                 if active.regeneration:
-                    await self._discard_regeneration(active.generation_id)
+                    await self._finish_regeneration(
+                        active.generation_id,
+                        status=GenerationStatus.FAILED,
+                        stop_reason=None,
+                        error_code=code,
+                        error_message=message,
+                    )
                 else:
-                    await self._flush_terminal_segments(active)
                     await self._finish_generation(
                         active.generation_id,
                         status=GenerationStatus.FAILED,
@@ -1371,14 +1381,20 @@ class ChatService:
         self,
         generation_id: str,
         *,
+        status: GenerationStatus,
         stop_reason: str | None,
+        error_code: str | None,
+        error_message: str | None,
     ) -> ChatSession:
         return await self._retry_terminal_persistence(
             lambda: self._store.finish_regeneration(
                 generation_id,
+                status=status,
                 stop_reason=stop_reason,
+                error_code=error_code,
+                error_message=error_message,
             ),
-            label=f"regeneration_id={generation_id} status=completed",
+            label=f"regeneration_id={generation_id} status={status.value}",
         )
 
     async def _discard_regeneration(self, generation_id: str) -> None:
