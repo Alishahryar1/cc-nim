@@ -4,6 +4,7 @@ import asyncio
 import os
 import shutil
 import uuid
+import warnings
 import zipfile
 from collections.abc import Callable
 from functools import partial
@@ -14,6 +15,7 @@ import anyio.to_thread
 from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader
 
 from free_claude_code.application.chat.models import (
@@ -74,6 +76,12 @@ _DECLARED_MEDIA_TYPES = {
             }
         )
     ),
+}
+_IMAGE_FORMAT_MEDIA_TYPES = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "GIF": "image/gif",
+    "WEBP": "image/webp",
 }
 
 
@@ -391,11 +399,32 @@ def _inspect_attachment(
 
     _validate_extension(kind, media_type, suffix)
     _validate_declared_media_type(media_type, declared_media_type)
+    if kind is ChatAttachmentKind.IMAGE:
+        _verify_image(path, media_type)
     if extracted is not None and not extracted.strip():
         raise ChatUnsupportedAttachmentError(
             "The document contains no readable text. OCR is not supported."
         )
     return kind, media_type, extracted
+
+
+def _verify_image(path: Path, expected_media_type: str) -> None:
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(path) as image:
+                media_type = _IMAGE_FORMAT_MEDIA_TYPES.get(image.format or "")
+                if media_type != expected_media_type:
+                    raise ChatUnsupportedAttachmentError(
+                        "The image content does not match its file signature."
+                    )
+                image.verify()
+    except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+        raise ChatPayloadTooLargeError("The image dimensions are too large.") from exc
+    except ChatUnsupportedAttachmentError:
+        raise
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
+        raise ChatUnsupportedAttachmentError("The image file is malformed.") from exc
 
 
 def _validate_extension(kind: ChatAttachmentKind, media_type: str, suffix: str) -> None:

@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 import free_claude_code.application.chat.service as chat_service_module
 from free_claude_code.application.chat import (
@@ -29,6 +30,12 @@ from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.runtime.chat_attachments import LocalChatAttachmentFiles
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
+
+
+def _png_bytes() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (2, 2), color="orange").save(output, format="PNG")
+    return output.getvalue()
 
 
 class FakeChatProvider:
@@ -342,7 +349,7 @@ async def test_attachment_only_send_commits_exact_files_and_builds_portable_bloc
             session.id,
             filename="diagram.png",
             declared_media_type="image/png",
-            source=BytesIO(b"\x89PNG\r\n\x1a\nfixture"),
+            source=BytesIO(_png_bytes()),
         )
         document = await service.stage_attachment(
             session.id,

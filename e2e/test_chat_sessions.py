@@ -90,6 +90,9 @@ def _hold_next_attachment_upload(page: Page, session_id: str) -> None:
               window.__releaseHeldChatUpload = () => {
                 originalFetch(...args).then(resolve, reject);
               };
+              window.__rejectHeldChatUpload = () => {
+                reject(new Error("old upload failed"));
+              };
             });
           };
         }
@@ -611,7 +614,7 @@ def test_send_keeps_an_attachment_uploaded_after_click_for_the_next_turn(
         other.close()
 
 
-def test_delayed_attachment_upload_cannot_enter_a_new_chat(
+def test_delayed_attachment_upload_stays_with_its_originating_chat(
     page: Page,
     admin_base_url: str,
     tmp_path: Path,
@@ -627,11 +630,49 @@ def test_delayed_attachment_upload_cannot_enter_a_new_chat(
     page.get_by_role("button", name="Chats", exact=False).click()
     page.get_by_role("button", name="New chat", exact=True).click()
     expect(page).not_to_have_url(re.compile(f"/{old_session_id}$"))
-    page.evaluate("window.__releaseHeldChatUpload()")
-
     expect(page.get_by_role("button", name="Attach")).to_be_enabled()
+    page.evaluate("window.__releaseHeldChatUpload()")
+    page.wait_for_function(
+        """
+        async ({ sessionId, filename }) => {
+          const response = await fetch(`/admin/api/chat/sessions/${sessionId}`);
+          if (!response.ok) return false;
+          const detail = await response.json();
+          return detail.staged_attachments.some(
+            attachment => attachment.filename === filename,
+          );
+        }
+        """,
+        arg={"sessionId": old_session_id, "filename": attachment.name},
+    )
     expect(page.locator(".chat-staged-attachments")).to_be_hidden()
     expect(page.get_by_text("old-session.txt", exact=True)).to_have_count(0)
+
+    page.goto(f"{admin_base_url}/admin/chat/{old_session_id}")
+    expect(page.locator(".chat-staged-attachments")).to_contain_text("old-session.txt")
+
+
+def test_failed_attachment_upload_does_not_leak_into_a_new_chat(
+    page: Page,
+    admin_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _new_chat(page, admin_base_url)
+    old_session_id = page.url.rsplit("/", 1)[-1]
+    attachment = tmp_path / "old-session.txt"
+    attachment.write_text("old session only", encoding="utf-8")
+    _hold_next_attachment_upload(page, old_session_id)
+
+    page.get_by_label("Attach files").set_input_files(attachment)
+    page.wait_for_function("window.__chatUploadHeld === true")
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.get_by_role("button", name="New chat", exact=True).click()
+    expect(page).not_to_have_url(re.compile(f"/{old_session_id}$"))
+    expect(page.get_by_role("button", name="Attach")).to_be_enabled()
+    page.evaluate("window.__rejectHeldChatUpload()")
+    expect(page.locator(".chat-staged-attachments")).to_be_hidden()
+    expect(page.get_by_text("old-session.txt", exact=True)).to_have_count(0)
+    expect(page.get_by_text("old upload failed", exact=True)).to_have_count(0)
 
 
 def test_estimate_for_cross_tab_removed_attachment_cannot_overwrite_composer(

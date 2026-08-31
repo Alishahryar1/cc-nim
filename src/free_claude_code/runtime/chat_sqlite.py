@@ -157,7 +157,17 @@ class SQLiteChatStore:
                 f"""
                 SELECT s.*,
                     COALESCE((
-                        SELECT t.user_text FROM chat_turns AS t
+                        SELECT CASE
+                            WHEN t.user_text <> '' THEN t.user_text
+                            ELSE (
+                                SELECT a.filename
+                                FROM chat_attachments AS a
+                                WHERE a.turn_id = t.id
+                                ORDER BY a.position
+                                LIMIT 1
+                            )
+                        END
+                        FROM chat_turns AS t
                         WHERE t.session_id = s.id
                         ORDER BY t.sequence DESC LIMIT 1
                     ), '') AS preview

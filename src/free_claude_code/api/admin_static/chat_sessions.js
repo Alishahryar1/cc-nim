@@ -28,7 +28,7 @@
     serverOperationActive: false,
     eventChannel: null,
     modelComboboxes: new Set(),
-    uploadingAttachments: false,
+    attachmentUploads: new Map(),
     stagedRequestVersion: 0,
   };
 
@@ -614,39 +614,56 @@
   }
 
   async function uploadAttachments(files) {
-    if (!state.session || !files.length || state.uploadingAttachments) return;
-    state.uploadingAttachments = true;
-    refreshComposerState();
+    if (!state.session || !files.length) return;
     const sessionId = state.session.id;
+    if (state.attachmentUploads.has(sessionId)) return;
+    const upload = {};
+    state.attachmentUploads.set(sessionId, upload);
+    refreshComposerState();
     try {
       await refreshStagedAttachments();
       for (const file of files) {
-        if (state.session?.id !== sessionId) return;
         const form = new FormData();
         form.append("file", file, file.name);
         const attachment = await state.api(
           `/admin/api/chat/sessions/${sessionId}/attachments`,
           { method: "POST", body: form },
         );
-        if (state.session?.id !== sessionId) return;
-        state.stagedRequestVersion += 1;
-        const existing = state.stagedAttachments.findIndex(
-          (item) => item.id === attachment.id,
-        );
-        if (existing === -1) {
-          state.stagedAttachments.push(attachment);
-        } else {
-          state.stagedAttachments[existing] = attachment;
+        if (
+          state.attachmentUploads.get(sessionId) === upload &&
+          state.session?.id === sessionId
+        ) {
+          state.stagedRequestVersion += 1;
+          const existing = state.stagedAttachments.findIndex(
+            (item) => item.id === attachment.id,
+          );
+          if (existing === -1) {
+            state.stagedAttachments.push(attachment);
+          } else {
+            state.stagedAttachments[existing] = attachment;
+          }
+          renderStagedAttachments();
         }
-        renderStagedAttachments();
       }
-      setNotice("");
-      scheduleEstimate(true);
+      if (
+        state.attachmentUploads.get(sessionId) === upload &&
+        state.session?.id === sessionId
+      ) {
+        setNotice("");
+        scheduleEstimate(true);
+      }
     } catch (error) {
-      setNotice(error.message, "error");
+      if (
+        state.attachmentUploads.get(sessionId) === upload &&
+        state.session?.id === sessionId
+      ) {
+        setNotice(error.message, "error");
+      }
     } finally {
-      state.uploadingAttachments = false;
-      refreshComposerState();
+      if (state.attachmentUploads.get(sessionId) === upload) {
+        state.attachmentUploads.delete(sessionId);
+      }
+      if (state.session?.id === sessionId) refreshComposerState();
     }
   }
 
@@ -1172,7 +1189,8 @@
     textarea.disabled = Boolean(state.operation && !state.operation.accepted);
     if (attach) {
       attach.disabled =
-        state.uploadingAttachments || state.stagedAttachments.length >= 5;
+        state.attachmentUploads.has(state.session?.id) ||
+        state.stagedAttachments.length >= 5;
     }
     status.textContent =
       state.operation?.action === "compact"

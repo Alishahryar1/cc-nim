@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from PIL import Image
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
@@ -92,6 +93,12 @@ def _docx_bytes() -> bytes:
     return output.getvalue()
 
 
+def _image_bytes(format_name: str) -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (2, 2), color="orange").save(output, format=format_name)
+    return output.getvalue()
+
+
 @pytest.mark.asyncio
 async def test_text_upload_is_verified_materialized_and_deleted(tmp_path: Path):
     files = LocalChatAttachmentFiles(tmp_path)
@@ -162,12 +169,12 @@ async def test_docx_upload_extracts_paragraphs_and_tables(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    ("filename", "media_type", "data"),
+    ("filename", "media_type", "format_name"),
     [
-        ("photo.jpg", "image/jpeg", b"\xff\xd8\xfffixture"),
-        ("photo.png", "image/png", b"\x89PNG\r\n\x1a\nfixture"),
-        ("photo.gif", "image/gif", b"GIF89afixture"),
-        ("photo.webp", "image/webp", b"RIFF\x08\x00\x00\x00WEBPfixture"),
+        ("photo.jpg", "image/jpeg", "JPEG"),
+        ("photo.png", "image/png", "PNG"),
+        ("photo.gif", "image/gif", "GIF"),
+        ("photo.webp", "image/webp", "WEBP"),
     ],
 )
 @pytest.mark.asyncio
@@ -175,8 +182,9 @@ async def test_supported_image_signatures_are_preserved_as_original_bytes(
     tmp_path: Path,
     filename: str,
     media_type: str,
-    data: bytes,
+    format_name: str,
 ):
+    data = _image_bytes(format_name)
     files = LocalChatAttachmentFiles(tmp_path)
     await files.start(())
     session_id = _id()
@@ -202,6 +210,54 @@ async def test_supported_image_signatures_are_preserved_as_original_bytes(
     material = (await files.materialize((attachment,)))[0]
     assert isinstance(material, ChatImageAttachment)
     assert material.data == data
+
+
+@pytest.mark.parametrize(
+    ("filename", "media_type", "data"),
+    [
+        ("broken.jpg", "image/jpeg", b"\xff\xd8\xfffixture"),
+        ("broken.png", "image/png", b"\x89PNG\r\n\x1a\nfixture"),
+        ("broken.gif", "image/gif", b"GIF89afixture"),
+        ("broken.webp", "image/webp", b"RIFF\x08\x00\x00\x00WEBPfixture"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_image_upload_rejects_corrupt_content_after_a_valid_signature(
+    tmp_path: Path,
+    filename: str,
+    media_type: str,
+    data: bytes,
+):
+    files = LocalChatAttachmentFiles(tmp_path)
+    await files.start(())
+
+    with pytest.raises(ChatUnsupportedAttachmentError, match=r"image.*malformed"):
+        await files.store_upload(
+            session_id=_id(),
+            attachment_id=_id(),
+            filename=filename,
+            declared_media_type=media_type,
+            source=BytesIO(data),
+        )
+
+
+@pytest.mark.asyncio
+async def test_image_upload_rejects_decompression_bomb_dimensions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1)
+    files = LocalChatAttachmentFiles(tmp_path)
+    await files.start(())
+
+    with pytest.raises(ChatPayloadTooLargeError, match="dimensions are too large"):
+        await files.store_upload(
+            session_id=_id(),
+            attachment_id=_id(),
+            filename="oversized.png",
+            declared_media_type="image/png",
+            source=BytesIO(_image_bytes("PNG")),
+        )
 
 
 @pytest.mark.asyncio
@@ -305,7 +361,7 @@ async def test_upload_rejects_extension_or_declared_type_mismatch(tmp_path: Path
             attachment_id=_id(),
             filename="notes.pdf",
             declared_media_type="application/pdf",
-            source=BytesIO(b"\x89PNG\r\n\x1a\nfixture"),
+            source=BytesIO(_image_bytes("PNG")),
         )
 
     with pytest.raises(ChatUnsupportedAttachmentError, match="media type"):

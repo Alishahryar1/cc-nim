@@ -87,6 +87,47 @@ async def test_store_creates_schema_preferences_and_searchable_sessions(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_attachment_only_turn_uses_first_filename_as_session_preview(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        attachment = await store.add_staged_attachment(
+            session.id,
+            attachment_id=_id(),
+            filename="evidence.txt",
+            file_info=ChatAttachmentFileInfo(
+                kind=ChatAttachmentKind.TEXT,
+                media_type="text/plain",
+                byte_size=8,
+                extracted_characters=8,
+            ),
+        )
+        await store.begin_send(
+            session.id,
+            expected_revision=session.revision,
+            turn_id=_id(),
+            generation_id=_id(),
+            operation_id=_id(),
+            user_text="",
+            requested_model=session.model,
+            reasoning=session.reasoning,
+            effective_output_limit=1_024,
+            attachment_ids=(attachment.id,),
+        )
+
+        page = await store.list_sessions(query="", cursor=None, limit=25)
+
+        assert page.sessions[0].preview == "evidence.txt"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_store_rejects_stale_session_revision_atomically(tmp_path: Path):
     store = _store(tmp_path)
     await store.start()
