@@ -1026,7 +1026,12 @@
       cancelOperationRender(operation);
       if (state.operation === operation) state.operation = null;
       if (state.session?.id === operation.sessionId) await reloadSession();
-      if (failure) setNotice(failure.message, "error");
+      const persistedFailure = state.turns[state.turns.length - 1]?.generation;
+      const failureIsInline =
+        operation.failureMessage &&
+        persistedFailure?.status === "failed" &&
+        persistedFailure.error_message === operation.failureMessage;
+      if (failure && !failureIsInline) setNotice(failure.message, "error");
     }
   }
 

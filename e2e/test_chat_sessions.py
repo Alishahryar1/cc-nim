@@ -406,6 +406,22 @@ def test_rejected_send_preserves_draft_after_stale_revision(
     expect(page.locator("#chatNotice")).to_contain_text("changed in another tab")
 
 
+def test_provider_failure_appears_only_in_assistant_reply(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    page.get_by_role("textbox", name="Message", exact=True).fill("[fail-turn]")
+    page.get_by_role("button", name="Send").click()
+
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+    expect(
+        page.locator(".assistant-message .chat-generation-status.failed")
+    ).to_have_text("E2E provider failed")
+    expect(page.locator("#chatNotice")).to_be_hidden()
+    expect(page.get_by_text("E2E provider failed", exact=True)).to_have_count(1)
+
+
 def test_committed_send_does_not_restore_draft_when_stream_ack_is_lost(
     page: Page,
     admin_base_url: str,
