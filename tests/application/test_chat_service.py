@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import threading
 from collections.abc import AsyncIterator
 from io import BytesIO
 from pathlib import Path
@@ -1391,14 +1392,18 @@ async def test_detail_snapshot_keeps_operation_owner_visible_through_completion(
         await asyncio.wait_for(entered_commit.wait(), timeout=1)
 
         entered_snapshot = asyncio.Event()
-        original_get_transcript = store.get_transcript
+        original_get_detail_snapshot = store.get_detail_snapshot
 
-        async def observed_get_transcript(session_id: str):
+        async def observed_get_detail_snapshot(session_id: str):
             entered_snapshot.set()
             await release_snapshot.wait()
-            return await original_get_transcript(session_id)
+            return await original_get_detail_snapshot(session_id)
 
-        monkeypatch.setattr(store, "get_transcript", observed_get_transcript)
+        monkeypatch.setattr(
+            store,
+            "get_detail_snapshot",
+            observed_get_detail_snapshot,
+        )
         detail_task = asyncio.create_task(service.get_detail(session.id))
         await asyncio.wait_for(entered_snapshot.wait(), timeout=1)
 
@@ -1412,6 +1417,67 @@ async def test_detail_snapshot_keeps_operation_owner_visible_through_completion(
         assert detail.session.revision > session.revision
     finally:
         release_commit.set()
+        release_snapshot.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_detail_and_send_share_one_attachment_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_snapshot = asyncio.Event()
+    try:
+        session = await service.create_session()
+        attachment = await service.stage_attachment(
+            session.id,
+            filename="notes.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"snapshot facts"),
+        )
+        snapshot_read = asyncio.Event()
+        original_get_detail_snapshot = store.get_detail_snapshot
+
+        async def observed_get_detail_snapshot(session_id: str):
+            snapshot = await original_get_detail_snapshot(session_id)
+            snapshot_read.set()
+            await release_snapshot.wait()
+            return snapshot
+
+        monkeypatch.setattr(
+            store,
+            "get_detail_snapshot",
+            observed_get_detail_snapshot,
+        )
+        detail_task = asyncio.create_task(service.get_detail(session.id))
+        await asyncio.wait_for(snapshot_read.wait(), timeout=1)
+
+        send_task = asyncio.create_task(
+            service.send(
+                session.id,
+                expected_revision=session.revision,
+                operation_id="874929b3-7515-47bc-8b5c-2fd81308f9c4",
+                text="use the attachment",
+                attachment_ids=(attachment.id,),
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert not send_task.done()
+        assert (await store.get_transcript(session.id)).turns == ()
+        assert [
+            item.id for item in await store.list_staged_attachments(session.id)
+        ] == [attachment.id]
+
+        release_snapshot.set()
+        detail = await asyncio.wait_for(detail_task, timeout=1)
+        assert detail.turns == ()
+        assert [item.id for item in detail.staged_attachments] == [attachment.id]
+        assert detail.active_operation is False
+        stream = await asyncio.wait_for(send_task, timeout=1)
+        await _drain(stream)
+    finally:
         release_snapshot.set()
         await service.close()
 
@@ -1446,14 +1512,18 @@ async def test_cancellation_while_release_waits_cannot_strand_operation_owner(
         await asyncio.wait_for(entered_commit.wait(), timeout=1)
 
         entered_snapshot = asyncio.Event()
-        original_get_transcript = store.get_transcript
+        original_get_detail_snapshot = store.get_detail_snapshot
 
-        async def observed_get_transcript(session_id: str):
+        async def observed_get_detail_snapshot(session_id: str):
             entered_snapshot.set()
             await release_snapshot.wait()
-            return await original_get_transcript(session_id)
+            return await original_get_detail_snapshot(session_id)
 
-        monkeypatch.setattr(store, "get_transcript", observed_get_transcript)
+        monkeypatch.setattr(
+            store,
+            "get_detail_snapshot",
+            observed_get_detail_snapshot,
+        )
         detail_task = asyncio.create_task(service.get_detail(session.id))
         await asyncio.wait_for(entered_snapshot.wait(), timeout=1)
 
@@ -1481,6 +1551,73 @@ async def test_cancellation_while_release_waits_cannot_strand_operation_owner(
     finally:
         release_commit.set()
         release_snapshot.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_and_delete_wait_for_attachment_materialization_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    files = LocalChatAttachmentFiles(tmp_path)
+    service, _runtime, store = await _service(
+        tmp_path,
+        provider,
+        attachment_files=files,
+    )
+    release_materialization = threading.Event()
+    try:
+        session = await service.create_session()
+        attachment = await service.stage_attachment(
+            session.id,
+            filename="notes.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"wait for this file"),
+        )
+        materialization_started = threading.Event()
+        original_materialize = files._materialize_sync
+        materialization_count = 0
+
+        def blocked_materialize(attachments):
+            nonlocal materialization_count
+            materialization_count += 1
+            if materialization_count == 1:
+                return original_materialize(attachments)
+            materialization_started.set()
+            release_materialization.wait()
+            return original_materialize(attachments)
+
+        monkeypatch.setattr(files, "_materialize_sync", blocked_materialize)
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="0c675c58-1f6a-4f03-a9e2-81546065922e",
+            text="read it",
+            attachment_ids=(attachment.id,),
+        )
+        assert await asyncio.wait_for(
+            asyncio.to_thread(materialization_started.wait), timeout=1
+        )
+
+        close_task = asyncio.create_task(stream.aclose())
+        delete_task = asyncio.create_task(
+            service.delete_session(
+                session.id,
+                expected_revision=session.revision,
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert not close_task.done()
+        assert not delete_task.done()
+
+        release_materialization.set()
+        await asyncio.wait_for(close_task, timeout=1)
+        await asyncio.wait_for(delete_task, timeout=1)
+        with pytest.raises(ChatNotFoundError):
+            await store.get_session(session.id)
+    finally:
+        release_materialization.set()
         await service.close()
 
 

@@ -1,3 +1,5 @@
+import asyncio
+import threading
 import uuid
 import zipfile
 from io import BytesIO
@@ -438,3 +440,90 @@ async def test_missing_owned_file_is_reported_unavailable_not_recreated(
     assert await files.available_ids((attachment,)) == frozenset()
     with pytest.raises(ChatValidationError, match="unavailable"):
         await files.content(attachment)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_upload_waits_for_storage_and_removes_unowned_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    files = LocalChatAttachmentFiles(tmp_path)
+    await files.start(())
+    session_id = _id()
+    attachment_id = _id()
+    entered = threading.Event()
+    release = threading.Event()
+    original_store = files._store_upload_sync
+
+    def blocked_store(**kwargs):
+        entered.set()
+        release.wait()
+        return original_store(**kwargs)
+
+    monkeypatch.setattr(files, "_store_upload_sync", blocked_store)
+    upload = asyncio.create_task(
+        files.store_upload(
+            session_id=session_id,
+            attachment_id=attachment_id,
+            filename="note.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"hello"),
+        )
+    )
+    assert await asyncio.wait_for(asyncio.to_thread(entered.wait), timeout=1)
+
+    upload.cancel()
+    await asyncio.sleep(0.05)
+    assert not upload.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await upload
+
+    assert not (tmp_path / "tmp" / attachment_id).exists()
+    assert not (tmp_path / "attachments" / session_id / attachment_id).exists()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_materialization_waits_for_worker_to_settle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    files = LocalChatAttachmentFiles(tmp_path)
+    await files.start(())
+    session_id = _id()
+    attachment_id = _id()
+    info = await files.store_upload(
+        session_id=session_id,
+        attachment_id=attachment_id,
+        filename="note.txt",
+        declared_media_type="text/plain",
+        source=BytesIO(b"hello"),
+    )
+    attachment = _attachment(
+        session_id=session_id,
+        attachment_id=attachment_id,
+        filename="note.txt",
+        kind=info.kind,
+        media_type=info.media_type,
+        byte_size=info.byte_size,
+        extracted_characters=info.extracted_characters,
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    original_materialize = files._materialize_sync
+
+    def blocked_materialize(attachments):
+        entered.set()
+        release.wait()
+        return original_materialize(attachments)
+
+    monkeypatch.setattr(files, "_materialize_sync", blocked_materialize)
+    materialize = asyncio.create_task(files.materialize((attachment,)))
+    assert await asyncio.wait_for(asyncio.to_thread(entered.wait), timeout=1)
+
+    materialize.cancel()
+    await asyncio.sleep(0.05)
+    assert not materialize.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await materialize

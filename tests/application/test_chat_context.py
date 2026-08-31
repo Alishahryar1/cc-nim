@@ -240,6 +240,32 @@ def test_compaction_disables_reasoning_for_known_non_reasoning_model():
     assert routed.request.max_tokens == 4_096
 
 
+def test_compaction_rejects_images_for_known_text_only_model():
+    builder = ChatContextBuilder(
+        FakeRuntime(
+            configured=ProviderModelInfo(
+                "model",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            )
+        )
+    )
+    image = ContentBlockImage(
+        type="image",
+        source={"type": "base64", "media_type": "image/png", "data": "cG5n"},
+    )
+
+    try:
+        builder.prepare_summary(
+            model_ref="groq/model",
+            source=[image],
+            output_tokens=4_096,
+        )
+    except ChatValidationError as exc:
+        assert "does not support images" in str(exc)
+    else:
+        raise AssertionError("Known text-only model accepted an image for compaction")
+
+
 def test_unknown_context_disables_auto_compaction_without_inventing_a_limit():
     builder = ChatContextBuilder(
         FakeRuntime(configured=ProviderModelInfo("model", context_window_tokens=None))

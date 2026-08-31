@@ -66,6 +66,10 @@ class ChatStorePort(Protocol):
 
     async def get_transcript(self, session_id: str) -> ChatTranscript: ...
 
+    async def get_detail_snapshot(
+        self, session_id: str
+    ) -> tuple[ChatTranscript, tuple[ChatAttachment, ...]]: ...
+
     async def list_staged_attachments(
         self, session_id: str
     ) -> tuple[ChatAttachment, ...]: ...

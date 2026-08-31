@@ -193,6 +193,13 @@ class ChatContextBuilder:
         output_tokens: int,
     ) -> RoutedMessagesRequest:
         option = self.model(model_ref)
+        self._validate_image_capability(
+            option,
+            has_images=(
+                isinstance(source, list)
+                and any(isinstance(block, ContentBlockImage) for block in source)
+            ),
+        )
         reasoning = (
             ReasoningPolicy.off()
             if option.supports_reasoning is False
@@ -412,10 +419,21 @@ class ChatContextBuilder:
         option: ChatModelOption,
         materials: tuple[ChatAttachmentMaterial, ...],
     ) -> None:
+        ChatContextBuilder._validate_image_capability(
+            option,
+            has_images=any(
+                isinstance(material, ChatImageAttachment) for material in materials
+            ),
+        )
+
+    @staticmethod
+    def _validate_image_capability(
+        option: ChatModelOption, *, has_images: bool
+    ) -> None:
         if (
-            option.input_modalities is not None
+            has_images
+            and option.input_modalities is not None
             and ModelInputModality.IMAGE not in option.input_modalities
-            and any(isinstance(material, ChatImageAttachment) for material in materials)
         ):
             raise ChatUnsupportedAttachmentError(
                 "This model does not support images. Choose an image-capable model."

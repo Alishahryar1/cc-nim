@@ -1,9 +1,11 @@
 """Generated local file storage for Chat Sessions attachments."""
 
+import asyncio
 import os
 import shutil
 import uuid
 import zipfile
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -83,7 +85,7 @@ class LocalChatAttachmentFiles:
         self._temp = chat_state_dir / _TEMP_DIRNAME
 
     async def start(self, owners: tuple[tuple[str, str], ...]) -> None:
-        await anyio.to_thread.run_sync(self._start_sync, owners)
+        await _run_file_operation(partial(self._start_sync, owners))
 
     async def store_upload(
         self,
@@ -94,7 +96,7 @@ class LocalChatAttachmentFiles:
         declared_media_type: str | None,
         source: BinaryIO,
     ) -> ChatAttachmentFileInfo:
-        return await anyio.to_thread.run_sync(
+        return await _run_file_operation(
             partial(
                 self._store_upload_sync,
                 session_id=session_id,
@@ -102,24 +104,29 @@ class LocalChatAttachmentFiles:
                 filename=filename,
                 declared_media_type=declared_media_type,
                 source=source,
-            )
+            ),
+            cleanup_on_cancel=partial(
+                self._discard_upload_sync,
+                session_id=session_id,
+                attachment_id=attachment_id,
+            ),
         )
 
     async def materialize(
         self, attachments: tuple[ChatAttachment, ...]
     ) -> tuple[ChatAttachmentMaterial, ...]:
-        return await anyio.to_thread.run_sync(self._materialize_sync, attachments)
+        return await _run_file_operation(partial(self._materialize_sync, attachments))
 
     async def content(self, attachment: ChatAttachment) -> ChatAttachmentContent:
-        return await anyio.to_thread.run_sync(self._content_sync, attachment)
+        return await _run_file_operation(partial(self._content_sync, attachment))
 
     async def available_ids(
         self, attachments: tuple[ChatAttachment, ...]
     ) -> frozenset[str]:
-        return await anyio.to_thread.run_sync(self._available_ids_sync, attachments)
+        return await _run_file_operation(partial(self._available_ids_sync, attachments))
 
     async def delete_attachment(self, attachment: ChatAttachment) -> None:
-        await anyio.to_thread.run_sync(
+        await _run_file_operation(
             partial(
                 self._remove_tree,
                 self._attachment_dir(attachment.session_id, attachment.id),
@@ -127,7 +134,7 @@ class LocalChatAttachmentFiles:
         )
 
     async def delete_session(self, session_id: str) -> None:
-        await anyio.to_thread.run_sync(
+        await _run_file_operation(
             partial(self._remove_tree, self._session_dir(session_id))
         )
 
@@ -214,6 +221,10 @@ class LocalChatAttachmentFiles:
                 "The attachment could not be read safely."
             ) from exc
 
+    def _discard_upload_sync(self, *, session_id: str, attachment_id: str) -> None:
+        self._remove_tree(self._temp / attachment_id)
+        self._remove_tree(self._attachment_dir(session_id, attachment_id))
+
     def _materialize_sync(
         self, attachments: tuple[ChatAttachment, ...]
     ) -> tuple[ChatAttachmentMaterial, ...]:
@@ -278,6 +289,40 @@ class LocalChatAttachmentFiles:
     def _remove_tree(path: Path) -> None:
         if path.exists():
             shutil.rmtree(path)
+
+
+async def _run_file_operation[T](
+    operation: Callable[[], T],
+    *,
+    cleanup_on_cancel: Callable[[], None] | None = None,
+) -> T:
+    """Keep file ownership until a worker and any cancellation cleanup settle."""
+
+    task = asyncio.create_task(anyio.to_thread.run_sync(operation))
+    result, cancellation = await _await_file_task(task)
+    if cancellation is not None and cleanup_on_cancel is not None:
+        cleanup = asyncio.create_task(anyio.to_thread.run_sync(cleanup_on_cancel))
+        _ignored, cleanup_cancellation = await _await_file_task(cleanup)
+        cancellation = cancellation or cleanup_cancellation
+    if cancellation is not None:
+        raise cancellation
+    return result
+
+
+async def _await_file_task[T](
+    task: asyncio.Task[T],
+) -> tuple[T, asyncio.CancelledError | None]:
+    current = asyncio.current_task()
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if current is not None and current.cancelling():
+                cancellation = cancellation or exc
+        except Exception:
+            break
+    return task.result(), cancellation
 
 
 def _copy_bounded(source: BinaryIO, target: Path) -> int:

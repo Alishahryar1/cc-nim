@@ -634,6 +634,42 @@ def test_delayed_attachment_upload_cannot_enter_a_new_chat(
     expect(page.get_by_text("old-session.txt", exact=True)).to_have_count(0)
 
 
+def test_estimate_for_cross_tab_removed_attachment_cannot_overwrite_composer(
+    page: Page,
+    admin_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _new_chat(page, admin_base_url)
+    _select_model(page, "open_router/vendor/model-b")
+    attachment = tmp_path / "large-notes.txt"
+    attachment.write_text("word " * 10_000, encoding="utf-8")
+    page.get_by_label("Attach files").set_input_files(attachment)
+    expect(page.locator(".chat-staged-attachments")).to_contain_text("large-notes.txt")
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("[delay-first-estimate] summarize this")
+    page.wait_for_timeout(350)
+
+    other = page.context.new_page()
+    try:
+        other.goto(page.url)
+        expect(other.locator(".chat-staged-attachments")).to_contain_text(
+            "large-notes.txt"
+        )
+        other.get_by_role("button", name="Remove large-notes.txt").click()
+        expect(other.locator(".chat-staged-attachments")).to_be_hidden()
+
+        page.bring_to_front()
+        page.evaluate("window.dispatchEvent(new Event('focus'))")
+        expect(page.locator(".chat-staged-attachments")).to_be_hidden()
+        page.wait_for_timeout(800)
+        expect(page.get_by_role("button", name="Send")).to_be_enabled()
+        expect(page.locator("#chatContextMeter")).to_have_text(
+            re.compile(r"^Context: 0%")
+        )
+    finally:
+        other.close()
+
+
 def test_delayed_send_preflight_cannot_restore_draft_after_navigation(
     page: Page,
     admin_base_url: str,

@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
-from starlette.datastructures import UploadFile
+from starlette.datastructures import FormData, UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
 from free_claude_code.application.chat import (
@@ -48,6 +48,14 @@ _MAX_ATTACHMENT_REQUEST_BYTES = (
 
 class _AttachmentBodyTooLarge(MultiPartException):
     """Abort multipart parsing while preserving parser-owned file cleanup."""
+
+
+class _AttachmentMultiPartParser(MultiPartParser):
+    """Expose deterministic cleanup missing from Starlette's parser API."""
+
+    def close_pending_files(self) -> None:
+        for file in self._files_to_close_on_error:
+            file.close()
 
 
 class ChatSessionUpdatePayload(BaseModel):
@@ -181,20 +189,7 @@ async def upload_chat_attachment(
             declared_bytes = 0
         if declared_bytes > _MAX_ATTACHMENT_REQUEST_BYTES:
             raise ChatPayloadTooLargeError("Attachments may be at most 10 MiB each.")
-    try:
-        form = await MultiPartParser(
-            headers=request.headers,
-            stream=_bounded_attachment_body(request),
-            max_files=1,
-            max_fields=0,
-            max_part_size=_ATTACHMENT_MULTIPART_OVERHEAD_BYTES,
-        ).parse()
-    except _AttachmentBodyTooLarge as exc:
-        raise ChatPayloadTooLargeError(
-            "Attachments may be at most 10 MiB each."
-        ) from exc
-    except MultiPartException as exc:
-        raise ChatValidationError("Upload exactly one attachment file.") from exc
+    form = await _parse_attachment_form(request)
     try:
         items = form.multi_items()
         if (
@@ -215,6 +210,32 @@ async def upload_chat_attachment(
     finally:
         await form.close()
     return _attachment_payload(attachment)
+
+
+async def _parse_attachment_form(request: Request) -> FormData:
+    content_type = request.headers.get("content-type", "").partition(";")[0]
+    if content_type.strip().casefold() != "multipart/form-data":
+        raise ChatValidationError("Upload exactly one attachment file.")
+    parser = _AttachmentMultiPartParser(
+        headers=request.headers,
+        stream=_bounded_attachment_body(request),
+        max_files=1,
+        max_fields=0,
+        max_part_size=_ATTACHMENT_MULTIPART_OVERHEAD_BYTES,
+    )
+    try:
+        return await parser.parse()
+    except _AttachmentBodyTooLarge as exc:
+        parser.close_pending_files()
+        raise ChatPayloadTooLargeError(
+            "Attachments may be at most 10 MiB each."
+        ) from exc
+    except (MultiPartException, ValueError) as exc:
+        parser.close_pending_files()
+        raise ChatValidationError("Upload exactly one attachment file.") from exc
+    except BaseException:
+        parser.close_pending_files()
+        raise
 
 
 async def _bounded_attachment_body(request: Request) -> AsyncGenerator[bytes]:

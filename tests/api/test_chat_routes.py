@@ -476,6 +476,30 @@ def test_chat_attachment_upload_requires_exactly_one_file():
     assert response.json()["detail"] == "Upload exactly one attachment file."
 
 
+@pytest.mark.parametrize(
+    ("content", "headers"),
+    [
+        (b"not multipart", {}),
+        (
+            b"not a multipart body",
+            {"Content-Type": "multipart/form-data; boundary=fcc-invalid"},
+        ),
+    ],
+)
+def test_chat_attachment_upload_maps_malformed_multipart_to_validation_error(
+    content: bytes,
+    headers: dict[str, str],
+):
+    response = _client(StubChat()).post(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments",
+        content=content,
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Upload exactly one attachment file."
+
+
 def test_chat_attachment_upload_rejects_file_under_an_extra_field_name():
     response = _client(StubChat()).post(
         f"/admin/api/chat/sessions/{SESSION_ID}/attachments",

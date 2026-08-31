@@ -263,19 +263,27 @@ class SQLiteChatStore:
         def operation(connection: sqlite3.Connection) -> ChatTranscript:
             connection.execute("BEGIN")
             try:
-                session = self._get_session(connection, session_id)
-                rows = connection.execute(
-                    "SELECT * FROM chat_turns WHERE session_id = ? ORDER BY sequence",
-                    (session_id,),
-                ).fetchall()
-                turns = tuple(self._turn_from_row(connection, row) for row in rows)
-                transcript = ChatTranscript(
-                    session=session,
-                    turns=turns,
-                    compaction=self._get_compaction(connection, session_id),
-                )
+                transcript = self._read_transcript(connection, session_id)
                 connection.commit()
                 return transcript
+            except BaseException:
+                connection.rollback()
+                raise
+
+        return await self._run(operation)
+
+    async def get_detail_snapshot(
+        self, session_id: str
+    ) -> tuple[ChatTranscript, tuple[ChatAttachment, ...]]:
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> tuple[ChatTranscript, tuple[ChatAttachment, ...]]:
+            connection.execute("BEGIN")
+            try:
+                transcript = self._read_transcript(connection, session_id)
+                staged = self._read_staged_attachments(connection, session_id)
+                connection.commit()
+                return transcript, staged
             except BaseException:
                 connection.rollback()
                 raise
@@ -287,15 +295,7 @@ class SQLiteChatStore:
     ) -> tuple[ChatAttachment, ...]:
         def operation(connection: sqlite3.Connection) -> tuple[ChatAttachment, ...]:
             self._get_session(connection, session_id)
-            rows = connection.execute(
-                """
-                SELECT * FROM chat_attachments
-                WHERE session_id = ? AND turn_id IS NULL
-                ORDER BY position, id
-                """,
-                (session_id,),
-            ).fetchall()
-            return tuple(_attachment_from_row(row) for row in rows)
+            return self._read_staged_attachments(connection, session_id)
 
         return await self._run(operation)
 
@@ -1073,6 +1073,35 @@ class SQLiteChatStore:
         if row is None:
             raise ChatNotFoundError("Chat session not found.")
         return _session_from_row(row)
+
+    def _read_transcript(
+        self, connection: sqlite3.Connection, session_id: str
+    ) -> ChatTranscript:
+        session = self._get_session(connection, session_id)
+        rows = connection.execute(
+            "SELECT * FROM chat_turns WHERE session_id = ? ORDER BY sequence",
+            (session_id,),
+        ).fetchall()
+        turns = tuple(self._turn_from_row(connection, row) for row in rows)
+        return ChatTranscript(
+            session=session,
+            turns=turns,
+            compaction=self._get_compaction(connection, session_id),
+        )
+
+    @staticmethod
+    def _read_staged_attachments(
+        connection: sqlite3.Connection, session_id: str
+    ) -> tuple[ChatAttachment, ...]:
+        rows = connection.execute(
+            """
+            SELECT * FROM chat_attachments
+            WHERE session_id = ? AND turn_id IS NULL
+            ORDER BY position, id
+            """,
+            (session_id,),
+        ).fetchall()
+        return tuple(_attachment_from_row(row) for row in rows)
 
     @staticmethod
     def _latest_visible_generation_row(

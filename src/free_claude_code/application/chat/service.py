@@ -268,8 +268,7 @@ class ChatService:
         session_id = _canonical_uuid(session_id, "session")
         async with self._active_lock:
             active_operation = session_id in self._active
-        transcript = await self._store.get_transcript(session_id)
-        staged = await self._store.list_staged_attachments(session_id)
+            transcript, staged = await self._store.get_detail_snapshot(session_id)
         has_more = len(transcript.turns) > _TURN_PAGE_LIMIT
         display_turns = transcript.turns[-_TURN_PAGE_LIMIT:]
         check = (

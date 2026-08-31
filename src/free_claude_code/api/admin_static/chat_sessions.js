@@ -564,6 +564,16 @@
     );
   }
 
+  function stagedAttachmentIds() {
+    return state.stagedAttachments.map((attachment) => attachment.id);
+  }
+
+  function sameIdSequence(left, right) {
+    return (
+      left.length === right.length && left.every((value, index) => value === right[index])
+    );
+  }
+
   async function refreshStagedAttachments({ signal, throwErrors = false } = {}) {
     if (!chatIsVisible() || !state.session) return;
     const sessionId = state.session.id;
@@ -574,13 +584,24 @@
       });
       if (state.session?.id !== sessionId) return null;
       if (requestVersion === state.stagedRequestVersion) {
-        state.stagedAttachments = detail.staged_attachments || [];
+        const attachments = detail.staged_attachments || [];
+        const attachmentsChanged = !sameIdSequence(
+          stagedAttachmentIds(),
+          attachments.map((item) => item.id),
+        );
+        if (attachmentsChanged) {
+          invalidateEstimate();
+        }
+        state.stagedAttachments = attachments;
         state.context = detail.context;
         state.contextError = detail.context_error || "";
         renderStagedAttachments();
         updateContextMeter();
         refreshComposerState();
-        if (!state.operation && !state.context && !state.contextError) {
+        if (
+          !state.operation &&
+          (attachmentsChanged || (!state.context && !state.contextError))
+        ) {
           scheduleEstimate(true);
         }
       }
@@ -1051,6 +1072,7 @@
     const textarea = document.getElementById("chatComposer");
     const revision = session.revision;
     const draft = textarea?.value || "";
+    const attachmentIds = stagedAttachmentIds();
     try {
       const context = await state.api(
         `/admin/api/chat/sessions/${session.id}/estimate`,
@@ -1058,7 +1080,7 @@
           method: "POST",
           body: JSON.stringify({
             draft,
-            attachment_ids: state.stagedAttachments.map((item) => item.id),
+            attachment_ids: attachmentIds,
           }),
         },
       );
@@ -1066,6 +1088,7 @@
         state.session?.id !== session.id ||
         state.session.revision !== revision ||
         state.draft !== draft ||
+        !sameIdSequence(stagedAttachmentIds(), attachmentIds) ||
         state.operation ||
         version !== state.estimateVersion
       )
@@ -1079,6 +1102,7 @@
         state.session?.id !== session.id ||
         state.session.revision !== revision ||
         state.draft !== draft ||
+        !sameIdSequence(stagedAttachmentIds(), attachmentIds) ||
         state.operation ||
         version !== state.estimateVersion
       )
