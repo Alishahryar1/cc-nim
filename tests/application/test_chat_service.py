@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 from collections.abc import AsyncIterator
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -15,10 +16,15 @@ from free_claude_code.application.chat import (
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import ProviderPort, RequestRuntimeLease
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import MessagesRequest
+from free_claude_code.core.anthropic import (
+    ContentBlockImage,
+    ContentBlockText,
+    MessagesRequest,
+)
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.runtime.chat_attachments import LocalChatAttachmentFiles
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
 
 
@@ -275,7 +281,7 @@ async def _service(
 ) -> tuple[ChatService, FakeRuntime, SQLiteChatStore]:
     runtime = FakeRuntime(provider)
     store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
-    service = ChatService(runtime, store)
+    service = ChatService(runtime, store, LocalChatAttachmentFiles(tmp_path))
     await service.start()
     return service, runtime, store
 
@@ -310,6 +316,159 @@ async def test_send_streams_and_persists_interleaved_segments(tmp_path: Path):
         assert generation.actual_model == "groq/model"
         assert runtime.leases[0].released == 1
         assert provider.closed == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_attachment_only_send_commits_exact_files_and_builds_portable_blocks(
+    tmp_path: Path,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        image = await service.stage_attachment(
+            session.id,
+            filename="diagram.png",
+            declared_media_type="image/png",
+            source=BytesIO(b"\x89PNG\r\n\x1a\nfixture"),
+        )
+        document = await service.stage_attachment(
+            session.id,
+            filename="notes.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"portable facts"),
+        )
+
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="eb17d021-eb4b-43d3-bd25-d8b26b30ea75",
+            text="",
+            attachment_ids=(document.id, image.id),
+        )
+        await _drain(stream)
+
+        transcript = await store.get_transcript(session.id)
+        assert [item.id for item in transcript.turns[0].attachments] == [
+            document.id,
+            image.id,
+        ]
+        assert await store.list_staged_attachments(session.id) == ()
+        content = provider.requests[-1].messages[-1].content
+        assert isinstance(content, list)
+        assert isinstance(content[0], ContentBlockText)
+        assert "portable facts" in content[0].text
+        assert isinstance(content[1], ContentBlockImage)
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_upload_remains_available_while_provider_response_is_streaming(
+    tmp_path: Path,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        operation_id = "1c43c395-f3ed-41d0-968b-847049786cea"
+        stream = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="keep streaming",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+
+        staged = await asyncio.wait_for(
+            service.stage_attachment(
+                session.id,
+                filename="next.txt",
+                declared_media_type="text/plain",
+                source=BytesIO(b"next turn"),
+            ),
+            timeout=1,
+        )
+
+        assert await service.stop(session.id, operation_id=operation_id)
+        await _drain(stream)
+        assert [
+            attachment.id
+            for attachment in await store.list_staged_attachments(session.id)
+        ] == [staged.id]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_reuses_committed_attachment_without_restaging(
+    tmp_path: Path,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        attachment = await service.stage_attachment(
+            session.id,
+            filename="facts.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"durable facts"),
+        )
+        initial = await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="50d9afe4-71b1-40ea-9c2c-77ffce090d93",
+            text="Use this",
+            attachment_ids=(attachment.id,),
+        )
+        await _drain(initial)
+        session = await service.get_session(session.id)
+
+        regenerated = await service.regenerate(
+            session.id,
+            expected_revision=session.revision,
+            operation_id="33f0c77a-dcba-40d1-ac79-87c48b4e91df",
+        )
+        await _drain(regenerated)
+
+        content = provider.requests[-1].messages[-1].content
+        assert isinstance(content, list)
+        assert isinstance(content[0], ContentBlockText)
+        assert content[0].text == "Use this"
+        assert isinstance(content[1], ContentBlockText)
+        assert "durable facts" in content[1].text
+        assert await store.list_staged_attachments(session.id) == ()
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_attachment_metadata_commit_removes_published_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+
+        async def fail_insert(*args, **kwargs):
+            del args, kwargs
+            raise ChatUnavailableError("metadata write failed")
+
+        monkeypatch.setattr(store, "add_staged_attachment", fail_insert)
+        with pytest.raises(ChatUnavailableError, match="metadata write failed"):
+            await service.stage_attachment(
+                session.id,
+                filename="orphan.txt",
+                declared_media_type="text/plain",
+                source=BytesIO(b"cleanup"),
+            )
+
+        session_dir = tmp_path / "attachments" / session.id
+        assert not session_dir.exists() or not any(session_dir.iterdir())
     finally:
         await service.close()
 
@@ -1470,7 +1629,7 @@ async def test_send_auto_compacts_without_removing_original_turns(tmp_path: Path
     provider = FakeChatProvider()
     runtime = FakeRuntime(provider, context_window_tokens=40_000)
     store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
-    service = ChatService(runtime, store)
+    service = ChatService(runtime, store, LocalChatAttachmentFiles(tmp_path))
     await service.start()
     try:
         session = await service.create_session()
@@ -1516,7 +1675,7 @@ async def test_stop_during_auto_compaction_commit_keeps_checkpoint_without_new_t
     provider = FakeChatProvider()
     runtime = FakeRuntime(provider, context_window_tokens=40_000)
     store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
-    service = ChatService(runtime, store)
+    service = ChatService(runtime, store, LocalChatAttachmentFiles(tmp_path))
     await service.start()
     blocker: sqlite3.Connection | None = None
     try:
@@ -1584,7 +1743,11 @@ async def test_storage_start_failure_disables_only_chat(tmp_path: Path):
     database_path = tmp_path / "chat.db"
     database_path.mkdir()
     store = SQLiteChatStore(database_path, tmp_path / "chat.lock")
-    service = ChatService(FakeRuntime(FakeChatProvider()), store)
+    service = ChatService(
+        FakeRuntime(FakeChatProvider()),
+        store,
+        LocalChatAttachmentFiles(tmp_path),
+    )
 
     await service.start()
     try:

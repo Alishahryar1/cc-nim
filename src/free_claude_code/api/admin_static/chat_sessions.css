@@ -20,6 +20,7 @@
 .chat-header-row,
 .chat-controls,
 .chat-composer-actions,
+.chat-composer-primary-actions,
 .chat-dialog-actions,
 .chat-message-label {
   display: flex;
@@ -29,6 +30,7 @@
 .chat-library-header,
 .chat-header-row,
 .chat-composer-actions,
+.chat-composer-primary-actions,
 .chat-message-label {
   justify-content: space-between;
 }
@@ -402,9 +404,112 @@
   outline: none;
 }
 
+.chat-file-input {
+  display: none;
+}
+
+.chat-staged-attachments,
+.chat-turn-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chat-staged-attachments {
+  margin-bottom: 8px;
+}
+
+.chat-turn-attachments {
+  margin-top: 10px;
+}
+
+.chat-attachment-card,
+.chat-turn-attachment {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(280px, 100%);
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: 6px 8px;
+  color: var(--text);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.chat-turn-attachment:hover {
+  border-color: var(--accent-border);
+}
+
+.chat-turn-attachment[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.chat-attachment-thumbnail,
+.chat-attachment-type {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+}
+
+.chat-attachment-thumbnail {
+  object-fit: cover;
+}
+
+.chat-attachment-type {
+  display: grid;
+  place-items: center;
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.chat-attachment-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-attachment-remove,
+.chat-attach-button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.chat-attachment-remove {
+  flex: 0 0 auto;
+  padding: 4px;
+  font-size: 11px;
+}
+
+.chat-attachment-remove:hover,
+.chat-attach-button:hover {
+  color: var(--text);
+}
+
+.chat-attach-button {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+}
+
 .chat-composer-actions {
   gap: 12px;
   margin-top: 4px;
+}
+
+.chat-composer-primary-actions {
+  min-width: 0;
+  gap: 10px;
 }
 
 .chat-composer-status {

@@ -12,10 +12,16 @@ import anyio.to_thread
 
 from free_claude_code.application.chat.models import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
+    MAX_CHAT_ATTACHMENTS_COMBINED_BYTES,
+    MAX_CHAT_ATTACHMENTS_PER_TURN,
+    ChatAttachment,
+    ChatAttachmentFileInfo,
+    ChatAttachmentKind,
     ChatCompaction,
     ChatConflictError,
     ChatGeneration,
     ChatNotFoundError,
+    ChatPayloadTooLargeError,
     ChatPreferences,
     ChatReasoning,
     ChatSegment,
@@ -32,7 +38,7 @@ from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 T = TypeVar("T")
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _BUSY_TIMEOUT_MS = 5_000
 _NEW_CHAT_TITLE = "New chat"
 
@@ -276,6 +282,140 @@ class SQLiteChatStore:
 
         return await self._run(operation)
 
+    async def list_staged_attachments(
+        self, session_id: str
+    ) -> tuple[ChatAttachment, ...]:
+        def operation(connection: sqlite3.Connection) -> tuple[ChatAttachment, ...]:
+            self._get_session(connection, session_id)
+            rows = connection.execute(
+                """
+                SELECT * FROM chat_attachments
+                WHERE session_id = ? AND turn_id IS NULL
+                ORDER BY position, id
+                """,
+                (session_id,),
+            ).fetchall()
+            return tuple(_attachment_from_row(row) for row in rows)
+
+        return await self._run(operation)
+
+    async def add_staged_attachment(
+        self,
+        session_id: str,
+        *,
+        attachment_id: str,
+        filename: str,
+        file_info: ChatAttachmentFileInfo,
+    ) -> ChatAttachment:
+        def operation(connection: sqlite3.Connection) -> ChatAttachment:
+            connection.execute("BEGIN IMMEDIATE")
+            self._get_session(connection, session_id)
+            totals = connection.execute(
+                """
+                SELECT COUNT(*) AS attachment_count,
+                       COALESCE(SUM(byte_size), 0) AS total_bytes,
+                       COALESCE(MAX(position), -1) + 1 AS next_position
+                FROM chat_attachments
+                WHERE session_id = ? AND turn_id IS NULL
+                """,
+                (session_id,),
+            ).fetchone()
+            if totals is None:
+                raise ChatUnavailableError("Could not inspect staged attachments.")
+            if _row_int(totals, "attachment_count") >= MAX_CHAT_ATTACHMENTS_PER_TURN:
+                raise ChatPayloadTooLargeError(
+                    "A message may contain at most five attachments."
+                )
+            if (
+                _row_int(totals, "total_bytes") + file_info.byte_size
+                > MAX_CHAT_ATTACHMENTS_COMBINED_BYTES
+            ):
+                raise ChatPayloadTooLargeError(
+                    "Attachments for one message may total at most 25 MiB."
+                )
+            now = _now_ms()
+            connection.execute(
+                """
+                INSERT INTO chat_attachments (
+                    id, session_id, turn_id, position, filename, kind, media_type,
+                    byte_size, extracted_characters, created_at
+                ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    attachment_id,
+                    session_id,
+                    _row_int(totals, "next_position"),
+                    filename,
+                    file_info.kind.value,
+                    file_info.media_type,
+                    file_info.byte_size,
+                    file_info.extracted_characters,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM chat_attachments WHERE id = ?", (attachment_id,)
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise ChatUnavailableError("Could not persist the attachment.")
+            attachment = _attachment_from_row(row)
+            connection.commit()
+            return attachment
+
+        return await self._run(operation)
+
+    async def remove_staged_attachment(
+        self, session_id: str, attachment_id: str
+    ) -> ChatAttachment:
+        def operation(connection: sqlite3.Connection) -> ChatAttachment:
+            connection.execute("BEGIN IMMEDIATE")
+            self._get_session(connection, session_id)
+            row = connection.execute(
+                "SELECT * FROM chat_attachments WHERE id = ? AND session_id = ?",
+                (attachment_id, session_id),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise ChatNotFoundError("Chat attachment not found.")
+            attachment = _attachment_from_row(row)
+            if attachment.turn_id is not None:
+                connection.rollback()
+                raise ChatConflictError("Sent attachments cannot be removed.")
+            connection.execute(
+                "DELETE FROM chat_attachments WHERE id = ?", (attachment_id,)
+            )
+            connection.commit()
+            return attachment
+
+        return await self._run(operation)
+
+    async def get_attachment(
+        self, session_id: str, attachment_id: str
+    ) -> ChatAttachment:
+        def operation(connection: sqlite3.Connection) -> ChatAttachment:
+            self._get_session(connection, session_id)
+            row = connection.execute(
+                "SELECT * FROM chat_attachments WHERE id = ? AND session_id = ?",
+                (attachment_id, session_id),
+            ).fetchone()
+            if row is None:
+                raise ChatNotFoundError("Chat attachment not found.")
+            return _attachment_from_row(row)
+
+        return await self._run(operation)
+
+    async def attachment_owners(self) -> tuple[tuple[str, str], ...]:
+        def operation(connection: sqlite3.Connection) -> tuple[tuple[str, str], ...]:
+            rows = connection.execute(
+                "SELECT session_id, id FROM chat_attachments ORDER BY session_id, id"
+            ).fetchall()
+            return tuple(
+                (_row_str(row, "session_id"), _row_str(row, "id")) for row in rows
+            )
+
+        return await self._run(operation)
+
     async def get_turn_page(
         self,
         session_id: str,
@@ -348,11 +488,17 @@ class SQLiteChatStore:
         requested_model: str,
         reasoning: ChatReasoning,
         effective_output_limit: int,
+        attachment_ids: tuple[str, ...] = (),
     ) -> ChatTurn:
         def operation(connection: sqlite3.Connection) -> ChatTurn:
             connection.execute("BEGIN IMMEDIATE")
             session = self._get_session(connection, session_id)
             _expect_revision(session, expected_revision)
+            attachments = _selected_staged_attachments(
+                connection,
+                session_id=session_id,
+                attachment_ids=attachment_ids,
+            )
             row = connection.execute(
                 "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence "
                 "FROM chat_turns WHERE session_id = ?",
@@ -370,7 +516,10 @@ class SQLiteChatStore:
             now = _now_ms()
             title = session.title
             if _row_int(auto_title_row, "auto_title_pending") == 1:
-                title = _title_from_text(user_text)
+                title_source = (
+                    user_text if user_text.strip() else attachments[0].filename
+                )
+                title = _title_from_text(title_source)
             connection.execute(
                 """
                 INSERT INTO chat_turns (
@@ -379,6 +528,20 @@ class SQLiteChatStore:
                 """,
                 (turn_id, session_id, operation_id, sequence, user_text, now),
             )
+            for position, attachment in enumerate(attachments):
+                cursor = connection.execute(
+                    """
+                    UPDATE chat_attachments
+                    SET turn_id = ?, position = ?
+                    WHERE id = ? AND session_id = ? AND turn_id IS NULL
+                    """,
+                    (turn_id, position, attachment.id, session_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.rollback()
+                    raise ChatConflictError(
+                        "An attachment changed in another tab. Refresh it."
+                    )
             connection.execute(
                 """
                 INSERT INTO chat_generations (
@@ -838,12 +1001,22 @@ class SQLiteChatStore:
                     """,
                     (DEFAULT_CHAT_SYSTEM_PROMPT,),
                 )
-                connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+                connection.execute("PRAGMA user_version = 1")
                 connection.commit()
+                version_value = 1
             except BaseException:
                 connection.rollback()
                 raise
-        elif version_value != _SCHEMA_VERSION:
+        if version_value == 1:
+            try:
+                connection.executescript(_SCHEMA_V2)
+                connection.execute("PRAGMA user_version = 2")
+                connection.commit()
+                version_value = 2
+            except BaseException:
+                connection.rollback()
+                raise
+        if version_value != _SCHEMA_VERSION:
             raise ChatUnavailableError("Chat database schema is unsupported.")
 
         now = _now_ms()
@@ -946,7 +1119,21 @@ class SQLiteChatStore:
             user_text=_row_str(row, "user_text"),
             created_at=_row_int(row, "created_at"),
             generation=self._generation_from_row(connection, generation_row),
+            attachments=self._attachments_for_turn(connection, _row_str(row, "id")),
         )
+
+    @staticmethod
+    def _attachments_for_turn(
+        connection: sqlite3.Connection, turn_id: str
+    ) -> tuple[ChatAttachment, ...]:
+        rows = connection.execute(
+            """
+            SELECT * FROM chat_attachments
+            WHERE turn_id = ? ORDER BY position, id
+            """,
+            (turn_id,),
+        ).fetchall()
+        return tuple(_attachment_from_row(row) for row in rows)
 
     def _generation_by_id(
         self, connection: sqlite3.Connection, generation_id: str
@@ -1053,6 +1240,62 @@ def _session_summary_from_row(row: sqlite3.Row) -> ChatSessionSummary:
         created_at=_row_int(row, "created_at"),
         updated_at=_row_int(row, "updated_at"),
     )
+
+
+def _attachment_from_row(row: sqlite3.Row) -> ChatAttachment:
+    return ChatAttachment(
+        id=_row_str(row, "id"),
+        session_id=_row_str(row, "session_id"),
+        turn_id=_row_optional_str(row, "turn_id"),
+        position=_row_int(row, "position"),
+        filename=_row_str(row, "filename"),
+        kind=ChatAttachmentKind(_row_str(row, "kind")),
+        media_type=_row_str(row, "media_type"),
+        byte_size=_row_int(row, "byte_size"),
+        extracted_characters=_row_optional_int(row, "extracted_characters"),
+        created_at=_row_int(row, "created_at"),
+    )
+
+
+def _selected_staged_attachments(
+    connection: sqlite3.Connection,
+    *,
+    session_id: str,
+    attachment_ids: tuple[str, ...],
+) -> tuple[ChatAttachment, ...]:
+    if len(attachment_ids) > MAX_CHAT_ATTACHMENTS_PER_TURN:
+        raise ChatPayloadTooLargeError(
+            "A message may contain at most five attachments."
+        )
+    if len(set(attachment_ids)) != len(attachment_ids):
+        raise ChatConflictError("An attachment was selected more than once.")
+    if not attachment_ids:
+        return ()
+    placeholders = ",".join("?" for _ in attachment_ids)
+    rows = connection.execute(
+        f"""
+        SELECT * FROM chat_attachments
+        WHERE session_id = ? AND turn_id IS NULL AND id IN ({placeholders})
+        """,
+        (session_id, *attachment_ids),
+    ).fetchall()
+    by_id = {
+        attachment.id: attachment
+        for attachment in (_attachment_from_row(row) for row in rows)
+    }
+    try:
+        selected = tuple(by_id[attachment_id] for attachment_id in attachment_ids)
+    except KeyError as exc:
+        raise ChatConflictError(
+            "An attachment changed in another tab. Refresh it."
+        ) from exc
+    if sum(attachment.byte_size for attachment in selected) > (
+        MAX_CHAT_ATTACHMENTS_COMBINED_BYTES
+    ):
+        raise ChatPayloadTooLargeError(
+            "Attachments for one message may total at most 25 MiB."
+        )
+    return selected
 
 
 def _expect_revision(session: ChatSession, expected: int) -> None:
@@ -1184,4 +1427,30 @@ CREATE TABLE IF NOT EXISTS chat_compactions (
     actual_model TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
+"""
+
+_SCHEMA_V2 = """
+BEGIN EXCLUSIVE;
+CREATE TABLE chat_attachments (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    turn_id TEXT REFERENCES chat_turns(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL CHECK (position >= 0),
+    filename TEXT NOT NULL CHECK (length(trim(filename)) > 0),
+    kind TEXT NOT NULL CHECK (kind IN ('image', 'text', 'markdown', 'pdf', 'docx')),
+    media_type TEXT NOT NULL CHECK (length(trim(media_type)) > 0),
+    byte_size INTEGER NOT NULL CHECK (byte_size > 0),
+    extracted_characters INTEGER CHECK (extracted_characters >= 0),
+    created_at INTEGER NOT NULL,
+    CHECK (
+        (kind = 'image' AND extracted_characters IS NULL)
+        OR (kind != 'image' AND extracted_characters IS NOT NULL)
+    )
+);
+CREATE UNIQUE INDEX chat_staged_attachment_position_idx
+    ON chat_attachments(session_id, position) WHERE turn_id IS NULL;
+CREATE UNIQUE INDEX chat_turn_attachment_position_idx
+    ON chat_attachments(turn_id, position) WHERE turn_id IS NOT NULL;
+CREATE INDEX chat_attachment_session_idx
+    ON chat_attachments(session_id, turn_id, position);
 """

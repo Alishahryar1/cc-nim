@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from typing import BinaryIO
 
 from loguru import logger
 
@@ -27,15 +28,22 @@ from free_claude_code.core.trace import close_stream_input
 
 from .context import (
     ChatContextBuilder,
+    ChatSummarySource,
     PreparedChatRequest,
     compaction_target_tokens,
 )
 from .models import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
+    MAX_CHAT_ATTACHMENTS_COMBINED_EXTRACTED_CHARACTERS,
+    MAX_CHAT_ATTACHMENTS_PER_TURN,
+    ChatAttachment,
+    ChatAttachmentContent,
+    ChatAttachmentMaterial,
     ChatCompaction,
     ChatConflictError,
     ChatContextEstimate,
     ChatModelOption,
+    ChatPayloadTooLargeError,
     ChatPreferences,
     ChatReasoning,
     ChatSegment,
@@ -50,7 +58,7 @@ from .models import (
     GenerationStatus,
     SegmentKind,
 )
-from .ports import ChatOperationStream, ChatStorePort
+from .ports import ChatAttachmentFilesPort, ChatOperationStream, ChatStorePort
 
 _EVENT_QUEUE_SIZE = 128
 _PERSIST_INTERVAL_SECONDS = 0.25
@@ -131,13 +139,20 @@ class _OperationStream:
 class ChatService:
     """Single owner of Chat session commands and active provider work."""
 
-    def __init__(self, runtime: RequestRuntimePort, store: ChatStorePort) -> None:
+    def __init__(
+        self,
+        runtime: RequestRuntimePort,
+        store: ChatStorePort,
+        attachment_files: ChatAttachmentFilesPort,
+    ) -> None:
         self._runtime = runtime
         self._store = store
+        self._attachment_files = attachment_files
         self._context = ChatContextBuilder(runtime)
         self._active: dict[str, _ActiveOperation] = {}
         self._deleting: set[str] = set()
         self._active_lock = asyncio.Lock()
+        self._attachment_locks: dict[str, asyncio.Lock] = {}
         self._started = False
         self._accepting = False
         self._unavailable_message: str | None = "Chat Sessions is starting."
@@ -147,9 +162,12 @@ class ChatService:
             return
         try:
             await self._store.start()
+            await self._attachment_files.start(await self._store.attachment_owners())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            with contextlib.suppress(Exception):
+                await self._store.close()
             self._unavailable_message = (
                 str(exc)
                 if isinstance(exc, ChatUnavailableError)
@@ -248,30 +266,127 @@ class ChatService:
         session_id = _canonical_uuid(session_id, "session")
         async with self._active_lock:
             active_operation = session_id in self._active
-            transcript = await self._store.get_transcript(session_id)
-            prompt = (await self._store.load_preferences()).system_prompt
-            context: ChatContextEstimate | None
-            context_error: str | None = None
-            try:
-                context = self._context.prepare(
-                    transcript,
-                    system_prompt=prompt,
-                ).estimate
-            except ChatValidationError as exc:
-                context = None
-                context_error = str(exc)
-            has_more = len(transcript.turns) > _TURN_PAGE_LIMIT
-            turns = transcript.turns[-_TURN_PAGE_LIMIT:]
-            next_before = turns[0].sequence if has_more and turns else None
-            return ChatSessionDetail(
-                session=transcript.session,
-                turns=turns,
-                next_before=next_before,
-                compaction=transcript.compaction,
-                context=context,
-                context_error=context_error,
-                active_operation=active_operation,
+        transcript = await self._store.get_transcript(session_id)
+        staged = await self._store.list_staged_attachments(session_id)
+        has_more = len(transcript.turns) > _TURN_PAGE_LIMIT
+        display_turns = transcript.turns[-_TURN_PAGE_LIMIT:]
+        check = (
+            _context_attachments(transcript)
+            + tuple(
+                attachment for turn in display_turns for attachment in turn.attachments
             )
+            + staged
+        )
+        transcript, staged = await self._with_attachment_availability(
+            transcript, staged, check=check
+        )
+        prompt = (await self._store.load_preferences()).system_prompt
+        context: ChatContextEstimate | None
+        context_error: str | None = None
+        try:
+            materials = await self._attachment_files.materialize(
+                _context_attachments(transcript) + staged
+            )
+            context = self._context.prepare(
+                transcript,
+                system_prompt=prompt,
+                attachment_materials=materials,
+                draft="" if staged else None,
+                draft_attachments=staged,
+            ).estimate
+        except ChatValidationError as exc:
+            context = None
+            context_error = str(exc)
+        turns = transcript.turns[-_TURN_PAGE_LIMIT:]
+        next_before = turns[0].sequence if has_more and turns else None
+        return ChatSessionDetail(
+            session=transcript.session,
+            turns=turns,
+            next_before=next_before,
+            compaction=transcript.compaction,
+            context=context,
+            context_error=context_error,
+            active_operation=active_operation,
+            staged_attachments=staged,
+        )
+
+    async def stage_attachment(
+        self,
+        session_id: str,
+        *,
+        filename: str,
+        declared_media_type: str | None,
+        source: BinaryIO,
+    ) -> ChatAttachment:
+        self._require_available()
+        session_id = _canonical_uuid(session_id, "session")
+        filename = _attachment_filename(filename)
+        lock = self._attachment_lock(session_id)
+        async with lock:
+            await self._require_not_deleting(session_id)
+            await self._store.get_session(session_id)
+            attachment_id = str(uuid.uuid4())
+            file_info = await self._attachment_files.store_upload(
+                session_id=session_id,
+                attachment_id=attachment_id,
+                filename=filename,
+                declared_media_type=declared_media_type,
+                source=source,
+            )
+            try:
+                return await self._store.add_staged_attachment(
+                    session_id,
+                    attachment_id=attachment_id,
+                    filename=filename,
+                    file_info=file_info,
+                )
+            except BaseException:
+                placeholder = ChatAttachment(
+                    id=attachment_id,
+                    session_id=session_id,
+                    turn_id=None,
+                    position=0,
+                    filename=filename,
+                    kind=file_info.kind,
+                    media_type=file_info.media_type,
+                    byte_size=file_info.byte_size,
+                    extracted_characters=file_info.extracted_characters,
+                    created_at=0,
+                )
+                with contextlib.suppress(Exception):
+                    await self._attachment_files.delete_attachment(placeholder)
+                raise
+
+    async def remove_attachment(self, session_id: str, attachment_id: str) -> None:
+        self._require_available()
+        session_id = _canonical_uuid(session_id, "session")
+        attachment_id = _canonical_uuid(attachment_id, "attachment")
+        lock = self._attachment_lock(session_id)
+        async with lock:
+            await self._require_not_deleting(session_id)
+            attachment = await self._store.remove_staged_attachment(
+                session_id, attachment_id
+            )
+            try:
+                await self._attachment_files.delete_attachment(attachment)
+            except Exception as exc:
+                logger.warning(
+                    "Chat attachment cleanup deferred: session_id={} attachment_id={} exc_type={}",
+                    session_id,
+                    attachment_id,
+                    type(exc).__name__,
+                )
+
+    async def attachment_content(
+        self, session_id: str, attachment_id: str
+    ) -> ChatAttachmentContent:
+        self._require_available()
+        session_id = _canonical_uuid(session_id, "session")
+        attachment_id = _canonical_uuid(attachment_id, "attachment")
+        lock = self._attachment_lock(session_id)
+        async with lock:
+            attachment = await self._store.get_attachment(session_id, attachment_id)
+            return await self._attachment_files.content(attachment)
 
     async def update_session(
         self,
@@ -317,16 +432,28 @@ class ChatService:
                 raise ChatConflictError("This chat is already being deleted.")
             self._deleting.add(session_id)
             active = self._active.get(session_id)
+        lock = self._attachment_lock(session_id)
         try:
-            current = await self._store.get_session(session_id)
-            _expect_revision(current, expected_revision)
-            if active is not None:
-                await self._cancel_active(active, reason=_CancellationReason.DELETED)
+            async with lock:
                 current = await self._store.get_session(session_id)
-            await self._store.delete_session(
-                session_id,
-                expected_revision=current.revision,
-            )
+                _expect_revision(current, expected_revision)
+                if active is not None:
+                    await self._cancel_active(
+                        active, reason=_CancellationReason.DELETED
+                    )
+                    current = await self._store.get_session(session_id)
+                await self._store.delete_session(
+                    session_id,
+                    expected_revision=current.revision,
+                )
+                try:
+                    await self._attachment_files.delete_session(session_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Chat attachment session cleanup deferred: session_id={} exc_type={}",
+                        session_id,
+                        type(exc).__name__,
+                    )
         finally:
             async with self._active_lock:
                 self._deleting.discard(session_id)
@@ -341,23 +468,42 @@ class ChatService:
         self._require_available()
         if before_sequence is not None and before_sequence <= 0:
             raise ChatValidationError("Turn cursor must be positive.")
-        return await self._store.get_turn_page(
+        turns, next_before, compaction = await self._store.get_turn_page(
             _canonical_uuid(session_id, "session"),
             before_sequence=before_sequence,
             limit=max(1, min(_TURN_PAGE_LIMIT, limit)),
         )
-
-    async def estimate(self, session_id: str, *, draft: str) -> ChatContextEstimate:
-        self._require_available()
-        transcript = await self._store.get_transcript(
-            _canonical_uuid(session_id, "session")
+        return (
+            await self._turns_with_attachment_availability(turns),
+            next_before,
+            compaction,
         )
-        prompt = (await self._store.load_preferences()).system_prompt
-        return self._context.prepare(
-            transcript,
-            system_prompt=prompt,
-            draft=draft,
-        ).estimate
+
+    async def estimate(
+        self,
+        session_id: str,
+        *,
+        draft: str,
+        attachment_ids: tuple[str, ...] = (),
+    ) -> ChatContextEstimate:
+        self._require_available()
+        session_id = _canonical_uuid(session_id, "session")
+        lock = self._attachment_lock(session_id)
+        async with lock:
+            transcript = await self._store.get_transcript(session_id)
+            staged, materials = await self._selected_attachment_materials(
+                session_id,
+                transcript=transcript,
+                attachment_ids=attachment_ids,
+            )
+            prompt = (await self._store.load_preferences()).system_prompt
+            return self._context.prepare(
+                transcript,
+                system_prompt=prompt,
+                draft=draft,
+                attachment_materials=materials,
+                draft_attachments=staged,
+            ).estimate
 
     async def send(
         self,
@@ -366,16 +512,33 @@ class ChatService:
         expected_revision: int,
         operation_id: str,
         text: str,
+        attachment_ids: tuple[str, ...] = (),
     ) -> ChatOperationStream:
         self._require_available()
         session_id = _canonical_uuid(session_id, "session")
         operation_id = _canonical_uuid(operation_id, "operation")
-        if not text.strip():
-            raise ChatValidationError("Write a message before sending.")
-        transcript = await self._store.get_transcript(session_id)
-        _expect_revision(transcript.session, expected_revision)
-        prompt = (await self._store.load_preferences()).system_prompt
-        self._context.prepare(transcript, system_prompt=prompt, draft=text)
+        attachment_ids = _attachment_ids(attachment_ids)
+        if not text.strip() and not attachment_ids:
+            raise ChatValidationError(
+                "Write a message or attach a file before sending."
+            )
+        lock = self._attachment_lock(session_id)
+        async with lock:
+            transcript = await self._store.get_transcript(session_id)
+            _expect_revision(transcript.session, expected_revision)
+            staged, materials = await self._selected_attachment_materials(
+                session_id,
+                transcript=transcript,
+                attachment_ids=attachment_ids,
+            )
+            prompt = (await self._store.load_preferences()).system_prompt
+            self._context.prepare(
+                transcript,
+                system_prompt=prompt,
+                draft=text,
+                attachment_materials=materials,
+                draft_attachments=staged,
+            )
         return await self._start_operation(
             session_id,
             operation_id=operation_id,
@@ -384,6 +547,7 @@ class ChatService:
                 active,
                 expected_revision=expected_revision,
                 text=text,
+                attachment_ids=attachment_ids,
             ),
         )
 
@@ -407,9 +571,13 @@ class ChatService:
         }:
             raise ChatConflictError("Only the latest unfinished answer can be retried.")
         prompt = (await self._store.load_preferences()).system_prompt
+        materials = await self._attachment_files.materialize(
+            _context_attachments(transcript)
+        )
         self._context.prepare(
             transcript,
             system_prompt=prompt,
+            attachment_materials=materials,
             exclude_generation_id=latest.generation.id,
         )
         return await self._start_operation(
@@ -438,9 +606,13 @@ class ChatService:
         if latest.generation.status is not GenerationStatus.COMPLETED:
             raise ChatConflictError("Only the latest completed answer can regenerate.")
         prompt = (await self._store.load_preferences()).system_prompt
+        materials = await self._attachment_files.materialize(
+            _context_attachments(transcript)
+        )
         self._context.prepare(
             transcript,
             system_prompt=prompt,
+            attachment_materials=materials,
             exclude_generation_id=latest.generation.id,
         )
         return await self._start_operation(
@@ -491,6 +663,96 @@ class ChatService:
             raise ChatConflictError("That operation is no longer active.")
         await self._cancel_active(active, reason=_CancellationReason.STOPPED)
         return True
+
+    def _attachment_lock(self, session_id: str) -> asyncio.Lock:
+        lock = self._attachment_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._attachment_locks[session_id] = lock
+        return lock
+
+    async def _require_not_deleting(self, session_id: str) -> None:
+        async with self._active_lock:
+            if session_id in self._deleting:
+                raise ChatConflictError("This chat is being deleted.")
+
+    async def _selected_attachment_materials(
+        self,
+        session_id: str,
+        *,
+        transcript: ChatTranscript,
+        attachment_ids: tuple[str, ...],
+    ) -> tuple[tuple[ChatAttachment, ...], tuple[ChatAttachmentMaterial, ...]]:
+        attachment_ids = _attachment_ids(attachment_ids)
+        staged = await self._store.list_staged_attachments(session_id)
+        staged_by_id = {attachment.id: attachment for attachment in staged}
+        try:
+            selected = tuple(staged_by_id[item] for item in attachment_ids)
+        except KeyError as exc:
+            raise ChatConflictError(
+                "An attachment changed in another tab. Refresh it."
+            ) from exc
+        extracted_characters = sum(
+            attachment.extracted_characters or 0 for attachment in selected
+        )
+        if extracted_characters > MAX_CHAT_ATTACHMENTS_COMBINED_EXTRACTED_CHARACTERS:
+            raise ChatPayloadTooLargeError(
+                "Attachment text for one message may total at most 2,000,000 characters."
+            )
+        materials = await self._attachment_files.materialize(
+            _context_attachments(transcript) + selected
+        )
+        return selected, materials
+
+    async def _with_attachment_availability(
+        self,
+        transcript: ChatTranscript,
+        staged: tuple[ChatAttachment, ...],
+        *,
+        check: tuple[ChatAttachment, ...],
+    ) -> tuple[ChatTranscript, tuple[ChatAttachment, ...]]:
+        checked_ids = {attachment.id for attachment in check}
+        available_ids = await self._attachment_files.available_ids(
+            tuple({attachment.id: attachment for attachment in check}.values())
+        )
+
+        def annotate(attachment: ChatAttachment) -> ChatAttachment:
+            if attachment.id not in checked_ids:
+                return attachment
+            return replace(attachment, available=attachment.id in available_ids)
+
+        turns = tuple(
+            replace(
+                turn,
+                attachments=tuple(annotate(item) for item in turn.attachments),
+            )
+            for turn in transcript.turns
+        )
+        return (
+            replace(transcript, turns=turns),
+            tuple(annotate(item) for item in staged),
+        )
+
+    async def _turns_with_attachment_availability(
+        self, turns: tuple[ChatTurn, ...]
+    ) -> tuple[ChatTurn, ...]:
+        attachments = tuple(
+            attachment for turn in turns for attachment in turn.attachments
+        )
+        available_ids = await self._attachment_files.available_ids(attachments)
+        return tuple(
+            replace(
+                turn,
+                attachments=tuple(
+                    replace(
+                        attachment,
+                        available=attachment.id in available_ids,
+                    )
+                    for attachment in turn.attachments
+                ),
+            )
+            for turn in turns
+        )
 
     async def _start_operation(
         self,
@@ -551,6 +813,7 @@ class ChatService:
         *,
         expected_revision: int,
         text: str,
+        attachment_ids: tuple[str, ...],
     ) -> None:
         lease = await self._runtime.acquire(include_model_infos=True)
         try:
@@ -560,9 +823,22 @@ class ChatService:
                 model_infos=lease.model_infos,
             )
             prompt = (await self._store.load_preferences()).system_prompt
-            transcript = await self._store.get_transcript(active.session_id)
-            _expect_revision(transcript.session, expected_revision)
-            prepared = builder.prepare(transcript, system_prompt=prompt, draft=text)
+            lock = self._attachment_lock(active.session_id)
+            async with lock:
+                transcript = await self._store.get_transcript(active.session_id)
+                _expect_revision(transcript.session, expected_revision)
+                staged, materials = await self._selected_attachment_materials(
+                    active.session_id,
+                    transcript=transcript,
+                    attachment_ids=attachment_ids,
+                )
+                prepared = builder.prepare(
+                    transcript,
+                    system_prompt=prompt,
+                    draft=text,
+                    attachment_materials=materials,
+                    draft_attachments=staged,
+                )
             if prepared.estimate.should_auto_compact:
                 await self._compact_transcript(
                     active,
@@ -571,33 +847,46 @@ class ChatService:
                     transcript=transcript,
                     prompt=prompt,
                     pending_draft=text,
+                    attachment_materials=materials,
+                    draft_attachments=staged,
                     excluded_generation_id=None,
                 )
+            async with lock:
                 transcript = await self._store.get_transcript(active.session_id)
+                staged, materials = await self._selected_attachment_materials(
+                    active.session_id,
+                    transcript=transcript,
+                    attachment_ids=attachment_ids,
+                )
                 prepared = builder.prepare(
                     transcript,
                     system_prompt=prompt,
                     draft=text,
+                    attachment_materials=materials,
+                    draft_attachments=staged,
                 )
-            _require_request_fits(prepared.estimate)
-            generation_id = str(uuid.uuid4())
-            turn_id = str(uuid.uuid4())
-            await _commit_generation_start(
-                active,
-                store=self._store,
-                generation_id=generation_id,
-                operation=self._store.begin_send(
-                    active.session_id,
-                    expected_revision=transcript.session.revision,
-                    turn_id=turn_id,
+                _require_request_fits(prepared.estimate)
+                generation_id = str(uuid.uuid4())
+                turn_id = str(uuid.uuid4())
+                await _commit_generation_start(
+                    active,
+                    store=self._store,
                     generation_id=generation_id,
-                    operation_id=active.operation_id,
-                    user_text=text,
-                    requested_model=transcript.session.model,
-                    reasoning=transcript.session.reasoning,
-                    effective_output_limit=prepared.routed.request.max_tokens or 1,
-                ),
-            )
+                    operation=self._store.begin_send(
+                        active.session_id,
+                        expected_revision=transcript.session.revision,
+                        turn_id=turn_id,
+                        generation_id=generation_id,
+                        operation_id=active.operation_id,
+                        user_text=text,
+                        attachment_ids=attachment_ids,
+                        requested_model=transcript.session.model,
+                        reasoning=transcript.session.reasoning,
+                        effective_output_limit=(
+                            prepared.routed.request.max_tokens or 1
+                        ),
+                    ),
+                )
             await self._emit(
                 active,
                 "turn.started",
@@ -628,9 +917,13 @@ class ChatService:
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
             latest = _latest_turn(transcript)
+            materials = await self._attachment_files.materialize(
+                _context_attachments(transcript)
+            )
             prepared = builder.prepare(
                 transcript,
                 system_prompt=prompt,
+                attachment_materials=materials,
                 exclude_generation_id=latest.generation.id,
             )
             if prepared.estimate.should_auto_compact:
@@ -641,6 +934,8 @@ class ChatService:
                     transcript=transcript,
                     prompt=prompt,
                     pending_draft=None,
+                    attachment_materials=materials,
+                    draft_attachments=(),
                     excluded_generation_id=latest.generation.id,
                 )
                 transcript = await self._store.get_transcript(active.session_id)
@@ -648,6 +943,7 @@ class ChatService:
                 prepared = builder.prepare(
                     transcript,
                     system_prompt=prompt,
+                    attachment_materials=materials,
                     exclude_generation_id=latest.generation.id,
                 )
             _require_request_fits(prepared.estimate)
@@ -694,9 +990,13 @@ class ChatService:
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
             latest = _latest_turn(transcript)
+            materials = await self._attachment_files.materialize(
+                _context_attachments(transcript)
+            )
             prepared = builder.prepare(
                 transcript,
                 system_prompt=prompt,
+                attachment_materials=materials,
                 exclude_generation_id=latest.generation.id,
             )
             if prepared.estimate.should_auto_compact:
@@ -707,6 +1007,8 @@ class ChatService:
                     transcript=transcript,
                     prompt=prompt,
                     pending_draft=None,
+                    attachment_materials=materials,
+                    draft_attachments=(),
                     excluded_generation_id=latest.generation.id,
                 )
                 transcript = await self._store.get_transcript(active.session_id)
@@ -714,6 +1016,7 @@ class ChatService:
                 prepared = builder.prepare(
                     transcript,
                     system_prompt=prompt,
+                    attachment_materials=materials,
                     exclude_generation_id=latest.generation.id,
                 )
             _require_request_fits(prepared.estimate)
@@ -762,6 +1065,9 @@ class ChatService:
             transcript = await self._store.get_transcript(active.session_id)
             _expect_revision(transcript.session, expected_revision)
             prompt = (await self._store.load_preferences()).system_prompt
+            materials = await self._attachment_files.materialize(
+                _context_attachments(transcript)
+            )
             await self._compact_transcript(
                 active,
                 builder=builder,
@@ -769,6 +1075,8 @@ class ChatService:
                 transcript=transcript,
                 prompt=prompt,
                 pending_draft=None,
+                attachment_materials=materials,
+                draft_attachments=(),
                 excluded_generation_id=None,
             )
         finally:
@@ -1012,6 +1320,8 @@ class ChatService:
         transcript: ChatTranscript,
         prompt: str,
         pending_draft: str | None,
+        attachment_materials: tuple[ChatAttachmentMaterial, ...],
+        draft_attachments: tuple[ChatAttachment, ...],
         excluded_generation_id: str | None,
     ) -> ChatCompaction:
         covered = (
@@ -1038,6 +1348,7 @@ class ChatService:
             model_ref=transcript.session.model,
             existing_summary=summary,
             turns=next_turns,
+            attachment_materials=attachment_materials,
             output_tokens=output_tokens,
         )
         covered = next_turns[-1].sequence
@@ -1057,6 +1368,8 @@ class ChatService:
                 virtual,
                 system_prompt=prompt,
                 draft=pending_draft,
+                attachment_materials=attachment_materials,
+                draft_attachments=draft_attachments,
                 exclude_generation_id=excluded_generation_id,
             ).estimate
             target = compaction_target_tokens(estimate)
@@ -1075,6 +1388,7 @@ class ChatService:
                 model_ref=transcript.session.model,
                 existing_summary=summary,
                 turns=(later[0],),
+                attachment_materials=attachment_materials,
                 output_tokens=output_tokens,
             )
             covered = later[0].sequence
@@ -1121,6 +1435,7 @@ class ChatService:
         model_ref: str,
         existing_summary: str | None,
         turns: tuple[ChatTurn, ...],
+        attachment_materials: tuple[ChatAttachmentMaterial, ...],
         output_tokens: int,
     ) -> tuple[str, str]:
         summary = existing_summary
@@ -1134,6 +1449,7 @@ class ChatService:
                     source = builder.compaction_source(
                         summary,
                         tuple(pending[:candidate_count]),
+                        attachment_materials,
                     )
                     if not builder.summary_source_fits(
                         model_ref=model_ref,
@@ -1144,7 +1460,11 @@ class ChatService:
                     take = candidate_count
                 if take == 0:
                     take = 1
-            source = builder.compaction_source(summary, tuple(pending[:take]))
+            source = builder.compaction_source(
+                summary,
+                tuple(pending[:take]),
+                attachment_materials,
+            )
             summary, actual_model = await self._execute_summary(
                 active,
                 builder=builder,
@@ -1165,7 +1485,7 @@ class ChatService:
         builder: ChatContextBuilder,
         lease: RequestRuntimeLease,
         model_ref: str,
-        source: str,
+        source: ChatSummarySource,
         output_tokens: int,
     ) -> tuple[str, str]:
         routed = builder.prepare_summary(
@@ -1599,6 +1919,42 @@ def _latest_turn(transcript: ChatTranscript) -> ChatTurn:
     if not transcript.turns:
         raise ChatConflictError("This chat has no answer to operate on.")
     return transcript.turns[-1]
+
+
+def _context_attachments(transcript: ChatTranscript) -> tuple[ChatAttachment, ...]:
+    covered = (
+        transcript.compaction.covered_through_sequence
+        if transcript.compaction is not None
+        else 0
+    )
+    return tuple(
+        attachment
+        for turn in transcript.turns
+        if turn.sequence > covered
+        for attachment in turn.attachments
+    )
+
+
+def _attachment_ids(values: tuple[str, ...]) -> tuple[str, ...]:
+    if len(values) > MAX_CHAT_ATTACHMENTS_PER_TURN:
+        raise ChatPayloadTooLargeError(
+            "A message may contain at most five attachments."
+        )
+    canonical = tuple(_canonical_uuid(value, "attachment") for value in values)
+    if len(set(canonical)) != len(canonical):
+        raise ChatValidationError("An attachment cannot be selected more than once.")
+    return canonical
+
+
+def _attachment_filename(value: str) -> str:
+    filename = value.replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if not filename:
+        raise ChatValidationError("Attachment filename cannot be empty.")
+    if len(filename) > 255:
+        raise ChatValidationError("Attachment filename cannot exceed 255 characters.")
+    if any(ord(character) < 32 or ord(character) == 127 for character in filename):
+        raise ChatValidationError("Attachment filename contains invalid characters.")
+    return filename
 
 
 def _expect_revision(session: ChatSession, expected: int) -> None:

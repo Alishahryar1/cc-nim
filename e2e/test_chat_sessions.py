@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 
 from playwright.sync_api import Page, expect
 
@@ -480,6 +481,34 @@ def test_send_keeps_composer_ready_for_the_next_draft(
     page.get_by_role("button", name="Stop").click()
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
     expect(message).to_have_value("next draft")
+
+
+def test_chat_can_send_a_staged_attachment_without_message_text(
+    page: Page,
+    admin_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _new_chat(page, admin_base_url)
+    attachment = tmp_path / "notes.txt"
+    attachment.write_text("portable attachment facts", encoding="utf-8")
+
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "POST" and response.url.endswith("/attachments")
+        )
+    ):
+        page.get_by_label("Attach files").set_input_files(attachment)
+
+    staged = page.locator(".chat-staged-attachments")
+    expect(staged).to_contain_text("notes.txt")
+    expect(page.get_by_role("button", name="Send")).to_be_enabled()
+    page.get_by_role("button", name="Send").click()
+
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+    expect(page.locator(".user-message .chat-turn-attachment")).to_contain_text(
+        "notes.txt"
+    )
+    expect(staged).to_be_hidden()
 
 
 def test_chat_stop_then_retry_uses_one_operation_owner(

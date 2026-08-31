@@ -11,6 +11,7 @@ from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import (
     chat_database_path,
     chat_lock_path,
+    chat_state_dir_path,
     server_log_path,
 )
 from free_claude_code.config.settings import Settings
@@ -28,6 +29,7 @@ from free_claude_code.providers.runtime.factory import create_provider
 
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
+from .chat_attachments import LocalChatAttachmentFiles
 from .chat_sqlite import SQLiteChatStore
 from .codex_catalog import CodexModelCatalogPublisher
 from .provider_manager import ProviderRuntimeManager
@@ -63,6 +65,7 @@ def build_asgi_app(
     chat_service = ChatService(
         provider_manager,
         SQLiteChatStore(chat_database_path(), chat_lock_path()),
+        LocalChatAttachmentFiles(chat_state_dir_path()),
     )
     runtime = ApplicationRuntime(
         provider_manager,

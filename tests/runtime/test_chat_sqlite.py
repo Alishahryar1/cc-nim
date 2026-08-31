@@ -9,7 +9,10 @@ import pytest
 
 from free_claude_code.application.chat import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
+    ChatAttachmentFileInfo,
+    ChatAttachmentKind,
     ChatConflictError,
+    ChatPayloadTooLargeError,
     ChatReasoning,
     ChatSegment,
     ChatUnavailableError,
@@ -25,6 +28,32 @@ def _id() -> str:
 
 def _store(tmp_path: Path) -> SQLiteChatStore:
     return SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+
+
+@pytest.mark.asyncio
+async def test_store_migrates_existing_v1_database_to_attachment_schema(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    await store.start()
+    await store.close()
+    with closing(sqlite3.connect(tmp_path / "chat.db")) as connection:
+        connection.execute("DROP TABLE chat_attachments")
+        connection.execute("PRAGMA user_version = 1")
+        connection.commit()
+
+    reopened = _store(tmp_path)
+    await reopened.start()
+    try:
+        with closing(sqlite3.connect(tmp_path / "chat.db")) as connection:
+            version = connection.execute("PRAGMA user_version").fetchone()
+            table = connection.execute(
+                "SELECT name FROM sqlite_master WHERE name = 'chat_attachments'"
+            ).fetchone()
+        assert version == (2,)
+        assert table == ("chat_attachments",)
+    finally:
+        await reopened.close()
 
 
 @pytest.mark.asyncio
@@ -86,6 +115,201 @@ async def test_store_rejects_stale_session_revision_atomically(tmp_path: Path):
                 expected_revision=session.revision,
             )
         assert (await store.get_session(session.id)).title == updated.title
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_send_atomically_binds_exact_staged_attachments_in_request_order(
+    tmp_path: Path,
+):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        info = ChatAttachmentFileInfo(
+            kind=ChatAttachmentKind.TEXT,
+            media_type="text/plain",
+            byte_size=5,
+            extracted_characters=5,
+        )
+        first_id, second_id, left_id = _id(), _id(), _id()
+        for attachment_id, filename in (
+            (first_id, "first.txt"),
+            (second_id, "second.txt"),
+            (left_id, "later.txt"),
+        ):
+            await store.add_staged_attachment(
+                session.id,
+                attachment_id=attachment_id,
+                filename=filename,
+                file_info=info,
+            )
+
+        turn = await store.begin_send(
+            session.id,
+            expected_revision=session.revision,
+            turn_id=_id(),
+            generation_id=_id(),
+            operation_id=_id(),
+            user_text="",
+            requested_model=session.model,
+            reasoning=session.reasoning,
+            effective_output_limit=1_024,
+            attachment_ids=(second_id, first_id),
+        )
+
+        assert [attachment.id for attachment in turn.attachments] == [
+            second_id,
+            first_id,
+        ]
+        assert [
+            attachment.id
+            for attachment in await store.list_staged_attachments(session.id)
+        ] == [left_id]
+        persisted = (await store.get_transcript(session.id)).turns[0]
+        assert [attachment.id for attachment in persisted.attachments] == [
+            second_id,
+            first_id,
+        ]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_selected_attachment_rolls_back_the_whole_turn(tmp_path: Path):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+
+        with pytest.raises(ChatConflictError, match="another tab"):
+            await store.begin_send(
+                session.id,
+                expected_revision=session.revision,
+                turn_id=_id(),
+                generation_id=_id(),
+                operation_id=_id(),
+                user_text="hello",
+                requested_model=session.model,
+                reasoning=session.reasoning,
+                effective_output_limit=1_024,
+                attachment_ids=(_id(),),
+            )
+
+        assert (await store.get_transcript(session.id)).turns == ()
+        assert (await store.get_session(session.id)).revision == session.revision
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_staging_enforces_count_and_combined_byte_limits(tmp_path: Path):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        small = ChatAttachmentFileInfo(
+            kind=ChatAttachmentKind.TEXT,
+            media_type="text/plain",
+            byte_size=1,
+            extracted_characters=1,
+        )
+        for index in range(5):
+            await store.add_staged_attachment(
+                session.id,
+                attachment_id=_id(),
+                filename=f"{index}.txt",
+                file_info=small,
+            )
+        with pytest.raises(ChatPayloadTooLargeError, match="at most five"):
+            await store.add_staged_attachment(
+                session.id,
+                attachment_id=_id(),
+                filename="six.txt",
+                file_info=small,
+            )
+
+        other = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        large = ChatAttachmentFileInfo(
+            kind=ChatAttachmentKind.IMAGE,
+            media_type="image/png",
+            byte_size=9 * 1024 * 1024,
+            extracted_characters=None,
+        )
+        for filename in ("one.png", "two.png"):
+            await store.add_staged_attachment(
+                other.id,
+                attachment_id=_id(),
+                filename=filename,
+                file_info=large,
+            )
+        remainder = ChatAttachmentFileInfo(
+            kind=ChatAttachmentKind.IMAGE,
+            media_type="image/png",
+            byte_size=8 * 1024 * 1024,
+            extracted_characters=None,
+        )
+        with pytest.raises(ChatPayloadTooLargeError, match="25 MiB"):
+            await store.add_staged_attachment(
+                other.id,
+                attachment_id=_id(),
+                filename="three.png",
+                file_info=remainder,
+            )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_send_rejects_attachment_owned_by_another_session(tmp_path: Path):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        first = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        second = await store.create_session(
+            session_id=_id(), model="groq/model", reasoning=ChatReasoning.OFF
+        )
+        attachment = await store.add_staged_attachment(
+            second.id,
+            attachment_id=_id(),
+            filename="private.txt",
+            file_info=ChatAttachmentFileInfo(
+                kind=ChatAttachmentKind.TEXT,
+                media_type="text/plain",
+                byte_size=4,
+                extracted_characters=4,
+            ),
+        )
+
+        with pytest.raises(ChatConflictError, match="another tab"):
+            await store.begin_send(
+                first.id,
+                expected_revision=first.revision,
+                turn_id=_id(),
+                generation_id=_id(),
+                operation_id=_id(),
+                user_text="steal",
+                requested_model=first.model,
+                reasoning=first.reasoning,
+                effective_output_limit=1_024,
+                attachment_ids=(attachment.id,),
+            )
+
+        assert (await store.get_transcript(first.id)).turns == ()
+        assert [item.id for item in await store.list_staged_attachments(second.id)] == [
+            attachment.id
+        ]
     finally:
         await store.close()
 

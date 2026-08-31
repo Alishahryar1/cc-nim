@@ -32,6 +32,7 @@ from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.asgi import RuntimeASGIApp
+from free_claude_code.runtime.chat_attachments import LocalChatAttachmentFiles
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 
@@ -284,7 +285,11 @@ def admin_base_url(
         config_dir / "chat" / "chat.db",
         config_dir / "chat" / "chat.lock",
     )
-    chat = ChatService(manager, chat_store)
+    chat = ChatService(
+        manager,
+        chat_store,
+        LocalChatAttachmentFiles(config_dir / "chat"),
+    )
     original_estimate = chat.estimate
     original_get_detail = chat.get_detail
     original_get_turn_page = chat.get_turn_page
@@ -297,12 +302,17 @@ def admin_base_url(
         session_id: str,
         *,
         draft: str,
+        attachment_ids: tuple[str, ...] = (),
     ) -> ChatContextEstimate:
         nonlocal delayed_estimate_seen
         delay_result = "[delay-first-estimate]" in draft and not delayed_estimate_seen
         delayed_estimate_seen = delayed_estimate_seen or delay_result
         try:
-            return await original_estimate(session_id, draft=draft)
+            return await original_estimate(
+                session_id,
+                draft=draft,
+                attachment_ids=attachment_ids,
+            )
         finally:
             if delay_result:
                 await asyncio.sleep(0.75)

@@ -10,7 +10,9 @@ from free_claude_code.application.chat import (
     ChatConflictError,
     ChatError,
     ChatNotFoundError,
+    ChatPayloadTooLargeError,
     ChatUnavailableError,
+    ChatUnsupportedAttachmentError,
     ChatValidationError,
 )
 from free_claude_code.application.errors import ApplicationError
@@ -57,7 +59,11 @@ def create_app(services: ApiServices) -> FastAPI:
     async def chat_error_handler(request: Request, exc: ChatError):
         """Serialize Chat application failures for the local Admin client."""
 
-        if isinstance(exc, ChatNotFoundError):
+        if isinstance(exc, ChatPayloadTooLargeError):
+            status_code = 413
+        elif isinstance(exc, ChatUnsupportedAttachmentError):
+            status_code = 422
+        elif isinstance(exc, ChatNotFoundError):
             status_code = 404
         elif isinstance(exc, ChatConflictError):
             status_code = 409

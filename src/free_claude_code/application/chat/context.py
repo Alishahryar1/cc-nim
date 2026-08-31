@@ -1,5 +1,7 @@
 """Portable request construction and context accounting for Chat Sessions."""
 
+import base64
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
@@ -11,23 +13,32 @@ from free_claude_code.config.model_refs import (
 )
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
+    ContentBlockImage,
     ContentBlockText,
     ContentBlockThinking,
     Message,
     MessagesRequest,
     get_token_count,
 )
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 
 from .models import (
+    ChatAttachment,
+    ChatAttachmentMaterial,
     ChatContextEstimate,
+    ChatDocumentAttachment,
+    ChatImageAttachment,
     ChatModelOption,
     ChatReasoning,
     ChatTranscript,
     ChatTurn,
+    ChatUnsupportedAttachmentError,
     ChatValidationError,
     SegmentKind,
 )
+
+type ChatSummarySource = str | list[ContentBlockText | ContentBlockImage]
 
 _VISIBLE_ANSWER_TOKENS = 16_384
 _MINIMUM_VISIBLE_ANSWER_TOKENS = 1_024
@@ -141,11 +152,14 @@ class ChatContextBuilder:
         *,
         system_prompt: str,
         draft: str | None = None,
+        attachment_materials: tuple[ChatAttachmentMaterial, ...] = (),
+        draft_attachments: tuple[ChatAttachment, ...] = (),
         exclude_generation_id: str | None = None,
     ) -> PreparedChatRequest:
         option = self.model(transcript.session.model)
         reasoning = transcript.session.reasoning.policy()
         self._validate_reasoning(option, transcript.session.reasoning)
+        self._validate_images(option, attachment_materials)
         output_limit = self._completion_limit(option, reasoning)
         request = MessagesRequest(
             model=transcript.session.model,
@@ -153,6 +167,8 @@ class ChatContextBuilder:
             messages=self._messages(
                 transcript,
                 draft=draft,
+                attachment_materials=attachment_materials,
+                draft_attachments=draft_attachments,
                 exclude_generation_id=exclude_generation_id,
             ),
             system=system_prompt or None,
@@ -173,7 +189,7 @@ class ChatContextBuilder:
         self,
         *,
         model_ref: str,
-        source: str,
+        source: ChatSummarySource,
         output_tokens: int,
     ) -> RoutedMessagesRequest:
         option = self.model(model_ref)
@@ -213,7 +229,7 @@ class ChatContextBuilder:
         self,
         *,
         model_ref: str,
-        source: str,
+        source: ChatSummarySource,
         output_tokens: int,
     ) -> bool:
         option = self.model(model_ref)
@@ -246,6 +262,41 @@ class ChatContextBuilder:
     def compaction_source(
         existing_summary: str | None,
         turns: tuple[ChatTurn, ...],
+        attachment_materials: tuple[ChatAttachmentMaterial, ...] = (),
+    ) -> ChatSummarySource:
+        if not any(turn.attachments for turn in turns):
+            return ChatContextBuilder._text_compaction_source(existing_summary, turns)
+        materials = _materials_by_id(attachment_materials)
+        blocks: list[ContentBlockText | ContentBlockImage] = []
+        if existing_summary:
+            blocks.append(
+                ContentBlockText(
+                    type="text", text=f"CURRENT SUMMARY\n{existing_summary}"
+                )
+            )
+        for turn in turns:
+            if blocks:
+                blocks.append(ContentBlockText(type="text", text="--- EXCHANGE ---"))
+            blocks.append(ContentBlockText(type="text", text=f"USER\n{turn.user_text}"))
+            blocks.extend(
+                _attachment_block(_required_material(materials, attachment))
+                for attachment in turn.attachments
+            )
+            answer = "\n".join(
+                segment.text
+                for segment in turn.generation.segments
+                if segment.kind is SegmentKind.TEXT and segment.text
+            )
+            if answer:
+                blocks.append(
+                    ContentBlockText(type="text", text=f"ASSISTANT\n{answer}")
+                )
+        return blocks
+
+    @staticmethod
+    def _text_compaction_source(
+        existing_summary: str | None,
+        turns: tuple[ChatTurn, ...],
     ) -> str:
         sections: list[str] = []
         if existing_summary:
@@ -267,9 +318,12 @@ class ChatContextBuilder:
         transcript: ChatTranscript,
         *,
         draft: str | None,
+        attachment_materials: tuple[ChatAttachmentMaterial, ...],
+        draft_attachments: tuple[ChatAttachment, ...],
         exclude_generation_id: str | None,
     ) -> list[Message]:
         messages: list[Message] = []
+        materials = _materials_by_id(attachment_materials)
         covered = 0
         if transcript.compaction is not None:
             covered = transcript.compaction.covered_through_sequence
@@ -287,7 +341,16 @@ class ChatContextBuilder:
         for turn in transcript.turns:
             if turn.sequence <= covered:
                 continue
-            messages.append(Message(role="user", content=turn.user_text))
+            messages.append(
+                Message(
+                    role="user",
+                    content=_user_content(
+                        turn.user_text,
+                        turn.attachments,
+                        materials,
+                    ),
+                )
+            )
             generation = turn.generation
             if generation.id == exclude_generation_id:
                 continue
@@ -309,7 +372,12 @@ class ChatContextBuilder:
                 messages.append(Message(role="assistant", content=blocks))
 
         if draft is not None:
-            messages.append(Message(role="user", content=draft))
+            messages.append(
+                Message(
+                    role="user",
+                    content=_user_content(draft, draft_attachments, materials),
+                )
+            )
         return messages
 
     @staticmethod
@@ -337,6 +405,20 @@ class ChatContextBuilder:
         if option.supports_reasoning is False and reasoning is not ChatReasoning.OFF:
             raise ChatValidationError(
                 "This model does not support reasoning. Set thinking to Off."
+            )
+
+    @staticmethod
+    def _validate_images(
+        option: ChatModelOption,
+        materials: tuple[ChatAttachmentMaterial, ...],
+    ) -> None:
+        if (
+            option.input_modalities is not None
+            and ModelInputModality.IMAGE not in option.input_modalities
+            and any(isinstance(material, ChatImageAttachment) for material in materials)
+        ):
+            raise ChatUnsupportedAttachmentError(
+                "This model does not support images. Choose an image-capable model."
             )
 
     @staticmethod
@@ -382,3 +464,69 @@ def compaction_target_tokens(estimate: ChatContextEstimate) -> int | None:
     if estimate.usable_input_tokens is None:
         return None
     return int(estimate.usable_input_tokens * _COMPACT_TARGET_RATIO)
+
+
+def _materials_by_id(
+    materials: tuple[ChatAttachmentMaterial, ...],
+) -> Mapping[str, ChatAttachmentMaterial]:
+    return {material.attachment.id: material for material in materials}
+
+
+def _required_material(
+    materials: Mapping[str, ChatAttachmentMaterial],
+    attachment: ChatAttachment,
+) -> ChatAttachmentMaterial:
+    material = materials.get(attachment.id)
+    if material is None:
+        action = (
+            "Remove it or delete the chat."
+            if attachment.turn_id is None
+            else "Delete the chat to remove its reference."
+        )
+        raise ChatValidationError(
+            f"Attachment {attachment.filename!r} is unavailable. {action}"
+        )
+    return material
+
+
+def _user_content(
+    text: str,
+    attachments: tuple[ChatAttachment, ...],
+    materials: Mapping[str, ChatAttachmentMaterial],
+) -> str | list[ContentBlockText | ContentBlockImage]:
+    if not attachments:
+        return text
+    blocks: list[ContentBlockText | ContentBlockImage] = []
+    if text:
+        blocks.append(ContentBlockText(type="text", text=text))
+    blocks.extend(
+        _attachment_block(_required_material(materials, attachment))
+        for attachment in attachments
+    )
+    return blocks
+
+
+def _attachment_block(
+    material: ChatAttachmentMaterial,
+) -> ContentBlockText | ContentBlockImage:
+    attachment = material.attachment
+    if isinstance(material, ChatImageAttachment):
+        return ContentBlockImage(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": attachment.media_type,
+                "data": base64.b64encode(material.data).decode("ascii"),
+            },
+        )
+    if not isinstance(material, ChatDocumentAttachment):
+        raise ChatValidationError("Attachment material is invalid.")
+    label = attachment.kind.value.upper()
+    return ContentBlockText(
+        type="text",
+        text=(
+            f"[Attached {label}: {attachment.filename}]\n"
+            f"{material.text}\n"
+            f"[End attached {label}]"
+        ),
+    )

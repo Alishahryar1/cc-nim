@@ -71,8 +71,11 @@ function statusClass(status) {
 }
 
 async function api(path, options = {}) {
+  const headers = options.body instanceof FormData
+    ? { ...(options.headers || {}) }
+    : { "Content-Type": "application/json", ...(options.headers || {}) };
   const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers,
     ...options,
     cache: "no-store",
   });

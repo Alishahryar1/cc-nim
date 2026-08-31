@@ -4,16 +4,22 @@ import base64
 import json
 import uuid
 from collections.abc import AsyncIterator
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
+from starlette.datastructures import UploadFile
 
 from free_claude_code.application.chat import (
+    MAX_CHAT_ATTACHMENT_BYTES,
     ChatApplicationPort,
+    ChatAttachment,
+    ChatAttachmentKind,
     ChatCompaction,
     ChatContextEstimate,
     ChatModelOption,
     ChatOperationStream,
+    ChatPayloadTooLargeError,
     ChatPreferences,
     ChatReasoning,
     ChatSession,
@@ -52,10 +58,12 @@ class ChatOperationPayload(ChatRevisionPayload):
 
 class ChatSendPayload(ChatOperationPayload):
     text: str = Field(max_length=1_000_000)
+    attachment_ids: tuple[str, ...] = Field(default=(), max_length=5)
 
 
 class ChatEstimatePayload(BaseModel):
     draft: str = Field(default="", max_length=1_000_000)
+    attachment_ids: tuple[str, ...] = Field(default=(), max_length=5)
 
 
 class ChatStopPayload(BaseModel):
@@ -140,7 +148,82 @@ async def get_chat_session(
         ),
         "context_error": detail.context_error,
         "active_operation": detail.active_operation,
+        "staged_attachments": [
+            _attachment_payload(attachment) for attachment in detail.staged_attachments
+        ],
     }
+
+
+@router.post(
+    "/admin/api/chat/sessions/{session_id}/attachments",
+    status_code=201,
+)
+async def upload_chat_attachment(
+    session_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+) -> JsonObject:
+    require_loopback_admin(request)
+    form = await request.form()
+    uploads = form.getlist("file")
+    if len(uploads) != 1 or not isinstance(uploads[0], UploadFile):
+        for upload in uploads:
+            if isinstance(upload, UploadFile):
+                await upload.close()
+        raise ChatValidationError("Upload exactly one attachment file.")
+    file = uploads[0]
+    if file.size is not None and file.size > MAX_CHAT_ATTACHMENT_BYTES:
+        await file.close()
+        raise ChatPayloadTooLargeError("Attachments may be at most 10 MiB each.")
+    try:
+        attachment = await _chat(services).stage_attachment(
+            session_id,
+            filename=file.filename or "",
+            declared_media_type=file.content_type,
+            source=file.file,
+        )
+    finally:
+        await file.close()
+    return _attachment_payload(attachment)
+
+
+@router.delete("/admin/api/chat/sessions/{session_id}/attachments/{attachment_id}")
+async def delete_chat_attachment(
+    session_id: str,
+    attachment_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+) -> JsonObject:
+    require_loopback_admin(request)
+    await _chat(services).remove_attachment(session_id, attachment_id)
+    return {"deleted": True}
+
+
+@router.get("/admin/api/chat/sessions/{session_id}/attachments/{attachment_id}/content")
+async def get_chat_attachment_content(
+    session_id: str,
+    attachment_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+) -> Response:
+    require_loopback_admin(request)
+    content = await _chat(services).attachment_content(session_id, attachment_id)
+    disposition = (
+        "inline"
+        if content.attachment.kind is ChatAttachmentKind.IMAGE
+        else "attachment"
+    )
+    return Response(
+        content=content.data,
+        media_type=content.attachment.media_type,
+        headers={
+            "Content-Disposition": (
+                f"{disposition}; filename*=UTF-8''"
+                f"{quote(content.attachment.filename, safe='')}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.patch("/admin/api/chat/sessions/{session_id}")
@@ -207,7 +290,11 @@ async def estimate_chat_context(
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    estimate = await _chat(services).estimate(session_id, draft=payload.draft)
+    estimate = await _chat(services).estimate(
+        session_id,
+        draft=payload.draft,
+        attachment_ids=payload.attachment_ids,
+    )
     return _estimate_payload(estimate)
 
 
@@ -224,6 +311,7 @@ async def send_chat_message(
         expected_revision=payload.expected_revision,
         operation_id=payload.operation_id,
         text=payload.text,
+        attachment_ids=payload.attachment_ids,
     )
     return _stream_response(stream)
 
@@ -446,6 +534,9 @@ def _turn_payload(turn: ChatTurn) -> JsonObject:
         "sequence": turn.sequence,
         "user_text": turn.user_text,
         "created_at": turn.created_at,
+        "attachments": [
+            _attachment_payload(attachment) for attachment in turn.attachments
+        ],
         "generation": {
             "id": generation.id,
             "status": generation.status.value,
@@ -468,6 +559,26 @@ def _turn_payload(turn: ChatTurn) -> JsonObject:
                 for segment in generation.segments
             ],
         },
+    }
+
+
+def _attachment_payload(attachment: ChatAttachment) -> JsonObject:
+    return {
+        "id": attachment.id,
+        "session_id": attachment.session_id,
+        "turn_id": attachment.turn_id,
+        "position": attachment.position,
+        "filename": attachment.filename,
+        "kind": attachment.kind.value,
+        "media_type": attachment.media_type,
+        "byte_size": attachment.byte_size,
+        "extracted_characters": attachment.extracted_characters,
+        "created_at": attachment.created_at,
+        "available": attachment.available,
+        "content_url": (
+            f"/admin/api/chat/sessions/{attachment.session_id}/attachments/"
+            f"{attachment.id}/content"
+        ),
     }
 
 

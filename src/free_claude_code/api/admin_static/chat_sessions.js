@@ -6,6 +6,7 @@
     bootstrapRequestVersion: 0,
     session: null,
     turns: [],
+    stagedAttachments: [],
     compaction: null,
     nextBefore: null,
     context: null,
@@ -27,6 +28,7 @@
     serverOperationActive: false,
     eventChannel: null,
     modelComboboxes: new Set(),
+    uploadingAttachments: false,
   };
 
   const root = () => document.getElementById("chatRoot");
@@ -61,6 +63,7 @@
       state.eventChannel.addEventListener("message", handleCrossTabEvent);
     }
     state.initialized = true;
+    window.addEventListener("focus", refreshStagedAttachments);
     if (chatIsVisible()) {
       await activate(window.location.pathname);
     }
@@ -320,6 +323,7 @@
     }
     state.session = detail.session;
     state.turns = detail.turns;
+    state.stagedAttachments = detail.staged_attachments || [];
     state.nextBefore = detail.next_before;
     state.compaction = detail.compaction;
     state.context = detail.context;
@@ -469,6 +473,9 @@
 
   function renderComposer() {
     const wrapper = node("div", "chat-composer");
+    const attachments = node("div", "chat-staged-attachments");
+    attachments.id = "chatStagedAttachments";
+    renderStagedAttachments(attachments);
     const textarea = node("textarea");
     textarea.id = "chatComposer";
     textarea.rows = 2;
@@ -488,6 +495,18 @@
       }
     });
     const actions = node("div", "chat-composer-actions");
+    const attach = button("Attach", "chat-attach-button", () => fileInput.click());
+    attach.id = "chatAttach";
+    const fileInput = node("input", "chat-file-input");
+    fileInput.type = "file";
+    fileInput.multiple = true;
+    fileInput.accept = ".jpg,.jpeg,.png,.gif,.webp,.txt,.md,.markdown,.pdf,.docx";
+    fileInput.setAttribute("aria-label", "Attach files");
+    fileInput.addEventListener("change", async () => {
+      const files = [...fileInput.files];
+      fileInput.value = "";
+      await uploadAttachments(files);
+    });
     const status = node("span", "chat-composer-status");
     status.id = "chatComposerStatus";
     status.setAttribute("aria-live", "polite");
@@ -496,9 +515,117 @@
     const stop = button("Stop", "danger-button", stopOperation);
     stop.id = "chatStop";
     stop.hidden = true;
-    actions.append(status, send, stop);
-    wrapper.append(textarea, actions);
+    const primaryActions = node("div", "chat-composer-primary-actions");
+    primaryActions.append(attach, status);
+    actions.append(primaryActions, send, stop);
+    wrapper.append(attachments, textarea, actions, fileInput);
     return wrapper;
+  }
+
+  function renderStagedAttachments(container = document.getElementById("chatStagedAttachments")) {
+    if (!container) return;
+    container.replaceChildren();
+    container.hidden = state.stagedAttachments.length === 0;
+    state.stagedAttachments.forEach((attachment) => {
+      const card = node("div", "chat-attachment-card staged");
+      card.dataset.attachmentId = attachment.id;
+      card.append(
+        attachmentPreview(attachment),
+        node("span", "chat-attachment-name", attachment.filename),
+      );
+      const remove = button("Remove", "chat-attachment-remove", () =>
+        removeStagedAttachment(attachment.id),
+      );
+      remove.setAttribute("aria-label", `Remove ${attachment.filename}`);
+      card.appendChild(remove);
+      container.appendChild(card);
+    });
+  }
+
+  function attachmentPreview(attachment) {
+    if (attachment.kind === "image" && attachment.available) {
+      const image = node("img", "chat-attachment-thumbnail");
+      image.src = attachment.content_url;
+      image.alt = attachment.filename;
+      image.loading = "lazy";
+      return image;
+    }
+    return node(
+      "span",
+      "chat-attachment-type",
+      attachment.kind === "markdown" ? "MD" : attachment.kind.toUpperCase(),
+    );
+  }
+
+  async function refreshStagedAttachments() {
+    if (!chatIsVisible() || !state.session) return;
+    const sessionId = state.session.id;
+    try {
+      const detail = await state.api(`/admin/api/chat/sessions/${sessionId}`);
+      if (state.session?.id !== sessionId) return;
+      state.stagedAttachments = detail.staged_attachments || [];
+      state.context = detail.context;
+      state.contextError = detail.context_error || "";
+      renderStagedAttachments();
+      updateContextMeter();
+      refreshComposerState();
+    } catch (error) {
+      if (state.session?.id === sessionId) setNotice(error.message, "error");
+    }
+  }
+
+  async function uploadAttachments(files) {
+    if (!state.session || !files.length || state.uploadingAttachments) return;
+    state.uploadingAttachments = true;
+    refreshComposerState();
+    const sessionId = state.session.id;
+    try {
+      await refreshStagedAttachments();
+      for (const file of files) {
+        if (state.session?.id !== sessionId) return;
+        const form = new FormData();
+        form.append("file", file, file.name);
+        const attachment = await state.api(
+          `/admin/api/chat/sessions/${sessionId}/attachments`,
+          { method: "POST", body: form },
+        );
+        state.stagedAttachments.push(attachment);
+        renderStagedAttachments();
+      }
+      setNotice("");
+      scheduleEstimate(true);
+    } catch (error) {
+      setNotice(error.message, "error");
+    } finally {
+      state.uploadingAttachments = false;
+      refreshComposerState();
+    }
+  }
+
+  async function removeStagedAttachment(attachmentId) {
+    if (!state.session) return;
+    const sessionId = state.session.id;
+    try {
+      await refreshStagedAttachments();
+      if (!state.stagedAttachments.some((item) => item.id === attachmentId)) return;
+      await state.api(
+        `/admin/api/chat/sessions/${sessionId}/attachments/${attachmentId}`,
+        { method: "DELETE" },
+      );
+      if (state.session?.id !== sessionId) return;
+      state.stagedAttachments = state.stagedAttachments.filter(
+        (item) => item.id !== attachmentId,
+      );
+      renderStagedAttachments();
+      setNotice("");
+      scheduleEstimate(true);
+      refreshComposerState();
+    } catch (error) {
+      if (state.session?.id === sessionId) {
+        await refreshStagedAttachments();
+        setNotice(error.message, "error");
+      }
+    }
   }
 
   function resizeComposer(textarea) {
@@ -562,11 +689,16 @@
         dividerRendered = true;
       }
     });
-    if (state.operation?.action === "send" && state.operation.userText) {
+    if (
+      state.operation?.action === "send" &&
+      (state.operation.userText || state.operation.attachments.length)
+    ) {
       const pending = node("article", "chat-message user-message");
-      pending.append(
-        node("div", "chat-message-label", "You"),
-        node("div", "chat-message-plain", state.operation.userText),
+      pending.append(node("div", "chat-message-label", "You"));
+      appendUserContent(
+        pending,
+        state.operation.userText,
+        state.operation.attachments,
       );
       scroller.appendChild(pending);
     }
@@ -581,9 +713,30 @@
   function renderUserMessage(turn) {
     const message = node("article", "chat-message user-message");
     message.append(node("div", "chat-message-label", "You"));
-    const body = node("div", "chat-message-plain", turn.user_text);
-    message.appendChild(body);
+    appendUserContent(message, turn.user_text, turn.attachments || []);
     return message;
+  }
+
+  function appendUserContent(message, text, attachments) {
+    if (text) message.appendChild(node("div", "chat-message-plain", text));
+    if (!attachments.length) return;
+    const list = node("div", "chat-turn-attachments");
+    attachments.forEach((attachment) => {
+      const link = node("a", "chat-turn-attachment");
+      if (attachment.available) {
+        link.href = attachment.content_url;
+        link.target = "_blank";
+        link.rel = "noopener";
+      } else {
+        link.setAttribute("aria-disabled", "true");
+      }
+      link.append(
+        attachmentPreview(attachment),
+        node("span", "chat-attachment-name", attachment.filename),
+      );
+      list.appendChild(link);
+    });
+    message.appendChild(list);
   }
 
   function renderAssistantMessage(turn) {
@@ -875,7 +1028,10 @@
         `/admin/api/chat/sessions/${session.id}/estimate`,
         {
           method: "POST",
-          body: JSON.stringify({ draft }),
+          body: JSON.stringify({
+            draft,
+            attachment_ids: state.stagedAttachments.map((item) => item.id),
+          }),
         },
       );
       if (
@@ -944,6 +1100,7 @@
     const textarea = document.getElementById("chatComposer");
     const send = document.getElementById("chatSend");
     const stop = document.getElementById("chatStop");
+    const attach = document.getElementById("chatAttach");
     const compact = document.getElementById("chatCompact");
     const status = document.getElementById("chatComposerStatus");
     if (!textarea || !send || !stop || !status) return;
@@ -955,10 +1112,16 @@
         state.serverOperationActive ||
         latest?.generation?.status === "running",
     );
-    send.disabled = Boolean(blocked) || !textarea.value.trim();
+    send.disabled =
+      Boolean(blocked) ||
+      (!textarea.value.trim() && state.stagedAttachments.length === 0);
     send.hidden = Boolean(state.operation);
     stop.hidden = !state.operation;
     textarea.disabled = Boolean(state.operation && !state.operation.accepted);
+    if (attach) {
+      attach.disabled =
+        state.uploadingAttachments || state.stagedAttachments.length >= 5;
+    }
     status.textContent =
       state.operation?.action === "compact"
         ? state.operation.status
@@ -980,8 +1143,11 @@
   async function sendMessage() {
     const textarea = document.getElementById("chatComposer");
     const text = textarea?.value || "";
-    if (!text.trim() || !state.session) return;
-    await runOperation("send", { text });
+    if ((!text.trim() && !state.stagedAttachments.length) || !state.session) return;
+    await refreshStagedAttachments();
+    const attachmentIds = state.stagedAttachments.map((item) => item.id);
+    if (!text.trim() && !attachmentIds.length) return;
+    await runOperation("send", { text, attachment_ids: attachmentIds });
   }
 
   async function retryMessage() {
@@ -1010,6 +1176,10 @@
       sequence: 0,
       status: action === "compact" ? "Compacting…" : "Thinking…",
       userText: extra.text || "",
+      attachmentIds: extra.attachment_ids || [],
+      attachments: state.stagedAttachments.filter((item) =>
+        (extra.attachment_ids || []).includes(item.id),
+      ),
       accepted: false,
       failureMessage: "",
       renderFrame: null,
@@ -1138,8 +1308,12 @@
         state.draft = "";
         state.draftSessionId = operation.sessionId;
         state.draftOperationId = null;
+        state.stagedAttachments = state.stagedAttachments.filter(
+          (attachment) => !operation.attachmentIds.includes(attachment.id),
+        );
         const textarea = document.getElementById("chatComposer");
         if (textarea) textarea.value = "";
+        renderStagedAttachments();
       }
       restoreComposerFocus =
         operation.returnFocusToComposer && composerFocusIsUnclaimed();

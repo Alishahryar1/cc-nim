@@ -1,6 +1,10 @@
 from free_claude_code.application.chat import (
+    ChatAttachment,
+    ChatAttachmentKind,
     ChatCompaction,
+    ChatDocumentAttachment,
     ChatGeneration,
+    ChatImageAttachment,
     ChatReasoning,
     ChatSegment,
     ChatSession,
@@ -14,7 +18,11 @@ from free_claude_code.application.chat.context import ChatContextBuilder
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import RequestRuntimeLease
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import ContentBlockText, ContentBlockThinking
+from free_claude_code.core.anthropic import (
+    ContentBlockImage,
+    ContentBlockText,
+    ContentBlockThinking,
+)
 from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningEffort
 
@@ -354,3 +362,167 @@ def test_existing_compaction_replaces_only_covered_context():
     assert len(request.messages) == 2
     assert "durable summary" in str(request.messages[0].content)
     assert request.messages[1].content == "new message"
+
+
+def test_prepare_preserves_text_image_and_document_order():
+    runtime = FakeRuntime(
+        configured=ProviderModelInfo(
+            "model",
+            input_modalities=frozenset(
+                {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+            ),
+            context_window_tokens=100_000,
+        )
+    )
+    image = ChatAttachment(
+        id="image",
+        session_id="session",
+        turn_id=None,
+        position=0,
+        filename="diagram.png",
+        kind=ChatAttachmentKind.IMAGE,
+        media_type="image/png",
+        byte_size=3,
+        extracted_characters=None,
+        created_at=1,
+    )
+    document = ChatAttachment(
+        id="document",
+        session_id="session",
+        turn_id=None,
+        position=1,
+        filename="notes.md",
+        kind=ChatAttachmentKind.MARKDOWN,
+        media_type="text/markdown",
+        byte_size=5,
+        extracted_characters=5,
+        created_at=1,
+    )
+
+    request = (
+        ChatContextBuilder(runtime)
+        .prepare(
+            _transcript(reasoning=ChatReasoning.OFF),
+            system_prompt="",
+            draft="Explain these",
+            attachment_materials=(
+                ChatImageAttachment(image, b"png"),
+                ChatDocumentAttachment(document, "facts"),
+            ),
+            draft_attachments=(image, document),
+        )
+        .routed.request
+    )
+
+    content = request.messages[-1].content
+    assert isinstance(content, list)
+    assert isinstance(content[0], ContentBlockText)
+    assert content[0].text == "Explain these"
+    assert isinstance(content[1], ContentBlockImage)
+    assert content[1].source["data"] == "cG5n"
+    assert isinstance(content[2], ContentBlockText)
+    assert "[Attached MARKDOWN: notes.md]\nfacts" in content[2].text
+
+
+def test_prepare_rejects_images_only_when_metadata_explicitly_excludes_them():
+    image = ChatAttachment(
+        id="image",
+        session_id="session",
+        turn_id=None,
+        position=0,
+        filename="diagram.png",
+        kind=ChatAttachmentKind.IMAGE,
+        media_type="image/png",
+        byte_size=3,
+        extracted_characters=None,
+        created_at=1,
+    )
+    material = ChatImageAttachment(image, b"png")
+    builder = ChatContextBuilder(
+        FakeRuntime(
+            configured=ProviderModelInfo(
+                "model",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            )
+        )
+    )
+
+    try:
+        builder.prepare(
+            _transcript(reasoning=ChatReasoning.OFF),
+            system_prompt="",
+            draft="",
+            attachment_materials=(material,),
+            draft_attachments=(image,),
+        )
+    except ChatValidationError as exc:
+        assert "does not support images" in str(exc)
+    else:
+        raise AssertionError("Known text-only model accepted an image")
+
+    unknown = ChatContextBuilder(
+        FakeRuntime(configured=ProviderModelInfo("model", input_modalities=None))
+    )
+    prepared = unknown.prepare(
+        _transcript(reasoning=ChatReasoning.OFF),
+        system_prompt="",
+        draft="",
+        attachment_materials=(material,),
+        draft_attachments=(image,),
+    )
+    assert isinstance(prepared.routed.request.messages[-1].content, list)
+
+
+def test_compaction_source_includes_attachment_content_in_turn_order():
+    image = ChatAttachment(
+        id="image",
+        session_id="session",
+        turn_id="turn",
+        position=0,
+        filename="diagram.png",
+        kind=ChatAttachmentKind.IMAGE,
+        media_type="image/png",
+        byte_size=3,
+        extracted_characters=None,
+        created_at=1,
+    )
+    document = ChatAttachment(
+        id="document",
+        session_id="session",
+        turn_id="turn",
+        position=1,
+        filename="notes.txt",
+        kind=ChatAttachmentKind.TEXT,
+        media_type="text/plain",
+        byte_size=5,
+        extracted_characters=5,
+        created_at=1,
+    )
+    transcript = _transcript(reasoning=ChatReasoning.OFF)
+    turn = transcript.turns[0]
+    turn = ChatTurn(
+        id=turn.id,
+        session_id=turn.session_id,
+        operation_id=turn.operation_id,
+        sequence=turn.sequence,
+        user_text=turn.user_text,
+        created_at=turn.created_at,
+        generation=turn.generation,
+        attachments=(image, document),
+    )
+
+    source = ChatContextBuilder.compaction_source(
+        None,
+        (turn,),
+        (
+            ChatImageAttachment(image, b"png"),
+            ChatDocumentAttachment(document, "facts"),
+        ),
+    )
+
+    assert isinstance(source, list)
+    assert isinstance(source[0], ContentBlockText)
+    assert source[0].text == "USER\nquestion"
+    assert isinstance(source[1], ContentBlockImage)
+    assert isinstance(source[2], ContentBlockText)
+    assert "facts" in source[2].text

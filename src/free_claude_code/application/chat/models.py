@@ -12,6 +12,12 @@ DEFAULT_CHAT_SYSTEM_PROMPT = (
     "when it improves readability."
 )
 
+MAX_CHAT_ATTACHMENTS_PER_TURN = 5
+MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_CHAT_ATTACHMENTS_COMBINED_BYTES = 25 * 1024 * 1024
+MAX_CHAT_ATTACHMENT_EXTRACTED_CHARACTERS = 1_000_000
+MAX_CHAT_ATTACHMENTS_COMBINED_EXTRACTED_CHARACTERS = 2_000_000
+
 
 class ChatReasoning(StrEnum):
     """Reasoning controls exposed by the Chat UI."""
@@ -46,6 +52,16 @@ class SegmentKind(StrEnum):
 
     THINKING = "thinking"
     TEXT = "text"
+
+
+class ChatAttachmentKind(StrEnum):
+    """Portable attachment categories accepted by local Chat Sessions."""
+
+    IMAGE = "image"
+    TEXT = "text"
+    MARKDOWN = "markdown"
+    PDF = "pdf"
+    DOCX = "docx"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +125,60 @@ class ChatGeneration:
 
 
 @dataclass(frozen=True, slots=True)
+class ChatAttachment:
+    """Durable attachment metadata; file content remains outside SQLite."""
+
+    id: str
+    session_id: str
+    turn_id: str | None
+    position: int
+    filename: str
+    kind: ChatAttachmentKind
+    media_type: str
+    byte_size: int
+    extracted_characters: int | None
+    created_at: int
+    available: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class ChatAttachmentFileInfo:
+    """Verified file facts produced before an attachment row is committed."""
+
+    kind: ChatAttachmentKind
+    media_type: str
+    byte_size: int
+    extracted_characters: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ChatImageAttachment:
+    """Materialized image input supplied to the pure context builder."""
+
+    attachment: ChatAttachment
+    data: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class ChatDocumentAttachment:
+    """Materialized portable text extracted from a user document."""
+
+    attachment: ChatAttachment
+    text: str
+
+
+type ChatAttachmentMaterial = ChatImageAttachment | ChatDocumentAttachment
+
+
+@dataclass(frozen=True, slots=True)
+class ChatAttachmentContent:
+    """Verified original bytes returned by the protected content route."""
+
+    attachment: ChatAttachment
+    data: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class ChatTurn:
     id: str
     session_id: str
@@ -117,6 +187,7 @@ class ChatTurn:
     user_text: str
     created_at: int
     generation: ChatGeneration
+    attachments: tuple[ChatAttachment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +239,7 @@ class ChatSessionDetail:
     context: ChatContextEstimate | None
     context_error: str | None
     active_operation: bool
+    staged_attachments: tuple[ChatAttachment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,3 +267,11 @@ class ChatConflictError(ChatError):
 
 class ChatValidationError(ChatError):
     """The requested Chat operation cannot be executed as supplied."""
+
+
+class ChatPayloadTooLargeError(ChatValidationError):
+    """A Chat attachment exceeds a server-owned byte or count limit."""
+
+
+class ChatUnsupportedAttachmentError(ChatValidationError):
+    """A Chat attachment cannot be represented by the portable input contract."""

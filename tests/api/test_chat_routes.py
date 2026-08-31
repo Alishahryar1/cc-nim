@@ -2,7 +2,8 @@ import asyncio
 import base64
 from collections.abc import AsyncIterator
 from dataclasses import replace
-from typing import cast
+from io import BytesIO
+from typing import BinaryIO, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,9 +11,13 @@ from starlette.types import Message, Scope
 
 from free_claude_code.api.chat_routes import _stream_response
 from free_claude_code.application.chat import (
+    ChatAttachment,
+    ChatAttachmentContent,
+    ChatAttachmentKind,
     ChatCompaction,
     ChatContextEstimate,
     ChatModelOption,
+    ChatPayloadTooLargeError,
     ChatPreferences,
     ChatReasoning,
     ChatSegment,
@@ -22,6 +27,7 @@ from free_claude_code.application.chat import (
     ChatSessionSummary,
     ChatStreamEvent,
     ChatTurn,
+    ChatUnsupportedAttachmentError,
     ChatValidationError,
     GenerationStatus,
     SegmentKind,
@@ -151,6 +157,46 @@ class StubChat:
             active_operation=self.active_operation,
         )
 
+    async def stage_attachment(
+        self,
+        session_id: str,
+        *,
+        filename: str,
+        declared_media_type: str | None,
+        source: BinaryIO,
+    ) -> ChatAttachment:
+        assert session_id == SESSION_ID
+        assert declared_media_type == "text/plain"
+        assert source.read() == b"hello"
+        return ChatAttachment(
+            id="e5f3e75e-a031-4d6c-88b6-1382abaca2f7",
+            session_id=SESSION_ID,
+            turn_id=None,
+            position=0,
+            filename=filename,
+            kind=ChatAttachmentKind.TEXT,
+            media_type="text/plain",
+            byte_size=5,
+            extracted_characters=5,
+            created_at=3,
+        )
+
+    async def remove_attachment(self, session_id: str, attachment_id: str) -> None:
+        assert session_id == SESSION_ID
+        assert attachment_id == "e5f3e75e-a031-4d6c-88b6-1382abaca2f7"
+
+    async def attachment_content(
+        self, session_id: str, attachment_id: str
+    ) -> ChatAttachmentContent:
+        attachment = await self.stage_attachment(
+            session_id,
+            filename="note.txt",
+            declared_media_type="text/plain",
+            source=BytesIO(b"hello"),
+        )
+        assert attachment_id == attachment.id
+        return ChatAttachmentContent(attachment=attachment, data=b"hello")
+
     async def list_sessions(
         self,
         *,
@@ -215,9 +261,15 @@ class StubChat:
         del before_sequence, limit
         return (self.turn,), None, None
 
-    async def estimate(self, session_id: str, *, draft: str) -> ChatContextEstimate:
+    async def estimate(
+        self,
+        session_id: str,
+        *,
+        draft: str,
+        attachment_ids: tuple[str, ...] = (),
+    ) -> ChatContextEstimate:
         assert session_id == SESSION_ID
-        del draft
+        del draft, attachment_ids
         return ChatContextEstimate(100, 1_024, 32_000, 30_976, 0.01, False, False)
 
     async def send(
@@ -227,6 +279,7 @@ class StubChat:
         expected_revision: int,
         operation_id: str,
         text: str,
+        attachment_ids: tuple[str, ...] = (),
     ) -> StubStream:
         assert (session_id, expected_revision, operation_id, text) == (
             SESSION_ID,
@@ -234,6 +287,7 @@ class StubChat:
             OPERATION_ID,
             "hello",
         )
+        assert attachment_ids == ()
         self.last_stream = StubStream()
         return self.last_stream
 
@@ -272,12 +326,35 @@ class StubChat:
 
 
 class UnestimatableChat(StubChat):
-    async def estimate(self, session_id: str, *, draft: str) -> ChatContextEstimate:
+    async def estimate(
+        self,
+        session_id: str,
+        *,
+        draft: str,
+        attachment_ids: tuple[str, ...] = (),
+    ) -> ChatContextEstimate:
         assert session_id == SESSION_ID
-        del draft
+        del draft, attachment_ids
         raise ChatValidationError(
             "This model does not support reasoning. Set thinking to Off."
         )
+
+
+class RejectedAttachmentChat(StubChat):
+    def __init__(self, error: ChatValidationError) -> None:
+        super().__init__()
+        self.error = error
+
+    async def stage_attachment(
+        self,
+        session_id: str,
+        *,
+        filename: str,
+        declared_media_type: str | None,
+        source: BinaryIO,
+    ) -> ChatAttachment:
+        del session_id, filename, declared_media_type, source
+        raise self.error
 
 
 def _client(chat: StubChat | None = None) -> TestClient:
@@ -314,6 +391,67 @@ def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
     assert detail["turns"][0]["generation"]["actual_model"] == ("open_router/fallback")
     assert detail["turns"][0]["operation_id"] == "operation"
     assert detail["active_operation"] is True
+
+
+def test_chat_attachment_routes_upload_download_and_remove():
+    client = _client(StubChat())
+    attachment_id = "e5f3e75e-a031-4d6c-88b6-1382abaca2f7"
+
+    uploaded = client.post(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments",
+        files={"file": ("note.txt", b"hello", "text/plain")},
+    )
+    downloaded = client.get(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments/{attachment_id}/content"
+    )
+    removed = client.delete(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments/{attachment_id}"
+    )
+
+    assert uploaded.status_code == 201
+    assert uploaded.json()["filename"] == "note.txt"
+    assert uploaded.json()["content_url"].endswith(f"{attachment_id}/content")
+    assert "hello" not in uploaded.text
+    assert "\\" not in uploaded.json()["content_url"]
+    assert downloaded.content == b"hello"
+    assert downloaded.headers["content-type"].startswith("text/plain")
+    assert downloaded.headers["content-disposition"].startswith("attachment;")
+    assert downloaded.headers["x-content-type-options"] == "nosniff"
+    assert downloaded.headers["cache-control"] == "no-store"
+    assert removed.json() == {"deleted": True}
+
+
+def test_chat_attachment_upload_requires_exactly_one_file():
+    response = _client(StubChat()).post(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments",
+        files=[
+            ("file", ("one.txt", b"one", "text/plain")),
+            ("file", ("two.txt", b"two", "text/plain")),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Upload exactly one attachment file."
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (ChatPayloadTooLargeError("too large"), 413),
+        (ChatUnsupportedAttachmentError("unsupported"), 422),
+    ],
+)
+def test_chat_attachment_errors_keep_specific_http_status(
+    error: ChatValidationError,
+    status: int,
+):
+    response = _client(RejectedAttachmentChat(error)).post(
+        f"/admin/api/chat/sessions/{SESSION_ID}/attachments",
+        files={"file": ("note.txt", b"hello", "text/plain")},
+    )
+
+    assert response.status_code == status
+    assert response.json()["code"] == type(error).__name__
 
 
 def test_chat_detail_stays_readable_when_context_controls_need_repair():
