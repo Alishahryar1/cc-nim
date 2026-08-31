@@ -292,11 +292,20 @@
       return;
     }
     renderLoading();
+    const upload = state.attachmentUploads.get(id);
+    let committedUploads = upload?.committed || 0;
     try {
-      const detail = await state.api(`/admin/api/chat/sessions/${id}`);
-      if (version !== state.routeVersion) return;
-      applyDetail(detail);
-      renderSession();
+      while (true) {
+        const detail = await state.api(`/admin/api/chat/sessions/${id}`);
+        if (version !== state.routeVersion) return;
+        if (upload && committedUploads !== upload.committed) {
+          committedUploads = upload.committed;
+          continue;
+        }
+        applyDetail(detail);
+        renderSession();
+        return;
+      }
     } catch (error) {
       if (version !== state.routeVersion) return;
       const empty = node("section", "chat-empty");
@@ -617,7 +626,7 @@
     if (!state.session || !files.length) return;
     const sessionId = state.session.id;
     if (state.attachmentUploads.has(sessionId)) return;
-    const upload = {};
+    const upload = { committed: 0 };
     state.attachmentUploads.set(sessionId, upload);
     refreshComposerState();
     try {
@@ -629,6 +638,7 @@
           `/admin/api/chat/sessions/${sessionId}/attachments`,
           { method: "POST", body: form },
         );
+        upload.committed += 1;
         if (
           state.attachmentUploads.get(sessionId) === upload &&
           state.session?.id === sessionId

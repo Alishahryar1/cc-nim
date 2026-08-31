@@ -67,6 +67,37 @@ def _hold_next_chat_detail(page: Page, session_id: str) -> None:
     )
 
 
+def _hold_next_chat_detail_response(page: Page, session_id: str) -> None:
+    page.evaluate(
+        """
+        sessionId => {
+          const originalFetch = window.fetch.bind(window);
+          window.fetch = (...args) => {
+            const input = args[0];
+            const options = args[1] || {};
+            const value = input instanceof Request ? input.url : String(input);
+            const method = String(options.method || input.method || "GET").toUpperCase();
+            const url = new URL(value, window.location.href);
+            if (
+              method !== "GET" ||
+              url.pathname !== `/admin/api/chat/sessions/${sessionId}`
+            ) {
+              return originalFetch(...args);
+            }
+            window.fetch = originalFetch;
+            return new Promise((resolve, reject) => {
+              originalFetch(...args).then(response => {
+                window.__chatDetailResponseHeld = true;
+                window.__releaseHeldChatDetailResponse = () => resolve(response);
+              }, reject);
+            });
+          };
+        }
+        """,
+        session_id,
+    )
+
+
 def _hold_next_attachment_upload(page: Page, session_id: str) -> None:
     page.evaluate(
         """
@@ -673,6 +704,55 @@ def test_failed_attachment_upload_does_not_leak_into_a_new_chat(
     expect(page.locator(".chat-staged-attachments")).to_be_hidden()
     expect(page.get_by_text("old-session.txt", exact=True)).to_have_count(0)
     expect(page.get_by_text("old upload failed", exact=True)).to_have_count(0)
+
+
+def test_attachment_upload_settlement_wins_over_an_older_returning_detail(
+    page: Page,
+    admin_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _new_chat(page, admin_base_url)
+    origin_session_id = page.url.rsplit("/", 1)[-1]
+    title = page.get_by_label("Chat title")
+    title.fill("ABA upload origin")
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH"
+            and f"/admin/api/chat/sessions/{origin_session_id}" in response.url
+        )
+    ):
+        title.press("Enter")
+
+    attachment = tmp_path / "aba-origin.txt"
+    attachment.write_text("origin session only", encoding="utf-8")
+    _hold_next_attachment_upload(page, origin_session_id)
+    page.get_by_label("Attach files").set_input_files(attachment)
+    page.wait_for_function("window.__chatUploadHeld === true")
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.get_by_role("button", name="New chat", exact=True).click()
+    page.get_by_role("button", name="Chats", exact=False).click()
+    _hold_next_chat_detail_response(page, origin_session_id)
+    page.locator(".chat-session-card", has_text="ABA upload origin").click()
+    page.wait_for_function("window.__chatDetailResponseHeld === true")
+
+    page.evaluate("window.__releaseHeldChatUpload()")
+    page.wait_for_function(
+        """
+        async ({ sessionId, filename }) => {
+          const response = await fetch(`/admin/api/chat/sessions/${sessionId}`);
+          if (!response.ok) return false;
+          const detail = await response.json();
+          return detail.staged_attachments.some(
+            attachment => attachment.filename === filename,
+          );
+        }
+        """,
+        arg={"sessionId": origin_session_id, "filename": attachment.name},
+    )
+    page.evaluate("window.__releaseHeldChatDetailResponse()")
+
+    expect(page.locator(".chat-staged-attachments")).to_contain_text("aba-origin.txt")
 
 
 def test_estimate_for_cross_tab_removed_attachment_cannot_overwrite_composer(

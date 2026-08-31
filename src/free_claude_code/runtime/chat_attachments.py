@@ -419,6 +419,8 @@ def _verify_image(path: Path, expected_media_type: str) -> None:
                         "The image content does not match its file signature."
                     )
                 image.verify()
+            with Image.open(path) as image:
+                image.load()
     except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
         raise ChatPayloadTooLargeError("The image dimensions are too large.") from exc
     except ChatUnsupportedAttachmentError:

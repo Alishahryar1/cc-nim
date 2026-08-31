@@ -158,7 +158,11 @@ class SQLiteChatStore:
                 SELECT s.*,
                     COALESCE((
                         SELECT CASE
-                            WHEN t.user_text <> '' THEN t.user_text
+                            WHEN trim(
+                                t.user_text,
+                                ' ' || char(9) || char(10) || char(11)
+                                    || char(12) || char(13)
+                            ) <> '' THEN t.user_text
                             ELSE (
                                 SELECT a.filename
                                 FROM chat_attachments AS a

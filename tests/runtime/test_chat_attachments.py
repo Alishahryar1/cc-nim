@@ -241,6 +241,36 @@ async def test_image_upload_rejects_corrupt_content_after_a_valid_signature(
         )
 
 
+@pytest.mark.parametrize(
+    ("filename", "media_type", "format_name", "trailing_bytes"),
+    [
+        ("truncated.jpg", "image/jpeg", "JPEG", 1),
+        ("truncated.gif", "image/gif", "GIF", 3),
+    ],
+)
+@pytest.mark.asyncio
+async def test_image_upload_rejects_content_truncated_after_header_validation(
+    tmp_path: Path,
+    filename: str,
+    media_type: str,
+    format_name: str,
+    trailing_bytes: int,
+):
+    output = BytesIO()
+    Image.new("RGB", (32, 32), color="orange").save(output, format=format_name)
+    files = LocalChatAttachmentFiles(tmp_path)
+    await files.start(())
+
+    with pytest.raises(ChatUnsupportedAttachmentError, match=r"image.*malformed"):
+        await files.store_upload(
+            session_id=_id(),
+            attachment_id=_id(),
+            filename=filename,
+            declared_media_type=media_type,
+            source=BytesIO(output.getvalue()[:-trailing_bytes]),
+        )
+
+
 @pytest.mark.asyncio
 async def test_image_upload_rejects_decompression_bomb_dimensions(
     tmp_path: Path,

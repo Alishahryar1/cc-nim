@@ -86,9 +86,11 @@ async def test_store_creates_schema_preferences_and_searchable_sessions(tmp_path
         await store.close()
 
 
+@pytest.mark.parametrize("user_text", ["", " \n\t "])
 @pytest.mark.asyncio
 async def test_attachment_only_turn_uses_first_filename_as_session_preview(
     tmp_path: Path,
+    user_text: str,
 ):
     store = _store(tmp_path)
     await store.start()
@@ -113,7 +115,7 @@ async def test_attachment_only_turn_uses_first_filename_as_session_preview(
             turn_id=_id(),
             generation_id=_id(),
             operation_id=_id(),
-            user_text="",
+            user_text=user_text,
             requested_model=session.model,
             reasoning=session.reasoning,
             effective_output_limit=1_024,
