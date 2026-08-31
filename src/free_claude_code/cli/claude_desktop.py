@@ -304,20 +304,21 @@ def configure_claude_desktop_config(
         # The discovery flag is frozen, not absorbed: configure always
         # writes ``True``, so a current ``True`` is byte-identical to
         # configure's own write and no file state can tell "the user just
-        # re-enabled it" from "configure wrote it". Absorbing an
-        # intermediate user flip (say ``False``) as the restore target would
-        # then discard the user's FINAL re-enable on unconfigure, restoring
-        # the stale intermediate instead. So the recorded target only ever
-        # changes when there was none — the key was absent before the
-        # first merge and the user has since made an explicit choice, whose
-        # current value is by definition theirs (configure had nothing to
-        # write over it that the user kept).
+        # re-enabled it" from "configure wrote it". Recording any VALUE the
+        # user set in between (say an intermediate ``False``) would make
+        # unconfigure restore that stale intermediate and discard the
+        # user's final choice. So when the flag was absent before the
+        # first merge and the user has since made an explicit non-``True``
+        # choice, the flag is marked user-owned: unconfigure then hands
+        # the flag off verbatim (whatever its final value is) instead of
+        # restoring anything.
         if (
             "discovery" not in backup
+            and "discoveryUserOwned" not in backup
             and prior_discovery is not None
             and prior_discovery is not True
         ):
-            backup["discovery"] = prior_discovery
+            backup["discoveryUserOwned"] = True
             changed = True
     elif not isinstance(inference_raw, dict) and _INFERENCE_KEY in data:
         # A non-object ``inference`` with a snapshot already recorded is
@@ -439,7 +440,17 @@ def unconfigure_claude_desktop_config(
         # still removed below.
         block_fcc_owned = isinstance(inference_raw, dict) and inference_dict == written
 
-        discovery_fcc_owned = data.get(_DISCOVERY_KEY) is True
+        # A user-owned discovery flag (the adoption marker set when the key
+        # was absent before the first merge and the user later chose a
+        # non-``True`` value) is handed off verbatim: it is neither
+        # deleted as FCC's nor restored from any recorded value, since
+        # every value the user set in between is stale by unconfigure
+        # time and the final one is indistinguishable from configure's
+        # own always-``True`` write.
+        discovery_fcc_owned = (
+            data.get(_DISCOVERY_KEY) is True
+            and backup.get("discoveryUserOwned") is not True
+        )
         if discovery_fcc_owned:
             del data[_DISCOVERY_KEY]
             changed = True

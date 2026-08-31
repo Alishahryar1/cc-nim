@@ -1156,17 +1156,22 @@ def test_remerge_keeps_frozen_snapshot_without_user_edits(
     assert json.loads(fake_config.read_text(encoding="utf-8")) == original
 
 
-def test_remerge_keeps_user_disabled_discovery(
+def test_remerge_marks_user_disabled_discovery_user_owned(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
-    """A post-merge discovery flip to ``False`` survives unconfigure.
+    """A post-merge discovery flip marks the flag user-owned; unconfigure never rewrites it.
 
-    The discovery target is frozen, not absorbed: the key was absent
-    before the first merge, and the user's explicit post-merge ``False``
-    must still win on removal. Since a current ``False`` is never
-    FCC-owned (configure always writes ``True``), unconfigure simply
-    keeps it.
+    The key was absent before the first merge; the user's explicit
+    post-merge ``False`` makes the flag user-owned from then on. On
+    uninstall the flag is handed off with whatever value is on disk at
+    that moment — here the merge's own contractual ``True`` write, which
+    the user last saw on disk — rather than deleted (erasing the user's
+    only explicit choice would be worse) or restored to any recorded
+    intermediate. The truly final user value lives on disk: the merge
+    always writes ``True``, so a user who wants discovery off must (and
+    does, per the re-disable test below) set ``False`` after the last
+    merge.
     """
 
     fake_config.write_text(
@@ -1189,7 +1194,94 @@ def test_remerge_keeps_user_disabled_discovery(
     )
     assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
     assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+        "modelDiscoveryEnabled": True,
+        "inference": {"provider": "p"},
+    }
+
+
+def test_unconfigure_keeps_user_redisabled_discovery_verbatim(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """A user-owned flag re-disabled after the last merge survives verbatim.
+
+    The flag was absent before the first merge, the user disabled it (the
+    adoption marker fires), and the user then re-disabled it after the
+    re-merge's own ``True`` write. The final on-disk value is the user's
+    explicit ``False``, so unconfigure hands it off untouched — neither
+    deleted as FCC-owned nor restored to an intermediate.
+    """
+
+    fake_config.write_text(
+        json.dumps({"inference": {"provider": "p"}}), encoding="utf-8"
+    )
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    for value in (False, "merge", False):
+        if value == "merge":
+            assert (
+                claude_desktop.configure_claude_desktop_config(
+                    fake_config, settings=fake_settings
+                )
+                is True
+            )
+            continue
+        current = json.loads(fake_config.read_text(encoding="utf-8"))
+        current["modelDiscoveryEnabled"] = value
+        fake_config.write_text(json.dumps(current), encoding="utf-8")
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
         "modelDiscoveryEnabled": False,
+        "inference": {"provider": "p"},
+    }
+
+
+def test_unconfigure_hands_off_user_owned_discovery_after_final_flip(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """The user's final discovery re-enable survives unconfigure verbatim.
+
+    Regression guard for the Greptile "final discovery preference lost"
+    finding: with the key ABSENT before the first merge, the user disables
+    discovery, a re-merge runs, and then the user re-enables it before
+    uninstalling. Recording the intermediate ``False`` as a restore value
+    would make unconfigure restore that stale intermediate and discard the
+    final ``True`` — which is byte-identical to configure's own always-
+    ``True`` write and therefore unattributable. The re-merge instead
+    marks the flag user-owned, and unconfigure hands it off verbatim,
+    whatever its final value is.
+    """
+
+    fake_config.write_text(
+        json.dumps({"inference": {"provider": "p"}}),
+        encoding="utf-8",
+    )
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    for value in (False, "merge", True):
+        if value == "merge":
+            assert (
+                claude_desktop.configure_claude_desktop_config(
+                    fake_config, settings=fake_settings
+                )
+                is True
+            )
+            continue
+        current = json.loads(fake_config.read_text(encoding="utf-8"))
+        current["modelDiscoveryEnabled"] = value
+        fake_config.write_text(json.dumps(current), encoding="utf-8")
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+        "modelDiscoveryEnabled": True,
         "inference": {"provider": "p"},
     }
 
@@ -1200,14 +1292,11 @@ def test_unconfigure_keeps_user_final_discovery_reenable(
 ) -> None:
     """The user's final discovery re-enable survives unconfigure.
 
-    Regression guard for the Greptile "discovery ownership loses the final
-    user preference" finding: the user disables discovery, a re-merge runs,
-    and then the user re-enables it before uninstalling. Absorbing the
-    intermediate ``False`` as the restore target would make unconfigure
-    discard the user's final ``True`` and restore the stale intermediate.
-    The discovery target is frozen instead, so the final ``True`` —
-    indistinguishable from configure's own always-``True`` write — keeps
-    the recorded original, which here is the user's own ``True``.
+    Companion to the user-owned handoff test, with the key PRESENT and
+    ``True`` before the first merge: the snapshot records the original
+    value, and the final ``True`` — indistinguishable from configure's
+    own always-``True`` write — restores that recorded original, which
+    here is the user's own ``True``.
     """
 
     fake_config.write_text(
