@@ -37,6 +37,42 @@ def test_tray_is_available_true_when_icon_constructs():
     assert reason == ""
 
 
+def test_tray_probe_releases_backend_display_connection():
+    """A probe icon's X11 display is closed eagerly, not by ``__del__``.
+
+    Regression guard for the unraisable-exception flake: the X11 backend
+    opens a display connection in ``Icon.__init__`` and closes it only in a
+    garbage-collected destructor, which can run during an unrelated test
+    and fail on the already-closed socket (turning into a suite-wide
+    ``PytestUnraisableExceptionWarning`` failure under ``filterwarnings =
+    error``). The probe must close the connection itself and leave the
+    destructor a no-op stand-in.
+    """
+
+    class XorgLikeIcon:
+        """Backend icon holding an X11-style display connection."""
+
+        def __init__(self) -> None:
+            self._display = MagicMock()
+
+        def __del__(self) -> None:
+            self._display.close()
+
+    icon = XorgLikeIcon()
+    display = icon._display
+    with (
+        patch("free_claude_code.cli.desktop_tray._create_icon"),
+        patch("pystray.Icon", MagicMock(return_value=icon)),
+    ):
+        available, _ = tray_is_available()
+
+    assert available is True
+    display.close.assert_called_once()
+    # The stand-in left behind keeps the destructor harmless.
+    assert icon._display is not display
+    icon.__del__()  # The destructor runs against the no-op stand-in.
+
+
 def test_tray_is_available_reports_backend_import_error():
     with (
         patch("free_claude_code.cli.desktop_tray._create_icon"),

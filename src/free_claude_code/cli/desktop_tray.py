@@ -1,7 +1,8 @@
 """pystray adapter for the Windows tray, macOS menu bar, and Linux status area."""
 
+import contextlib
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from PIL import Image
 
@@ -98,12 +99,48 @@ _TRAY_BACKEND_HINT = (
 )
 
 
+class _ProbedIcon(Protocol):
+    """Backend icon attribute shape the probe releases."""
+
+    _display: object
+
+
+def _release_probe_icon(icon: _ProbedIcon) -> None:
+    """Release backend resources an un-run probe icon holds.
+
+    The X11 backend opens a display connection in ``Icon.__init__`` and only
+    closes it in ``__del__``; a probe that discards the icon therefore leaves
+    the close to garbage collection, where it can run on an already-torn-down
+    interpreter (``select`` on a -1 file descriptor) or fire an
+    ``ResourceWarning`` for the socket. Close the connection eagerly and
+    leave a no-op stand-in so the eventual destructor is harmless. Other
+    backends hold nothing in the constructor, so only the X11 shape
+    (``_display``) is released.
+    """
+
+    display = getattr(icon, "_display", None)
+    if display is None:
+        return
+
+    class _ReleasedDisplay:
+        """No-op stand-in left behind for the backend's destructor."""
+
+        def close(self) -> None:
+            return
+
+    with contextlib.suppress(Exception):
+        display.close()
+    icon._display = _ReleasedDisplay()
+
+
 def tray_is_available() -> tuple[bool, str]:
     """Probe whether a native tray icon can be constructed on this desktop.
 
     Constructing the pystray ``Icon`` resolves the platform backend module;
     on Linux that import fails when no AppIndicator/GTK/X11 backend exists.
-    The probe discards the constructed icon without ever showing it.
+    The probe discards the constructed icon without ever showing it, and
+    releases the backend's display connection eagerly instead of leaving the
+    close to a garbage-collected destructor.
 
     Returns ``(True, "")`` when a tray can run, otherwise ``(False, reason)``
     with an actionable message for console fallback mode.
@@ -116,11 +153,12 @@ def tray_is_available() -> tuple[bool, str]:
     try:
         from pystray import Icon
 
-        Icon("free-claude-code", image, "Free Claude Code")
+        icon = Icon("free-claude-code", image, "Free Claude Code")
     except Exception as exc:
         if isinstance(exc, ImportError):
             return False, _TRAY_BACKEND_HINT
         return False, str(exc)
+    _release_probe_icon(icon)
     return True, ""
 
 
