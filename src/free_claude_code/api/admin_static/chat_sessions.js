@@ -37,6 +37,7 @@
     eventBuffer: null,
     feedRestartTimer: null,
     modelComboboxes: new Set(),
+    transcriptPosition: null,
   };
 
   const CHAT_EVENT_TYPES = [
@@ -1077,11 +1078,19 @@
     const scroller = node("div", "chat-transcript");
     scroller.id = "chatTranscript";
     scroller.setAttribute("aria-label", "Conversation");
+    scroller.addEventListener("scroll", () => {
+      rememberTranscriptPosition(session.id, scroller);
+    });
     const composer = renderComposer();
     shell.append(header, notice, scroller, composer);
     root().replaceChildren(shell);
     renderTranscript();
     refreshComposerState();
+    state.transcriptPosition = {
+      sessionId: session.id,
+      followLatest,
+      scrollTop,
+    };
     if (followLatest) {
       scrollLatest(false);
     } else {
@@ -1091,10 +1100,7 @@
 
   function renderSessionPreservingScroll(titleEdit = captureTitleEdit()) {
     const scroller = document.getElementById("chatTranscript");
-    renderSession({
-      followLatest: !scroller || nearBottom(scroller),
-      scrollTop: scroller?.scrollTop || 0,
-    });
+    renderSession(captureTranscriptPosition(scroller));
     restoreTitleEdit(titleEdit);
   }
 
@@ -1919,6 +1925,37 @@
 
   function nearBottom(scroller) {
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+  }
+
+  function captureTranscriptPosition(scroller) {
+    const sessionId = state.session?.id;
+    if (!sessionId) return { followLatest: true, scrollTop: 0 };
+    if (state.transcriptPosition?.sessionId !== sessionId) {
+      state.transcriptPosition = {
+        sessionId,
+        followLatest: true,
+        scrollTop: 0,
+      };
+    }
+    if (scroller) rememberTranscriptPosition(sessionId, scroller);
+    return {
+      followLatest: state.transcriptPosition.followLatest,
+      scrollTop: state.transcriptPosition.scrollTop,
+    };
+  }
+
+  function rememberTranscriptPosition(sessionId, scroller) {
+    if (state.session?.id !== sessionId) return;
+    if (state.transcriptPosition?.sessionId !== sessionId) {
+      state.transcriptPosition = {
+        sessionId,
+        followLatest: true,
+        scrollTop: 0,
+      };
+    }
+    if (scroller.scrollHeight <= scroller.clientHeight) return;
+    state.transcriptPosition.followLatest = nearBottom(scroller);
+    state.transcriptPosition.scrollTop = scroller.scrollTop;
   }
 
   function scrollLatest(smooth) {
