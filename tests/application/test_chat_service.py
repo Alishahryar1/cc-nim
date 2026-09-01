@@ -1457,6 +1457,68 @@ async def test_delete_waits_for_terminal_settlement_before_removing_session(
 
 
 @pytest.mark.asyncio
+async def test_cancelled_delete_request_still_finishes_accepted_deletion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_settlement = asyncio.Event()
+    subscription: ChatEventSubscriptionPort | None = None
+    try:
+        entered_settlement = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_settlement.set()
+            await release_settlement.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        subscription, _active = await service.subscribe()
+        operation_id = "cd352568-fefd-4324-8062-9dadc4efbba6"
+        await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="delete this chat",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        running = await service.get_session(session.id)
+
+        request_task = asyncio.create_task(
+            service.delete_session(session.id, expected_revision=running.revision)
+        )
+        await asyncio.wait_for(entered_settlement.wait(), timeout=1)
+        request_task.cancel()
+        await asyncio.sleep(0.05)
+        assert not request_task.done()
+
+        release_settlement.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request_task, timeout=1)
+        with pytest.raises(ChatNotFoundError):
+            await service.get_session(session.id)
+
+        events = subscription.__aiter__()
+        while True:
+            event = await asyncio.wait_for(anext(events), timeout=1)
+            if event.event == "session.deleted":
+                break
+        fresh_subscription, active = await service.subscribe()
+        try:
+            assert active == ()
+        finally:
+            await fresh_subscription.aclose()
+    finally:
+        release_settlement.set()
+        if subscription is not None:
+            await subscription.aclose()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_close_waits_for_terminal_settlement(tmp_path: Path, monkeypatch):
     service, _runtime, store = await _service(tmp_path, FakeChatProvider())
     release_commit = asyncio.Event()

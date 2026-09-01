@@ -320,18 +320,31 @@ class ChatService:
         try:
             current = await self._store.get_session(session_id)
             _expect_revision(current, expected_revision)
-            if active is not None:
-                await self._cancel_active(
-                    active,
-                    reason=_CancellationReason.DELETED,
-                    wait_if_settling=True,
+
+            async def finish_deletion() -> None:
+                settled = current
+                if active is not None:
+                    await self._cancel_active(
+                        active,
+                        reason=_CancellationReason.DELETED,
+                        wait_if_settling=True,
+                    )
+                    settled = await self._store.get_session(session_id)
+                await self._store.delete_session(
+                    session_id,
+                    expected_revision=settled.revision,
                 )
-                current = await self._store.get_session(session_id)
-            await self._store.delete_session(
-                session_id,
-                expected_revision=current.revision,
+                self._events.publish("session.deleted", {"session_id": session_id})
+
+            deletion_task = asyncio.create_task(
+                finish_deletion(),
+                name=f"fcc-chat-delete-{session_id}",
             )
-            self._events.publish("session.deleted", {"session_id": session_id})
+            _result, cancellation = await _await_task_despite_cancellation(
+                deletion_task
+            )
+            if cancellation is not None:
+                raise cancellation
         finally:
             async with self._active_lock:
                 self._deleting.discard(session_id)
