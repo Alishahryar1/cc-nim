@@ -93,7 +93,6 @@ class ChatSessionSummary:
     preview: str
     created_at: int
     updated_at: int
-    active_operation: ChatOperationKind | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +205,6 @@ class ChatSessionDetail:
     compaction: ChatCompaction | None
     context: ChatContextEstimate | None
     context_error: str | None
-    active_operation: ChatActiveOperation | None
 
 
 @dataclass(frozen=True, slots=True)

@@ -312,7 +312,7 @@ async def _observe_call[**P](
     *args: P.args,
     **kwargs: P.kwargs,
 ) -> _ObservedOperation:
-    subscription = service.subscribe()
+    subscription, _active = await service.subscribe()
     try:
         acknowledgement = await command(*args, **kwargs)
     except BaseException:
@@ -332,6 +332,7 @@ async def _drain(operation: _ObservedOperation) -> list[str]:
         async for event in operation.subscription:
             if event.data.get("operation_id") != operation.acknowledgement.operation_id:
                 continue
+            assert event.data["kind"] == operation.acknowledgement.kind.value
             events.append(event.event)
             if event.event in terminal_events:
                 break
@@ -628,13 +629,13 @@ async def test_closing_subscription_does_not_cancel_active_operation(
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await stream.aclose()
 
-        active = (await service.get_detail(session.id)).active_operation
-        assert active is not None
-        assert active.operation_id == stream.acknowledgement.operation_id
         assert runtime.leases[0].released == 0
         assert provider.closed == 0
 
-        replacement_subscription = service.subscribe()
+        replacement_subscription, active_operations = await service.subscribe()
+        assert [active.operation_id for active in active_operations] == [
+            stream.acknowledgement.operation_id
+        ]
         replacement_observer = _ObservedOperation(
             stream.acknowledgement, replacement_subscription
         )
@@ -692,7 +693,9 @@ async def test_stop_retries_transient_terminal_persistence_failure(
         transcript = await store.get_transcript(session.id)
         assert attempts == 2
         assert transcript.turns[-1].generation.status is GenerationStatus.STOPPED
-        assert (await service.get_detail(session.id)).active_operation is None
+        snapshot_subscription, active_operations = await service.subscribe()
+        await snapshot_subscription.aclose()
+        assert active_operations == ()
 
         provider.block_after_delta = False
         replacement = await _observe_call(
@@ -949,7 +952,7 @@ async def test_disconnect_does_not_interrupt_failure_terminalization(
         await asyncio.wait_for(entered_flush.wait(), timeout=1)
 
         await stream.aclose()
-        replacement_subscription = service.subscribe()
+        replacement_subscription, _active = await service.subscribe()
         replacement_observer = _ObservedOperation(
             stream.acknowledgement, replacement_subscription
         )
@@ -1000,7 +1003,8 @@ async def test_durable_mutations_publish_once_and_stale_mutation_publishes_nothi
     tmp_path: Path,
 ):
     service, _runtime, _store = await _service(tmp_path, FakeChatProvider())
-    subscription = service.subscribe()
+    subscription, active_operations = await service.subscribe()
+    assert active_operations == ()
     events = subscription.__aiter__()
     try:
         session = await service.create_session()
@@ -1345,14 +1349,7 @@ async def test_detail_snapshot_keeps_operation_owner_visible_through_completion(
         detail = await asyncio.wait_for(detail_task, timeout=1)
         await _drain(stream)
 
-        assert detail.active_operation is not None
-        assert (
-            detail.active_operation.operation_id == stream.acknowledgement.operation_id
-        )
-        assert [segment.text for segment in detail.active_operation.segments] == [
-            "thought",
-            "answer",
-        ]
+        assert not hasattr(detail, "active_operation")
         assert detail.session.revision > session.revision
     finally:
         release_commit.set()
@@ -1409,11 +1406,10 @@ async def test_terminal_event_releases_owner_while_an_older_detail_read_waits(
         )
         release_snapshot.set()
         older_detail = await asyncio.wait_for(detail_task, timeout=1)
-        assert older_detail.active_operation is not None
-        assert older_detail.active_operation.operation_id == operation_id
+        assert not hasattr(older_detail, "active_operation")
 
         current_detail = await service.get_detail(session.id)
-        assert current_detail.active_operation is None
+        assert not hasattr(current_detail, "active_operation")
 
         current = await service.get_session(session.id)
         next_stream = await _observe_call(

@@ -221,7 +221,7 @@ def test_delayed_older_page_cannot_cross_into_another_chat(
     expect(page.locator(".assistant-message")).to_have_count(1)
     message.fill("A latest")
     page.get_by_role("button", name="Send").click()
-    expect(message).to_be_enabled()
+    expect(page.locator(".assistant-message:not(.live-message)")).to_have_count(2)
     title = page.get_by_label("Chat title")
     title.fill("[delay-older-page] Chat A")
     with page.expect_response(
@@ -546,6 +546,39 @@ def test_refresh_keeps_one_live_operation_and_reconstructs_its_answer(
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
 
 
+def test_terminal_event_cannot_be_undone_by_an_older_detail_response(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    title = page.get_by_label("Chat title")
+    title.fill("[delay-detail] stale operation snapshot")
+    with page.expect_response(lambda response: response.request.method == "PATCH"):
+        title.press("Enter")
+    page.get_by_role("textbox", name="Message", exact=True).fill("[slow] finish once")
+    page.get_by_role("button", name="Send").click()
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+
+    other = page.context.new_page()
+    try:
+        with other.expect_request(
+            lambda request: (
+                request.method == "GET"
+                and request.url.endswith(page.url.rsplit("/", 1)[-1])
+            )
+        ):
+            other.goto(page.url, wait_until="commit")
+        page.wait_for_timeout(150)
+        page.get_by_role("button", name="Stop").click()
+        expect(page.get_by_role("button", name="Retry")).to_be_visible()
+
+        expect(other.get_by_role("button", name="Retry")).to_be_visible(timeout=3_000)
+        expect(other.get_by_role("button", name="Stop")).to_have_count(0)
+        expect(other.locator("#chatComposerStatus")).not_to_have_text("Thinking…")
+    finally:
+        other.close()
+
+
 def test_two_sessions_run_concurrently_across_navigation(
     page: Page,
     admin_base_url: str,
@@ -578,6 +611,36 @@ def test_two_sessions_run_concurrently_across_navigation(
     expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
     page.get_by_role("button", name="Stop").click()
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
+
+
+def test_library_card_tracks_background_operation_and_durable_summary(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    title = page.get_by_label("Chat title")
+    title.fill("Library observer")
+    with page.expect_response(lambda response: response.request.method == "PATCH"):
+        title.press("Enter")
+    other = page.context.new_page()
+    try:
+        other.goto(f"{admin_base_url}/admin/chat")
+        message = page.get_by_role("textbox", name="Message", exact=True)
+        message.fill("[slow] live library preview")
+        message.press("Enter")
+
+        card = other.locator(".chat-session-card", has_text="Library observer")
+        expect(card).to_be_visible(timeout=3_000)
+        expect(card.locator("p")).to_have_text("[slow] live library preview")
+        expect(card.locator(".chat-session-status")).to_have_text("Thinking…")
+
+        page.get_by_role("button", name="Stop").click()
+        expect(page.get_by_role("button", name="Retry")).to_be_visible()
+        expect(card.locator(".chat-session-status")).to_have_count(0, timeout=3_000)
+        expect(card.locator("p")).to_have_text("[slow] live library preview")
+        expect(card.locator("span").first).to_contain_text("just now")
+    finally:
+        other.close()
 
 
 def test_chat_operation_continues_while_providers_view_is_open(
@@ -665,12 +728,17 @@ def test_session_settings_sync_without_disturbing_another_tab_draft(
         other.goto(page.url)
         other_message = other.get_by_role("textbox", name="Message", exact=True)
         other_message.fill("private draft")
+        other_title = other.get_by_label("Chat title")
+        other_title.fill("Local title draft")
 
         title = page.get_by_label("Chat title")
         title.fill("Shared title")
         with page.expect_response(lambda response: response.request.method == "PATCH"):
             title.press("Enter")
-        expect(other.get_by_label("Chat title")).to_have_value("Shared title")
+        expect(other_title).to_have_value("Local title draft")
+        with other.expect_response(lambda response: response.request.method == "PATCH"):
+            other_title.press("Enter")
+        expect(title).to_have_value("Local title draft")
 
         _select_model(page, "open_router/vendor/model-b")
         expect(other.get_by_label("Selected model")).to_have_value(
@@ -859,7 +927,12 @@ def test_long_transcript_keeps_composer_visible_and_preserves_reader_scroll_posi
     page.get_by_role("button", name="Send").click()
     expect(page.get_by_role("button", name="Stop")).to_be_visible()
     scroller = page.locator("#chatTranscript")
-    assert scroller.evaluate("node => node.scrollHeight > node.clientHeight")
+    page.wait_for_function(
+        """() => {
+          const node = document.getElementById('chatTranscript');
+          return node && node.scrollHeight > node.clientHeight;
+        }"""
+    )
     composer_is_fully_visible = message.evaluate(
         "node => { const box = node.getBoundingClientRect(); "
         "return box.top >= 0 && box.bottom <= window.innerHeight; }"

@@ -47,7 +47,12 @@ class StubSubscription:
         yield ChatPublishedEvent(
             event="turn.completed",
             id=5,
-            data={"operation_id": OPERATION_ID, "session_id": SESSION_ID},
+            data={
+                "operation_id": OPERATION_ID,
+                "session_id": SESSION_ID,
+                "kind": "send",
+                "operation_sequence": 3,
+            },
         )
 
     async def aclose(self) -> None:
@@ -123,9 +128,12 @@ class StubChat:
             ),
         )
 
-    def subscribe(self) -> StubSubscription:
+    async def subscribe(
+        self,
+    ) -> tuple[StubSubscription, tuple[ChatActiveOperation, ...]]:
         self.last_subscription = StubSubscription()
-        return self.last_subscription
+        active = (self.active_operation,) if self.active_operation is not None else ()
+        return self.last_subscription, active
 
     async def preferences(self) -> ChatPreferences:
         return self.preferences_value
@@ -161,7 +169,6 @@ class StubChat:
             compaction=compaction,
             context=context,
             context_error=context_error,
-            active_operation=self.active_operation,
         )
 
     async def list_sessions(
@@ -309,10 +316,12 @@ class UnestimatableChat(StubChat):
 
 
 class OverflowChat(StubChat):
-    def subscribe(self) -> OverflowSubscription:
+    async def subscribe(
+        self,
+    ) -> tuple[OverflowSubscription, tuple[ChatActiveOperation, ...]]:
         subscription = OverflowSubscription()
         self.last_subscription = subscription
-        return subscription
+        return subscription, ()
 
     async def stop(self, session_id: str, *, operation_id: str) -> bool:
         raise AssertionError((session_id, operation_id))
@@ -354,6 +363,7 @@ def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
 
     bootstrap = client.get("/admin/api/chat/bootstrap").json()
     detail = client.get(f"/admin/api/chat/sessions/{SESSION_ID}").json()
+    feed = client.get("/admin/api/chat/events")
 
     assert bootstrap["models"][0]["supports_reasoning"] is True
     assert bootstrap["models"][0]["input_modalities"] == ["text"]
@@ -363,19 +373,8 @@ def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
     assert "<script>" not in segment["html"]
     assert detail["turns"][0]["generation"]["actual_model"] == ("open_router/fallback")
     assert detail["turns"][0]["operation_id"] == "operation"
-    assert detail["active_operation"] == {
-        "session_id": SESSION_ID,
-        "operation_id": OPERATION_ID,
-        "kind": "send",
-        "phase": "generating",
-        "operation_sequence": 2,
-        "submitted_text": "next",
-        "turn_id": "turn-next",
-        "generation_id": "generation-next",
-        "regeneration": False,
-        "actual_model": "groq/model",
-        "segments": [{"ordinal": 0, "kind": "text", "text": "live"}],
-    }
+    assert "active_operation" not in detail
+    assert '"submitted_text": "next"' in feed.text
 
 
 def test_chat_detail_stays_readable_when_context_controls_need_repair():
@@ -447,7 +446,7 @@ def test_chat_event_feed_starts_at_snapshot_barrier_and_closes_subscription():
     assert response.headers["x-accel-buffering"] == "no"
     assert "event: feed.ready" in response.text
     assert "id: 4" in response.text
-    assert 'data: {"cursor": 4}' in response.text
+    assert 'data: {"cursor": 4, "active_operations": []}' in response.text
     assert "event: turn.completed" in response.text
     assert "id: 5" in response.text
     assert chat.last_subscription is not None

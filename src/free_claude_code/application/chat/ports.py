@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from typing import Protocol
 
 from .models import (
+    ChatActiveOperation,
     ChatCompaction,
     ChatContextEstimate,
     ChatGeneration,
@@ -16,6 +17,7 @@ from .models import (
     ChatSession,
     ChatSessionDetail,
     ChatSessionPage,
+    ChatSessionSummary,
     ChatTranscript,
     ChatTurn,
     GenerationStatus,
@@ -44,6 +46,8 @@ class ChatStorePort(Protocol):
         cursor: tuple[int, str] | None,
         limit: int,
     ) -> ChatSessionPage: ...
+
+    async def get_session_summary(self, session_id: str) -> ChatSessionSummary: ...
 
     async def get_session(self, session_id: str) -> ChatSession: ...
 
@@ -173,7 +177,9 @@ class ChatApplicationPort(Protocol):
 
     def models(self) -> tuple[ChatModelOption, ...]: ...
 
-    def subscribe(self) -> ChatEventSubscriptionPort: ...
+    async def subscribe(
+        self,
+    ) -> tuple[ChatEventSubscriptionPort, tuple[ChatActiveOperation, ...]]: ...
 
     async def preferences(self) -> ChatPreferences: ...
 

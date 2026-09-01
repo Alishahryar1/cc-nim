@@ -46,6 +46,7 @@ from .models import (
     ChatSession,
     ChatSessionDetail,
     ChatSessionPage,
+    ChatSessionSummary,
     ChatTranscript,
     ChatTurn,
     ChatUnavailableError,
@@ -153,9 +154,18 @@ class ChatService:
     def models(self) -> tuple[ChatModelOption, ...]:
         return self._context.models()
 
-    def subscribe(self) -> ChatEventSubscriptionPort:
+    async def subscribe(
+        self,
+    ) -> tuple[ChatEventSubscriptionPort, tuple[ChatActiveOperation, ...]]:
         self._require_available()
-        return self._events.subscribe()
+        subscription = self._events.subscribe()
+        try:
+            async with self._active_lock:
+                active = tuple(_active_snapshot(item) for item in self._active.values())
+        except BaseException:
+            await subscription.aclose()
+            raise
+        return subscription, active
 
     async def preferences(self) -> ChatPreferences:
         self._require_available()
@@ -198,7 +208,7 @@ class ChatService:
             model=model,
             reasoning=reasoning,
         )
-        self._events.publish("session.created", _session_event_data(session))
+        await self._publish_session_summary(session.id, event="session.created")
         return session
 
     async def list_sessions(
@@ -209,24 +219,10 @@ class ChatService:
         limit: int,
     ) -> ChatSessionPage:
         self._require_available()
-        page = await self._store.list_sessions(
+        return await self._store.list_sessions(
             query=query,
             cursor=cursor,
             limit=max(1, min(_SESSION_PAGE_LIMIT, limit)),
-        )
-        async with self._active_lock:
-            active_kinds = {
-                session_id: active.kind for session_id, active in self._active.items()
-            }
-        return replace(
-            page,
-            sessions=tuple(
-                replace(
-                    session,
-                    active_operation=active_kinds.get(session.id),
-                )
-                for session in page.sessions
-            ),
         )
 
     async def get_session(self, session_id: str) -> ChatSession:
@@ -236,9 +232,6 @@ class ChatService:
     async def get_detail(self, session_id: str) -> ChatSessionDetail:
         self._require_available()
         session_id = _canonical_uuid(session_id, "session")
-        async with self._active_lock:
-            active = self._active.get(session_id)
-            active_operation = _active_snapshot(active) if active is not None else None
         transcript = await self._store.get_transcript(session_id)
         prompt = (await self._store.load_preferences()).system_prompt
         context: ChatContextEstimate | None
@@ -261,7 +254,6 @@ class ChatService:
             compaction=transcript.compaction,
             context=context,
             context_error=context_error,
-            active_operation=active_operation,
         )
 
     async def update_session(
@@ -299,7 +291,7 @@ class ChatService:
                 model=model,
                 reasoning=reasoning,
             )
-        self._events.publish("session.updated", _session_event_data(session))
+        await self._publish_session_summary(session.id)
         return session
 
     async def delete_session(self, session_id: str, *, expected_revision: int) -> None:
@@ -614,6 +606,7 @@ class ChatService:
                 ),
             )
             active.turn_id = turn_id
+            await self._publish_session_summary(active.session_id)
             self._emit(
                 active,
                 "turn.started",
@@ -681,6 +674,7 @@ class ChatService:
                 ),
             )
             active.turn_id = latest.id
+            await self._publish_session_summary(active.session_id)
             self._emit(
                 active,
                 "turn.started",
@@ -750,6 +744,7 @@ class ChatService:
                 ),
             )
             active.turn_id = latest.id
+            await self._publish_session_summary(active.session_id)
             self._emit(
                 active,
                 "turn.started",
@@ -908,6 +903,7 @@ class ChatService:
                 "actual_model": active.actual_model,
             },
         )
+        await self._publish_session_summary(active.session_id)
 
     async def _handle_sse_event(
         self,
@@ -954,7 +950,7 @@ class ChatService:
             self._emit(
                 active,
                 "segment.started",
-                {"ordinal": ordinal, "kind": kind.value},
+                {"ordinal": ordinal, "segment_kind": kind.value},
             )
             eager_key = "thinking" if kind is SegmentKind.THINKING else "text"
             eager = _optional_string(block.get(eager_key)) or ""
@@ -1010,7 +1006,11 @@ class ChatService:
         self._emit(
             active,
             "segment.delta",
-            {"ordinal": ordinal, "kind": current.kind.value, "delta": delta},
+            {
+                "ordinal": ordinal,
+                "segment_kind": current.kind.value,
+                "delta": delta,
+            },
         )
 
     async def _flush_segments(self, active: _ActiveOperation) -> None:
@@ -1131,6 +1131,7 @@ class ChatService:
             self._emit(active, "compaction.completed", completion)
             if cancellation is not None:
                 raise cancellation
+        await self._publish_session_summary(active.session_id)
         return compaction
 
     async def _summarize_turns(
@@ -1272,6 +1273,7 @@ class ChatService:
                         error_message=None,
                     )
                     terminal_data["revision"] = session.revision
+                    await self._publish_session_summary(active.session_id)
             except Exception as exc:
                 if reason is _CancellationReason.INTERRUPTED:
                     logger.warning(
@@ -1363,6 +1365,7 @@ class ChatService:
                         error_message=message,
                     )
                 terminal_data["revision"] = session.revision
+                await self._publish_session_summary(active.session_id)
             except Exception as persistence_exc:
                 self._disable_after_terminal_write_failure(
                     active,
@@ -1473,6 +1476,7 @@ class ChatService:
         payload: JsonObject = {
             "session_id": active.session_id,
             "operation_id": active.operation_id,
+            "kind": active.kind.value,
             "operation_sequence": active.event_sequence,
             **data,
         }
@@ -1487,6 +1491,7 @@ class ChatService:
         payload: JsonObject = {
             "session_id": active.session_id,
             "operation_id": active.operation_id,
+            "kind": active.kind.value,
             "operation_sequence": active.event_sequence,
             **data,
         }
@@ -1557,6 +1562,23 @@ class ChatService:
                 "updated_at": preferences.updated_at,
             },
         )
+
+    async def _publish_session_summary(
+        self,
+        session_id: str,
+        *,
+        event: str = "session.updated",
+    ) -> None:
+        try:
+            summary = await self._store.get_session_summary(session_id)
+        except Exception as exc:
+            logger.warning(
+                "Could not publish Chat session summary: session_id={} exc_type={}",
+                session_id,
+                type(exc).__name__,
+            )
+            return
+        self._events.publish(event, _session_summary_event_data(summary))
 
 
 async def _commit_generation_start(
@@ -1695,13 +1717,14 @@ def _active_snapshot(active: _ActiveOperation) -> ChatActiveOperation:
     )
 
 
-def _session_event_data(session: ChatSession) -> JsonObject:
+def _session_summary_event_data(session: ChatSessionSummary) -> JsonObject:
     return {
         "session_id": session.id,
         "title": session.title,
         "model": session.model,
         "reasoning": session.reasoning.value,
         "revision": session.revision,
+        "preview": session.preview[:240],
         "created_at": session.created_at,
         "updated_at": session.updated_at,
     }

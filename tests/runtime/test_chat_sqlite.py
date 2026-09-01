@@ -52,6 +52,7 @@ async def test_store_creates_schema_preferences_and_searchable_sessions(tmp_path
 
         page = await store.list_sessions(query="CAFÉ", cursor=None, limit=25)
         assert [session.id for session in page.sessions] == [renamed.id]
+        assert await store.get_session_summary(renamed.id) == page.sessions[0]
         assert (await store.load_preferences()).last_model == second.model
     finally:
         await store.close()

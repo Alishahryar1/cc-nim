@@ -100,13 +100,18 @@ async def chat_events(
     services: ApiServices = Depends(get_services),
 ) -> AsyncIterator[ServerSentEvent]:
     require_loopback_admin(request)
-    subscription = _chat(services).subscribe()
+    subscription, active_operations = await _chat(services).subscribe()
     try:
         yield ServerSentEvent(
             event="feed.ready",
             id=str(subscription.cursor),
             retry=1_000,
-            data={"cursor": subscription.cursor},
+            data={
+                "cursor": subscription.cursor,
+                "active_operations": [
+                    _active_operation_payload(active) for active in active_operations
+                ],
+            },
         )
         try:
             async for event in subscription:
@@ -167,7 +172,6 @@ async def get_chat_session(
             _estimate_payload(detail.context) if detail.context is not None else None
         ),
         "context_error": detail.context_error,
-        "active_operation": _active_operation_payload(detail.active_operation),
     }
 
 
@@ -452,11 +456,6 @@ def _session_summary_payload(session: ChatSessionSummary) -> JsonObject:
             )
         ),
         "preview": session.preview[:240],
-        "active_operation": (
-            session.active_operation.value
-            if session.active_operation is not None
-            else None
-        ),
     }
 
 

@@ -18,6 +18,10 @@
     olderLoad: null,
     operation: null,
     activeOperations: new Map(),
+    pendingCommands: new Map(),
+    sessionSummaries: new Map(),
+    sessionRevisions: new Map(),
+    deletedSessions: new Set(),
     draft: "",
     draftSessionId: null,
     draftOperationId: null,
@@ -133,7 +137,19 @@
 
   async function synchronizeFeed(event) {
     const cursor = Number.parseInt(event.lastEventId, 10);
-    if (!Number.isSafeInteger(cursor) || cursor < 0) {
+    let snapshot;
+    try {
+      snapshot = JSON.parse(event.data);
+    } catch {
+      restartEventFeed();
+      return;
+    }
+    if (
+      !Number.isSafeInteger(cursor) ||
+      cursor < 0 ||
+      snapshot?.cursor !== cursor ||
+      !Array.isArray(snapshot?.active_operations)
+    ) {
       restartEventFeed();
       return;
     }
@@ -141,8 +157,14 @@
     state.feedLastId = cursor;
     state.feedStatus = "synchronizing";
     refreshFeedState();
+    const snapshotOperationIds = installActiveSnapshot(snapshot.active_operations);
+    if (!snapshotOperationIds) {
+      restartEventFeed();
+      return;
+    }
     await withBufferedEvents(() => refresh(window.location.pathname));
     if (syncVersion !== state.feedSyncVersion) return;
+    settlePendingAfterSnapshot(snapshotOperationIds);
     state.feedStatus = "live";
     refreshFeedState();
   }
@@ -192,14 +214,8 @@
 
   function applyChatEvent(event) {
     const { type, payload } = event;
-    if (type === "session.created") {
-      if (!state.session && chatIsVisible()) {
-        void loadLibrary(true, state.routeVersion);
-      }
-      return;
-    }
-    if (type === "session.updated") {
-      applySessionUpdate(payload);
+    if (type === "session.created" || type === "session.updated") {
+      applySessionSummary(payload);
       return;
     }
     if (type === "session.deleted") {
@@ -213,46 +229,100 @@
     applyOperationEvent(type, payload);
   }
 
-  function applySessionUpdate(payload) {
-    if (!payload.session_id || !Number.isInteger(payload.revision)) return;
-    const index = state.libraryItems.findIndex(
-      (session) => session.id === payload.session_id,
-    );
-    if (index >= 0 && payload.revision >= state.libraryItems[index].revision) {
-      state.libraryItems[index] = {
-        ...state.libraryItems[index],
-        title: payload.title,
-        model: payload.model,
-        reasoning: payload.reasoning,
-        revision: payload.revision,
-        updated_at: payload.updated_at,
-      };
+  function applySessionSummary(payload) {
+    const summary = sessionSummaryFromPayload(payload);
+    const current = summary ? reduceSessionSummary(summary) : null;
+    if (!current) return;
+    upsertLibrarySummary(current);
+    if (state.session?.id !== current.id) {
       if (!state.session && chatIsVisible()) renderLibraryItems();
-    }
-    if (
-      state.session?.id !== payload.session_id ||
-      payload.revision < state.session.revision
-    )
       return;
+    }
+    if (current.revision < state.session.revision) return;
+    const controlsChanged =
+      state.session.title !== current.title ||
+      state.session.model !== current.model ||
+      state.session.reasoning !== current.reasoning;
+    const titleEdit = captureTitleEdit();
     const selection = captureComposerSelection();
     state.session = {
       ...state.session,
+      title: current.title,
+      model: current.model,
+      reasoning: current.reasoning,
+      revision: current.revision,
+      created_at: current.created_at,
+      updated_at: current.updated_at,
+    };
+    if (controlsChanged) {
+      renderSessionPreservingScroll(titleEdit);
+      restoreComposerSelection(selection);
+    }
+    scheduleEstimate(true);
+  }
+
+  function sessionSummaryFromPayload(payload) {
+    if (
+      typeof payload.session_id !== "string" ||
+      typeof payload.title !== "string" ||
+      typeof payload.model !== "string" ||
+      typeof payload.reasoning !== "string" ||
+      !Number.isInteger(payload.revision) ||
+      typeof payload.preview !== "string" ||
+      !Number.isInteger(payload.created_at) ||
+      !Number.isInteger(payload.updated_at)
+    )
+      return null;
+    return {
+      id: payload.session_id,
       title: payload.title,
       model: payload.model,
       reasoning: payload.reasoning,
       revision: payload.revision,
+      preview: payload.preview,
+      created_at: payload.created_at,
       updated_at: payload.updated_at,
     };
-    renderSessionPreservingScroll();
-    restoreComposerSelection(selection);
-    scheduleEstimate(true);
+  }
+
+  function reduceSessionSummary(summary) {
+    if (state.deletedSessions.has(summary.id)) return null;
+    const knownRevision = state.sessionRevisions.get(summary.id) || 0;
+    if (summary.revision < knownRevision) return null;
+    state.sessionRevisions.set(summary.id, summary.revision);
+    state.sessionSummaries.set(summary.id, summary);
+    return summary;
+  }
+
+  function upsertLibrarySummary(summary) {
+    state.libraryItems = state.libraryItems.filter((item) => item.id !== summary.id);
+    if (matchesLibraryQuery(summary)) state.libraryItems.push(summary);
+    sortLibraryItems();
+  }
+
+  function matchesLibraryQuery(summary) {
+    const query = state.libraryQuery.trim().toLocaleLowerCase();
+    return !query || summary.title.toLocaleLowerCase().includes(query);
+  }
+
+  function sortLibraryItems() {
+    state.libraryItems.sort(
+      (left, right) =>
+        right.updated_at - left.updated_at || right.id.localeCompare(left.id),
+    );
   }
 
   function applySessionDeletion(sessionId) {
     if (typeof sessionId !== "string") return;
+    state.deletedSessions.add(sessionId);
+    state.sessionSummaries.delete(sessionId);
+    state.sessionRevisions.delete(sessionId);
     const operation = state.activeOperations.get(sessionId);
     if (operation) cancelOperationRender(operation);
     state.activeOperations.delete(sessionId);
+    const pending = state.pendingCommands.get(sessionId);
+    if (pending) cancelOperationRender(pending);
+    state.pendingCommands.delete(sessionId);
     removeDraft(sessionId);
     state.libraryItems = state.libraryItems.filter(
       (session) => session.id !== sessionId,
@@ -339,47 +409,116 @@
     return operation;
   }
 
-  function reconcileActiveSnapshot(sessionId, snapshot, turns) {
-    const existing = state.activeOperations.get(sessionId);
-    if (snapshot) {
-      const operation = operationFromSnapshot(snapshot, existing);
-      state.activeOperations.set(sessionId, operation);
-      state.operation = operation;
+  function validOperationKind(value) {
+    return ["send", "retry", "regenerate", "compact"].includes(value);
+  }
+
+  function validOperationSnapshot(snapshot) {
+    return Boolean(
+      snapshot &&
+        typeof snapshot.session_id === "string" &&
+        typeof snapshot.operation_id === "string" &&
+        validOperationKind(snapshot.kind) &&
+        ["generating", "compacting"].includes(snapshot.phase) &&
+        Number.isInteger(snapshot.operation_sequence) &&
+        Array.isArray(snapshot.segments),
+    );
+  }
+
+  function installActiveSnapshot(snapshots) {
+    const next = new Map();
+    const operationIds = new Set();
+    for (const snapshot of snapshots) {
+      if (!validOperationSnapshot(snapshot) || next.has(snapshot.session_id)) {
+        return null;
+      }
+      const current = state.activeOperations.get(snapshot.session_id);
+      const pending = state.pendingCommands.get(snapshot.session_id);
+      const reusable =
+        current?.id === snapshot.operation_id
+          ? current
+          : pending?.id === snapshot.operation_id
+            ? pending
+            : null;
+      const operation = operationFromSnapshot(snapshot, reusable);
+      next.set(snapshot.session_id, operation);
+      operationIds.add(snapshot.operation_id);
+      if (pending?.id === snapshot.operation_id) {
+        state.pendingCommands.delete(snapshot.session_id);
+      }
+    }
+    state.activeOperations.forEach((operation, sessionId) => {
+      if (next.get(sessionId) !== operation) cancelOperationRender(operation);
+    });
+    state.activeOperations = next;
+    selectVisibleOperation();
+    if (!state.session && chatIsVisible()) renderLibraryItems();
+    return operationIds;
+  }
+
+  function settlePendingAfterSnapshot(operationIds) {
+    if (!operationIds) {
+      restartEventFeed();
       return;
     }
-    const persisted =
-      existing && turns.some((turn) => turn.operation_id === existing.id);
-    if (persisted && existing.action === "send") confirmSubmittedDraft(existing.id);
-    if (existing?.commandPending) {
-      state.operation = existing;
+    [...state.pendingCommands.values()].forEach((pending) => {
+      if (pending.commandPending || operationIds.has(pending.id)) return;
+      if (pending.serverObserved) {
+        clearPendingCommand(pending);
+      } else if (pending.ambiguousError) {
+        markCommandUncertain(pending);
+      }
+    });
+    selectVisibleOperation();
+    if (state.session) renderSessionPreservingScroll();
+  }
+
+  function selectVisibleOperation() {
+    if (!state.session) {
+      state.operation = null;
       return;
     }
-    if (existing?.ambiguousError && !persisted) {
-      rejectCommand(existing, existing.ambiguousError);
-      return;
-    }
-    if (existing) cancelOperationRender(existing);
-    state.activeOperations.delete(sessionId);
-    state.operation = null;
+    state.operation =
+      state.activeOperations.get(state.session.id) ||
+      state.pendingCommands.get(state.session.id) ||
+      null;
   }
 
   function applyOperationEvent(type, payload) {
     if (
       typeof payload.session_id !== "string" ||
       typeof payload.operation_id !== "string" ||
+      !validOperationKind(payload.kind) ||
       !Number.isInteger(payload.operation_sequence)
     )
       return;
-    let operation = state.activeOperations.get(payload.session_id);
-    if (!operation || operation.id !== payload.operation_id) {
+    const active = state.activeOperations.get(payload.session_id);
+    const pending = state.pendingCommands.get(payload.session_id);
+    const matchingActive = active?.id === payload.operation_id ? active : null;
+    const matchingPending = pending?.id === payload.operation_id ? pending : null;
+    if (isTerminalEvent(type, payload.kind)) {
+      if (
+        matchingActive &&
+        payload.operation_sequence <= matchingActive.sequence
+      )
+        return;
+      if (matchingActive) matchingActive.sequence = payload.operation_sequence;
+      if (matchingPending) matchingPending.serverObserved = true;
+      void settleOperation(type, payload, matchingActive || matchingPending);
+      return;
+    }
+    let operation = matchingActive || matchingPending;
+    if (!operation) {
       operation = createOperation({
         id: payload.operation_id,
         sessionId: payload.session_id,
-        action: payload.kind || "send",
+        action: payload.kind,
       });
-      state.activeOperations.set(payload.session_id, operation);
     }
     if (payload.operation_sequence <= operation.sequence) return;
+    if (active && active !== operation) cancelOperationRender(active);
+    state.activeOperations.set(payload.session_id, operation);
+    if (matchingPending) state.pendingCommands.delete(payload.session_id);
     operation.serverObserved = true;
     operation.commandPending = false;
     let structural = true;
@@ -402,7 +541,7 @@
         operation.returnFocusToComposer && composerFocusIsUnclaimed();
     } else if (type === "segment.started") {
       operation.segments[payload.ordinal] = {
-        kind: payload.kind,
+        kind: payload.segment_kind,
         text: "",
         pending: [],
       };
@@ -425,12 +564,7 @@
       operation.status = "Thinking…";
     }
     operation.sequence = payload.operation_sequence;
-    updateLibraryOperation(operation.sessionId, operation.action);
     if (state.session?.id === operation.sessionId) state.operation = operation;
-    if (isTerminalEvent(type, operation)) {
-      void settleOperation(type, payload, operation);
-      return;
-    }
     if (structural && state.operation === operation) {
       renderOperationStructure(operation);
       if (restoreComposerFocus) focusComposerAtEnd();
@@ -439,7 +573,7 @@
     }
   }
 
-  function isTerminalEvent(type, operation) {
+  function isTerminalEvent(type, kind) {
     return (
       [
         "turn.completed",
@@ -449,23 +583,27 @@
         "compaction.stopped",
         "operation.failed",
       ].includes(type) ||
-      (type === "compaction.completed" && operation.action === "compact")
+      (type === "compaction.completed" && kind === "compact")
     );
   }
 
   async function settleOperation(type, payload, operation) {
-    cancelOperationRender(operation);
-    if (state.activeOperations.get(operation.sessionId) === operation) {
-      state.activeOperations.delete(operation.sessionId);
+    const sessionId = payload.session_id;
+    const operationId = payload.operation_id;
+    if (operation) cancelOperationRender(operation);
+    if (state.activeOperations.get(sessionId)?.id === operationId) {
+      state.activeOperations.delete(sessionId);
     }
-    updateLibraryOperation(operation.sessionId, null);
-    if (state.session?.id !== operation.sessionId) {
+    if (state.pendingCommands.get(sessionId)?.id === operationId) {
+      state.pendingCommands.delete(sessionId);
+    }
+    if (state.session?.id !== sessionId) {
       if (!state.session && chatIsVisible()) renderLibraryItems();
       return;
     }
-    state.operation = null;
+    selectVisibleOperation();
     if (type === "operation.failed") {
-      if (operation.action === "send") rejectSubmittedDraft(operation.id);
+      if (payload.kind === "send") rejectSubmittedDraft(operationId);
       renderSessionPreservingScroll();
       setNotice(payload.message || "Chat operation failed.", "error");
       return;
@@ -474,11 +612,6 @@
     if (type === "compaction.failed") {
       setNotice(payload.message || "Compaction failed.", "error");
     }
-  }
-
-  function updateLibraryOperation(sessionId, action) {
-    const item = state.libraryItems.find((session) => session.id === sessionId);
-    if (item) item.active_operation = action;
   }
 
   function refreshFeedState() {
@@ -578,43 +711,44 @@
 
   function rejectCommand(operation, message) {
     cancelOperationRender(operation);
-    if (state.activeOperations.get(operation.sessionId) === operation) {
-      state.activeOperations.delete(operation.sessionId);
+    if (state.pendingCommands.get(operation.sessionId) === operation) {
+      state.pendingCommands.delete(operation.sessionId);
     }
     if (operation.action === "send") rejectSubmittedDraft(operation.id);
-    updateLibraryOperation(operation.sessionId, null);
     if (state.operation === operation) {
-      state.operation = null;
+      selectVisibleOperation();
       renderSessionPreservingScroll();
       setNotice(message, "error");
     }
   }
 
-  async function reconcileAmbiguousCommand(operation) {
-    if (state.session?.id !== operation.sessionId) {
-      restartEventFeed();
-      return;
+  function clearPendingCommand(operation) {
+    if (state.pendingCommands.get(operation.sessionId) === operation) {
+      state.pendingCommands.delete(operation.sessionId);
     }
-    try {
-      await withBufferedEvents(async () => {
-        const detail = await state.api(
-          `/admin/api/chat/sessions/${operation.sessionId}`,
-        );
-        if (state.session?.id !== operation.sessionId) return;
-        applyDetail(detail);
-        renderSessionPreservingScroll();
-      });
-    } catch {
-      operation.ambiguousError = operation.ambiguousError || "Connection lost.";
-      restartEventFeed();
-      return;
+    if (
+      operation.action === "send" &&
+      state.turns.some((turn) => turn.operation_id === operation.id)
+    ) {
+      confirmSubmittedDraft(operation.id);
     }
-    const persisted = state.turns.some(
-      (turn) => turn.operation_id === operation.id,
+    cancelOperationRender(operation);
+  }
+
+  function markCommandUncertain(operation) {
+    clearPendingCommand(operation);
+    if (state.operation !== operation) return;
+    selectVisibleOperation();
+    renderSessionPreservingScroll();
+    setNotice(
+      "The connection was lost before FCC could confirm this command. Check the chat before trying it again.",
+      "error",
     );
-    const observed = state.activeOperations.get(operation.sessionId);
-    if (persisted || observed?.serverObserved) return;
-    rejectCommand(operation, operation.ambiguousError || "The command was not accepted.");
+  }
+
+  function reconcileAmbiguousCommand(operation) {
+    if (state.pendingCommands.get(operation.sessionId) !== operation) return;
+    restartEventFeed();
   }
 
   function detachVisibleOperation() {
@@ -776,9 +910,16 @@
     try {
       const page = await state.api(`/admin/api/chat/sessions?${params}`);
       if (!isCurrent()) return;
-      state.libraryItems = reset
-        ? page.sessions
-        : [...state.libraryItems, ...page.sessions];
+      const merged = new Map(
+        state.libraryItems.map((session) => [session.id, session]),
+      );
+      page.sessions.forEach((session) => {
+        if (state.deletedSessions.has(session.id)) return;
+        const current = reduceSessionSummary(session);
+        if (current && matchesLibraryQuery(current)) merged.set(current.id, current);
+      });
+      state.libraryItems = [...merged.values()].filter(matchesLibraryQuery);
+      sortLibraryItems();
       state.libraryCursor = page.next_cursor;
       renderLibraryItems();
     } catch (error) {
@@ -811,12 +952,13 @@
       const preview = node("p", "", session.preview || "No messages yet");
       const meta = node("span", "", `${session.model} · ${relativeTime(session.updated_at)}`);
       item.append(heading, preview, meta);
-      if (session.active_operation) {
+      const active = state.activeOperations.get(session.id);
+      if (active) {
         item.appendChild(
           node(
             "span",
             "chat-session-status",
-            session.active_operation === "compact" ? "Compacting…" : "Thinking…",
+            active.action === "compact" ? "Compacting…" : "Thinking…",
           ),
         );
       }
@@ -848,17 +990,33 @@
     route(window.location.pathname);
   }
 
-  async function showSession(id, version) {
+  async function showSession(id, version, freshnessRetry = false) {
     if (!state.bootstrap?.available) {
       renderUnavailable();
       return;
     }
-    renderLoading();
+    const refreshingVisibleSession =
+      state.session?.id === id && Boolean(document.getElementById("chatTranscript"));
+    if (!refreshingVisibleSession) renderLoading();
     try {
       const detail = await state.api(`/admin/api/chat/sessions/${id}`);
       if (version !== state.routeVersion) return;
-      applyDetail(detail);
-      renderSession();
+      const titleEdit = refreshingVisibleSession ? captureTitleEdit() : null;
+      const composerSelection = refreshingVisibleSession
+        ? captureComposerSelection()
+        : null;
+      if (!applyDetail(detail)) {
+        if (!freshnessRetry && !state.deletedSessions.has(id)) {
+          await showSession(id, version, true);
+        }
+        return;
+      }
+      if (refreshingVisibleSession) {
+        renderSessionPreservingScroll(titleEdit);
+        restoreComposerSelection(composerSelection);
+      } else {
+        renderSession();
+      }
     } catch (error) {
       if (version !== state.routeVersion) return;
       const empty = node("section", "chat-empty");
@@ -872,9 +1030,20 @@
   }
 
   function applyDetail(detail) {
+    const sessionId = detail.session.id;
+    const knownRevision = state.sessionRevisions.get(sessionId) || 0;
+    if (
+      state.deletedSessions.has(sessionId) ||
+      detail.session.revision < knownRevision ||
+      (state.session?.id === sessionId &&
+        detail.session.revision < state.session.revision)
+    ) {
+      return false;
+    }
+    state.sessionRevisions.set(sessionId, detail.session.revision);
     invalidateEstimate();
-    if (state.draftSessionId !== detail.session.id) {
-      loadDraft(detail.session.id);
+    if (state.draftSessionId !== sessionId) {
+      loadDraft(sessionId);
     }
     const pendingTurn =
       state.draftOperationId &&
@@ -886,8 +1055,9 @@
     state.compaction = detail.compaction;
     state.context = detail.context;
     state.contextError = detail.context_error || "";
-    reconcileActiveSnapshot(detail.session.id, detail.active_operation, detail.turns);
+    selectVisibleOperation();
     if (state.draft && !state.operation) scheduleEstimate(true);
+    return true;
   }
 
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
@@ -914,12 +1084,13 @@
     }
   }
 
-  function renderSessionPreservingScroll() {
+  function renderSessionPreservingScroll(titleEdit = captureTitleEdit()) {
     const scroller = document.getElementById("chatTranscript");
     renderSession({
       followLatest: !scroller || nearBottom(scroller),
       scrollTop: scroller?.scrollTop || 0,
     });
+    restoreTitleEdit(titleEdit);
   }
 
   function renderSessionHeader(session) {
@@ -1093,6 +1264,32 @@
     const end = Math.min(selection.end, textarea.value.length);
     textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(start, end, selection.direction);
+  }
+
+  function captureTitleEdit() {
+    const input = document.querySelector(".chat-title");
+    if (
+      !(input instanceof HTMLInputElement) ||
+      document.activeElement !== input ||
+      input.value === state.session?.title
+    )
+      return null;
+    return {
+      value: input.value,
+      start: input.selectionStart,
+      end: input.selectionEnd,
+      direction: input.selectionDirection,
+    };
+  }
+
+  function restoreTitleEdit(edit) {
+    const input = document.querySelector(".chat-title");
+    if (!(input instanceof HTMLInputElement) || !edit) return;
+    input.value = edit.value;
+    input.focus({ preventScroll: true });
+    const start = Math.min(edit.start ?? edit.value.length, edit.value.length);
+    const end = Math.min(edit.end ?? edit.value.length, edit.value.length);
+    input.setSelectionRange(start, end, edit.direction || "none");
   }
 
   function renderTranscript() {
@@ -1315,10 +1512,12 @@
       if (
         routeVersion !== state.routeVersion ||
         state.session?.id !== sessionId ||
-        state.session.revision !== expectedRevision
+        state.session.revision !== expectedRevision ||
+        state.deletedSessions.has(sessionId)
       )
         return;
       state.session = session;
+      state.sessionRevisions.set(session.id, session.revision);
       renderSessionPreservingScroll();
       scheduleEstimate(true);
     } catch (error) {
@@ -1573,7 +1772,7 @@
       state.draftSubmittedText = operation.userText;
       saveDraft();
     }
-    state.activeOperations.set(operation.sessionId, operation);
+    state.pendingCommands.set(operation.sessionId, operation);
     state.operation = operation;
     renderSessionPreservingScroll();
     try {
@@ -1599,12 +1798,19 @@
       operation.serverObserved = true;
     } catch (error) {
       operation.commandPending = false;
+      const active = state.activeOperations.get(operation.sessionId);
+      const pending = state.pendingCommands.get(operation.sessionId);
+      if (
+        active?.id === operation.id ||
+        (pending !== operation && operation.serverObserved)
+      )
+        return;
       if (error.status) {
         rejectCommand(operation, error.message);
         return;
       }
       operation.ambiguousError = error.message;
-      await reconcileAmbiguousCommand(operation);
+      reconcileAmbiguousCommand(operation);
     }
   }
 
@@ -1664,10 +1870,14 @@
     operation.status = "Stopping…";
     renderOperationStructure(operation);
     try {
-      await state.api(`/admin/api/chat/sessions/${operation.sessionId}/stop`, {
-        method: "POST",
-        body: JSON.stringify({ operation_id: operation.id }),
-      });
+      const result = await state.api(
+        `/admin/api/chat/sessions/${operation.sessionId}/stop`,
+        {
+          method: "POST",
+          body: JSON.stringify({ operation_id: operation.id }),
+        },
+      );
+      if (!result.stopped) restartEventFeed();
     } catch (error) {
       setNotice(error.message, "error");
     }
@@ -1680,8 +1890,9 @@
     try {
       const detail = await state.api(`/admin/api/chat/sessions/${id}`);
       if (state.session?.id !== id) return;
-      applyDetail(detail);
-      renderSessionPreservingScroll();
+      const titleEdit = captureTitleEdit();
+      if (!applyDetail(detail)) return;
+      renderSessionPreservingScroll(titleEdit);
       restoreComposerSelection(selection);
     } catch (error) {
       if (error.status === 404 && state.session?.id === id) {
