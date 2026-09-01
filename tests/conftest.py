@@ -241,3 +241,13 @@ def _propagate_loguru_to_caplog():
         loguru_logger.remove(
             handler_id
         )  # Handler already removed (e.g. by test_logging_config)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_picker_alias_state():
+    """Keep the process-global picker alias maps inert between tests."""
+    from free_claude_code.core import gateway_model_ids as gmi
+
+    gmi.clear_picker_aliases()
+    yield
+    gmi.clear_picker_aliases()

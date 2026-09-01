@@ -13,6 +13,7 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
     gateway_model_id,
     no_thinking_gateway_model_id,
+    picker_alias_for,
 )
 from free_claude_code.core.model_capabilities import ModelInputModality
 
@@ -133,15 +134,26 @@ def build_models_list_response(
     runtime: RequestRuntimePort,
     *,
     view: ModelCatalogView = ModelCatalogView.CLAUDE,
+    picker_aliases: bool = False,
 ) -> ModelsListResponse:
-    """Return the application model inventory in the requested client view."""
+    """Return the application model inventory in the requested client view.
+
+    ``picker_aliases`` opts into Claude Desktop picker alias ids; only the
+    desktop-scoped API mount enables it, so every other FCC client sees raw
+    provider refs regardless of seeded alias state.
+    """
     if view is ModelCatalogView.CLAUDE:
-        return _build_claude_models_response(settings, runtime)
+        return _build_claude_models_response(
+            settings, runtime, picker_aliases=picker_aliases
+        )
     return _build_direct_models_response(settings, runtime, view=view)
 
 
 def _build_claude_models_response(
-    settings: Settings, runtime: RequestRuntimePort
+    settings: Settings,
+    runtime: RequestRuntimePort,
+    *,
+    picker_aliases: bool,
 ) -> ModelsListResponse:
     """Preserve the established Claude-compatible catalog exactly."""
     models: list[ModelResponse] = []
@@ -156,6 +168,7 @@ def _build_claude_models_response(
             supports_thinking=(
                 model_info.supports_thinking if model_info is not None else None
             ),
+            picker_aliases=picker_aliases,
         )
 
     for model_info in runtime.cached_prefixed_model_infos():
@@ -164,6 +177,7 @@ def _build_claude_models_response(
             seen,
             model_info.model_id,
             supports_thinking=model_info.supports_thinking,
+            picker_aliases=picker_aliases,
         )
 
     for model in SUPPORTED_CLAUDE_MODELS:
@@ -319,13 +333,22 @@ def _append_provider_model_variants(
     provider_model_ref: str,
     *,
     supports_thinking: bool | None = None,
+    picker_aliases: bool = False,
 ) -> None:
+    thinking_id = (
+        picker_alias_for(provider_model_ref) if picker_aliases else None
+    ) or gateway_model_id(provider_model_ref)
+    no_thinking_id = (
+        picker_alias_for(provider_model_ref, force_reasoning_off=True)
+        if picker_aliases
+        else None
+    ) or no_thinking_gateway_model_id(provider_model_ref)
     if supports_thinking is not False:
         _append_unique_model(
             models,
             seen,
             _discovered_model_response(
-                gateway_model_id(provider_model_ref),
+                thinking_id,
                 display_name=provider_model_ref,
             ),
         )
@@ -333,7 +356,7 @@ def _append_provider_model_variants(
         models,
         seen,
         _discovered_model_response(
-            no_thinking_gateway_model_id(provider_model_ref),
+            no_thinking_id,
             display_name=f"{provider_model_ref} (no thinking)",
         ),
     )
