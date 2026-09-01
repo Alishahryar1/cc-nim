@@ -16,6 +16,7 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.admin.persistence import PreparedAdminUpdate
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.messaging.command_context import StopOutcome
 from free_claude_code.messaging.platforms.ports import (
@@ -58,9 +59,17 @@ class AdminModelProvider(BaseProvider):
         self._model_infos = model_infos
         self._error = error
 
-    def preflight_stream(
+    def preflight_messages(
         self,
         request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> None:
+        return None
+
+    def preflight_responses(
+        self,
+        request: OpenAIResponsesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
@@ -74,9 +83,21 @@ class AdminModelProvider(BaseProvider):
             raise self._error
         return self._model_infos
 
-    async def stream_response(
+    async def stream_messages(
         self,
         request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> AsyncIterator[str]:
+        if False:
+            yield ""
+
+    async def stream_responses(
+        self,
+        request: OpenAIResponsesRequest,
         input_tokens: int = 0,
         *,
         request_id: str | None = None,

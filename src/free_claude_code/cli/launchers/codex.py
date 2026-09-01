@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 from free_claude_code.cli.local_http import with_local_proxy_bypass
 from free_claude_code.config.loader import get_settings
@@ -17,7 +18,12 @@ from .common import (
     resolve_client_binary,
     run_client_process,
 )
-from .model_catalog import fetch_proxy_models_response
+from .model_catalog import (
+    ClientModel,
+    catalog_wire_slug_for_ref,
+    client_models_from_response,
+    fetch_proxy_models_response,
+)
 
 _PRINT_PROXY_AUTH_TOKEN_FLAG = "--print-proxy-auth-token"
 _DISPLAY_NAME = "Codex CLI"
@@ -64,14 +70,15 @@ def launch(argv: Sequence[str] | None = None) -> None:
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
     )
-    catalog_args = codex_model_catalog_config_args(proxy_root_url, settings)
+    catalog = codex_model_catalog_plan(proxy_root_url, settings)
     run_client_process(
         command=build_codex_launcher_command(
             binary_path=binary_path,
             argv=args,
             settings=settings,
             proxy_root_url=proxy_root_url,
-            catalog_config_args=catalog_args,
+            catalog_config_args=catalog.config_args,
+            catalog_models=catalog.models,
         ),
         env=build_codex_launcher_env(
             proxy_root_url=proxy_root_url,
@@ -81,6 +88,14 @@ def launch(argv: Sequence[str] | None = None) -> None:
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CodexModelCatalogPlan:
+    """The generated Codex catalog config args and the models it advertises."""
+
+    config_args: tuple[str, ...] = ()
+    models: tuple[ClientModel, ...] = ()
 
 
 def codex_binary_name() -> str:
@@ -96,6 +111,7 @@ def build_codex_launcher_command(
     settings: Settings,
     proxy_root_url: str,
     catalog_config_args: Sequence[str] = (),
+    catalog_models: Sequence[ClientModel] = (),
 ) -> list[str]:
     """Return a Codex command with ephemeral FCC provider config."""
 
@@ -104,7 +120,9 @@ def build_codex_launcher_command(
         *catalog_config_args,
         *codex_config_args(
             api_url=_ensure_v1_url(proxy_root_url),
-            model=getattr(settings, "model", None),
+            model=catalog_wire_slug_for_ref(
+                catalog_models, getattr(settings, "model", None)
+            ),
         ),
         *argv,
     ]
@@ -128,35 +146,39 @@ def build_codex_launcher_env(
     return env
 
 
-def codex_model_catalog_config_args(
+def codex_model_catalog_plan(
     proxy_root_url: str, settings: Settings
-) -> list[str]:
-    """Prepare the generated Codex model catalog and return its config args."""
+) -> CodexModelCatalogPlan:
+    """Prepare the generated Codex model catalog and the models it advertises."""
 
     try:
         models_response = fetch_proxy_models_response(
             proxy_root_url, settings.proxy_auth_token
         )
-        catalog = build_codex_model_catalog(models_response)
-        models = catalog.get("models")
-        if not isinstance(models, list) or not models:
+        models = client_models_from_response(models_response)
+        if not models:
             print(
                 "Free Claude Code warning: Codex model catalog is empty; "
                 "launching without model picker catalog.",
                 file=sys.stderr,
             )
-            return []
+            return CodexModelCatalogPlan()
         catalog_path = codex_model_catalog_path()
-        write_codex_model_catalog(catalog_path, catalog)
+        write_codex_model_catalog(
+            catalog_path, build_codex_model_catalog(models_response)
+        )
     except Exception as exc:
         print(
             "Free Claude Code warning: could not prepare Codex model catalog "
             f"({exc}); launching without model picker catalog.",
             file=sys.stderr,
         )
-        return []
+        return CodexModelCatalogPlan()
 
-    return build_model_catalog_config_args(str(catalog_path))
+    return CodexModelCatalogPlan(
+        config_args=tuple(build_model_catalog_config_args(str(catalog_path))),
+        models=models,
+    )
 
 
 def build_model_catalog_config_args(catalog_path: str) -> list[str]:

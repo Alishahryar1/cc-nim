@@ -10,6 +10,7 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -119,7 +120,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         snapshot = await self._catalog.refresh()
         return snapshot.model_infos
 
-    def preflight_stream(
+    def preflight_messages(
         self,
         request: MessagesRequest,
         *,
@@ -130,13 +131,30 @@ class OpenCodeProvider(OpenAIChatProvider):
         if snapshot is None:
             return
         route = self._require_route(snapshot, request.model)
-        routed = _routed_request(request, route)
+        routed = _routed_messages_request(request, route)
         if route.transport is OpenCodeUpstreamTransport.RESPONSES:
-            self._responses.preflight_stream(routed, reasoning=reasoning)
+            self._responses.preflight_messages(routed, reasoning=reasoning)
             return
-        super().preflight_stream(routed, reasoning=reasoning)
+        super().preflight_messages(routed, reasoning=reasoning)
 
-    def stream_response(
+    def preflight_responses(
+        self,
+        request: OpenAIResponsesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> None:
+        """Validate native Responses ingress against a warm catalog route."""
+        snapshot = self._catalog.current_snapshot
+        if snapshot is None:
+            return
+        route = self._require_route(snapshot, request.model)
+        routed = _routed_responses_request(request, route)
+        if route.transport is OpenCodeUpstreamTransport.RESPONSES:
+            self._responses.preflight_responses(routed, reasoning=reasoning)
+            return
+        super().preflight_responses(routed, reasoning=reasoning)
+
+    def stream_messages(
         self,
         request: MessagesRequest,
         input_tokens: int = 0,
@@ -164,12 +182,12 @@ class OpenCodeProvider(OpenAIChatProvider):
     ) -> AsyncIterator[str]:
         snapshot = await self._catalog.snapshot(request_id=request_id)
         route = self._require_route(snapshot, request.model)
-        routed = _routed_request(request, route)
+        routed = _routed_messages_request(request, route)
         selected_stream: AsyncIterator[str] | None = None
         try:
             if route.transport is OpenCodeUpstreamTransport.RESPONSES:
-                self._responses.preflight_stream(routed, reasoning=reasoning)
-                selected_stream = self._responses.stream_response(
+                self._responses.preflight_messages(routed, reasoning=reasoning)
+                selected_stream = self._responses.stream_messages(
                     routed,
                     input_tokens=input_tokens,
                     request_id=request_id,
@@ -177,8 +195,68 @@ class OpenCodeProvider(OpenAIChatProvider):
                     reasoning=reasoning,
                 )
             else:
-                super().preflight_stream(routed, reasoning=reasoning)
-                selected_stream = super().stream_response(
+                super().preflight_messages(routed, reasoning=reasoning)
+                selected_stream = super().stream_messages(
+                    routed,
+                    input_tokens=input_tokens,
+                    request_id=request_id,
+                    response_model=response_model,
+                    reasoning=reasoning,
+                )
+            async for event in selected_stream:
+                yield event
+        finally:
+            if selected_stream is not None:
+                await close_provider_stream(
+                    selected_stream,
+                    active_error=sys.exception(),
+                    provider_name=self._opencode_profile.provider_name,
+                    request_id=request_id,
+                )
+
+    def stream_responses(
+        self,
+        request: OpenAIResponsesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> AsyncIterator[str]:
+        return self._dispatch_responses_stream(
+            request,
+            input_tokens=input_tokens,
+            request_id=request_id,
+            response_model=response_model or request.model,
+            reasoning=reasoning,
+        )
+
+    async def _dispatch_responses_stream(
+        self,
+        request: OpenAIResponsesRequest,
+        *,
+        input_tokens: int,
+        request_id: str | None,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        snapshot = await self._catalog.snapshot(request_id=request_id)
+        route = self._require_route(snapshot, request.model)
+        routed = _routed_responses_request(request, route)
+        selected_stream: AsyncIterator[str] | None = None
+        try:
+            if route.transport is OpenCodeUpstreamTransport.RESPONSES:
+                self._responses.preflight_responses(routed, reasoning=reasoning)
+                selected_stream = self._responses.stream_responses(
+                    routed,
+                    input_tokens=input_tokens,
+                    request_id=request_id,
+                    response_model=response_model,
+                    reasoning=reasoning,
+                )
+            else:
+                super().preflight_responses(routed, reasoning=reasoning)
+                selected_stream = super().stream_responses(
                     routed,
                     input_tokens=input_tokens,
                     request_id=request_id,
@@ -229,10 +307,20 @@ def create_opencode_provider(
     )
 
 
-def _routed_request(
+def _routed_messages_request(
     request: MessagesRequest,
     route: OpenCodeModelRoute,
 ) -> MessagesRequest:
+    return request.model_copy(
+        update={"model": route.upstream_model_id},
+        deep=True,
+    )
+
+
+def _routed_responses_request(
+    request: OpenAIResponsesRequest,
+    route: OpenCodeModelRoute,
+) -> OpenAIResponsesRequest:
     return request.model_copy(
         update={"model": route.upstream_model_id},
         deep=True,

@@ -33,7 +33,7 @@ from free_claude_code.messaging.workflow import MessagingWorkflow
 from smoke.lib.child_process import run_captured_text
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
 from smoke.lib.server import RunningServer, start_server
-from smoke.lib.skips import fail_missing_env
+from smoke.lib.skips import fail_missing_env, skip_if_upstream_unavailable_events
 
 
 @dataclass(slots=True)
@@ -754,3 +754,14 @@ def assert_product_stream(events: list[SSEEvent]) -> None:
     assert text_content(events).strip() or has_tool_use(events), (
         "product stream emitted neither text nor tool_use"
     )
+
+
+def assert_native_thinking_stream(events: list[SSEEvent], *, context: str) -> None:
+    skip_if_upstream_unavailable_events(events)
+    assert_anthropic_stream_contract(events)
+    assert any(
+        event.event == "content_block_delta"
+        and isinstance(delta := event.data.get("delta"), dict)
+        and delta.get("type") == "thinking_delta"
+        for event in events
+    ), f"{context} completed without native thinking output"

@@ -29,9 +29,10 @@ def _openai_status_error(
     status_code: int,
     message: str,
     body: object | None = None,
+    headers: dict[str, str] | None = None,
 ) -> openai.APIStatusError:
     request = httpx2.Request("POST", "https://provider.test/v1/chat/completions")
-    response = httpx2.Response(status_code, request=request)
+    response = httpx2.Response(status_code, request=request, headers=headers)
     return error_type(
         message,
         response=response,
@@ -112,6 +113,94 @@ def test_stream_retry_classification_rejects_openai_bad_request() -> None:
             message="bad request",
         )
     )
+
+
+def test_http_413_status_wins_over_rate_limit_markers() -> None:
+    error = _openai_status_error(
+        openai.APIStatusError,
+        status_code=413,
+        message="Request too large for token rate limit",
+        body={
+            "error": {
+                "message": "Request requires 55940 tokens but limit is 8000",
+                "type": "tokens",
+                "code": "rate_limit_exceeded",
+            }
+        },
+        headers={"retry-after": "67", "x-should-retry": "false"},
+    )
+
+    assert not is_retryable_provider_error(error)
+    assert not is_retryable_stream_error(error)
+    assert retryable_upstream_status(error) is None
+
+    failure = classify_provider_failure(
+        error,
+        provider_name="GROQ",
+        read_timeout_s=60.0,
+        request_id="req_too_large",
+    )
+
+    assert failure.kind is FailureKind.INVALID_REQUEST
+    assert failure.status_code == 413
+    assert failure.retryable is False
+    assert "Provider rejected the request as too large." in failure.message
+    assert "Request requires 55940 tokens but limit is 8000" in failure.message
+    assert "Request ID: req_too_large" in failure.message
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        _http_status_error(413, "request too large"),
+        _statusless_openai_error(
+            "rate limit exceeded",
+            {
+                "error": {
+                    "status": 413,
+                    "code": "rate_limit_exceeded",
+                    "message": "request too large",
+                }
+            },
+        ),
+    ],
+    ids=["httpx_status", "structured_body_status"],
+)
+def test_http_413_sources_are_terminal_invalid_requests(error: Exception) -> None:
+    assert not is_retryable_provider_error(error)
+    assert not is_retryable_stream_error(error)
+    assert retryable_upstream_status(error) is None
+
+    failure = classify_provider_failure(
+        error,
+        provider_name="TEST_PROVIDER",
+        read_timeout_s=60.0,
+        request_id="req_413",
+    )
+
+    assert failure.kind is FailureKind.INVALID_REQUEST
+    assert failure.status_code == 413
+    assert failure.retryable is False
+    assert "Provider rejected the request as too large." in failure.message
+
+
+def test_nonstandard_capacity_status_remains_retryable() -> None:
+    error = _openai_status_error(
+        openai.APIStatusError,
+        status_code=498,
+        message="capacity exceeded",
+        body={"error": {"code": "capacity_exceeded"}},
+    )
+
+    assert retryable_upstream_status(error) == 503
+    failure = classify_provider_failure(
+        error,
+        provider_name="GROQ",
+        read_timeout_s=60.0,
+        request_id="req_capacity",
+    )
+    assert failure.kind is FailureKind.OVERLOADED
+    assert failure.retryable is True
 
 
 @dataclass(frozen=True, slots=True)

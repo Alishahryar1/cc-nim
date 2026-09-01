@@ -33,7 +33,9 @@ DEFAULT_TARGETS = frozenset(
     }
 )
 SIDE_EFFECT_TARGETS = frozenset({"discord", "telegram", "voice"})
-OPT_IN_TARGETS = frozenset({"nvidia_nim_cli", "openrouter_free_cli"})
+OPT_IN_TARGETS = frozenset(
+    {"nvidia_nim_cli", "nvidia_nim_vision", "openrouter_free_cli"}
+)
 ALL_TARGETS = DEFAULT_TARGETS | SIDE_EFFECT_TARGETS | OPT_IN_TARGETS
 TARGET_ALIASES = {
     "contract": "api",
@@ -71,7 +73,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "zai_api": "zai_api/glm-4.7-flash",
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "vertex": "vertex/google/gemini-3.5-flash",
-    "groq": "groq/llama-3.3-70b-versatile",
+    "groq": "groq/openai/gpt-oss-20b",
     "cline_pass": "cline_pass/cline-pass/deepseek-v4-flash",
     "xai": "xai/grok-4.5",
     "qwencloud": "qwencloud/qwen3.7-plus",
@@ -99,18 +101,15 @@ MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
     "nvidia/nemotron-3.5-lightning-30b-a3b",
-    "moonshotai/kimi-k2.6",
-    "minimaxai/minimax-m2.7",
+    "moonshotai/kimi-k3",
     "minimaxai/minimax-m3",
     "nvidia/nemotron-3-super-120b-a12b",
-    "deepseek-ai/deepseek-v4-pro",
-    "deepseek-ai/deepseek-v4-flash",
 )
 
 OPENROUTER_FREE_CLI_DEFAULT_MODELS: tuple[str, ...] = (
     "nvidia/nemotron-3-super-120b-a12b:free",
-    "openai/gpt-oss-120b:free",
-    "poolside/laguna-m.1:free",
+    "poolside/laguna-s-2.1:free",
+    "poolside/laguna-xs-2.1:free",
 )
 
 
@@ -131,6 +130,10 @@ TARGET_REQUIRED_ENV: dict[str, tuple[str, ...]] = {
     "nvidia_nim_cli": (
         "NVIDIA_NIM_API_KEY",
         "FCC_SMOKE_CLAUDE_BIN or claude on PATH",
+    ),
+    "nvidia_nim_vision": (
+        "NVIDIA_NIM_API_KEY",
+        "FCC_SMOKE_MODEL_NVIDIA_NIM_VISION",
     ),
     "openrouter_free_cli": (
         "OPENROUTER_API_KEY",
@@ -242,6 +245,18 @@ class SmokeConfig:
             ProviderModel(provider="nvidia_nim", full_model=full_model, source=source)
             for full_model, source in nvidia_nim_cli_model_refs().items()
         ]
+
+    def nvidia_nim_vision_model(self) -> ProviderModel | None:
+        """Return only an explicitly selected NVIDIA NIM vision model."""
+        override_env = "FCC_SMOKE_MODEL_NVIDIA_NIM_VISION"
+        override = os.getenv(override_env)
+        if override is None:
+            return None
+        return ProviderModel(
+            provider="nvidia_nim",
+            full_model=_normalize_provider_model("nvidia_nim", override),
+            source=override_env,
+        )
 
     def openrouter_free_cli_models(self) -> list[ProviderModel]:
         """Return OpenRouter free models for Claude Code CLI characterization."""

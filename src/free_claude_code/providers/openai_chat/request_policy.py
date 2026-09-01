@@ -9,12 +9,15 @@ from loguru import logger
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic import (
-    OpenAIToolNameCodec,
     ReasoningReplayMode,
     build_base_request_body,
 )
 from free_claude_code.core.anthropic.conversion import OpenAIConversionError
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.openai_tool_names import (
+    OpenAIToolNameCodec,
+    encode_openai_chat_tool_names,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 MaxTokensField = Literal["max_tokens", "max_completion_tokens"]
@@ -76,12 +79,12 @@ def build_openai_chat_request_body(
                     raise InvalidRequestError(str(exc)) from exc
             body["extra_body"] = extra_body
 
-    _apply_common_openai_chat_policy(body, policy)
+    apply_openai_chat_body_policy(body, policy)
 
     for postprocess in postprocessors:
         postprocess(body, request_data, reasoning)
 
-    _encode_openai_tool_names(body, OpenAIToolNameCodec.from_request(request_data))
+    encode_openai_chat_tool_names(body, OpenAIToolNameCodec.from_request(request_data))
 
     logger.debug(
         "{}_REQUEST: conversion done model={} msgs={} tools={}",
@@ -93,62 +96,10 @@ def build_openai_chat_request_body(
     return body
 
 
-def _encode_openai_tool_names(body: dict[str, Any], codec: OpenAIToolNameCodec) -> None:
-    """Encode only canonical OpenAI Chat tool-name locations."""
-    if not codec.has_aliases:
-        return
-
-    tools = body.get("tools")
-    if isinstance(tools, list):
-        for tool in tools:
-            if not isinstance(tool, dict):
-                continue
-            function = tool.get("function")
-            if not isinstance(function, dict):
-                continue
-            name = function.get("name")
-            if isinstance(name, str):
-                function["name"] = codec.encode(name)
-
-    messages = body.get("messages")
-    if isinstance(messages, list):
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            tool_calls = message.get("tool_calls")
-            if not isinstance(tool_calls, list):
-                continue
-            for tool_call in tool_calls:
-                if not isinstance(tool_call, dict):
-                    continue
-                function = tool_call.get("function")
-                if not isinstance(function, dict):
-                    continue
-                name = function.get("name")
-                if isinstance(name, str):
-                    function["name"] = codec.encode(name)
-
-    tool_choice = body.get("tool_choice")
-    if not isinstance(tool_choice, dict):
-        return
-    function = tool_choice.get("function")
-    if not isinstance(function, dict):
-        return
-    name = function.get("name")
-    if not isinstance(name, str):
-        return
-    encoded = codec.encode(name)
-    if encoded == name:
-        return
-    body["tool_choice"] = {
-        **tool_choice,
-        "function": {**function, "name": encoded},
-    }
-
-
-def _apply_common_openai_chat_policy(
+def apply_openai_chat_body_policy(
     body: dict[str, Any], policy: OpenAIChatRequestPolicy
 ) -> None:
+    """Apply source-independent Chat Completions body policy."""
     if policy.strip_message_names:
         _strip_message_names(body.get("messages"))
 

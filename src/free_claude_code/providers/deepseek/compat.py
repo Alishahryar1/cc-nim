@@ -75,8 +75,6 @@ def build_deepseek_request_body(
             data["messages"], allow_attachments=vision_capable
         )
     _validate_deepseek_request_dict(data, allow_attachments=vision_capable)
-    _downgrade_forced_tool_choice(data)
-
     has_tool_history = _has_tool_history(data)
     has_replayable_tool_thinking = _all_tool_calls_have_replayable_thinking(data)
     unsafe_tool_followup = has_tool_history and not has_replayable_tool_thinking
@@ -119,10 +117,12 @@ def build_deepseek_request_body(
         sanitized_request,
         reasoning=effective_reasoning,
         policy=DEEPSEEK_REQUEST_POLICY,
-        postprocessors=(_apply_deepseek_chat_extras,),
+        postprocessors=(
+            lambda body, _request, _policy: finalize_deepseek_chat_body(
+                body, effective_reasoning
+            ),
+        ),
     )
-    if "max_tokens" not in body or body.get("max_tokens") is None:
-        body["max_tokens"] = ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
     logger.debug(
         "DEEPSEEK_REQUEST: build done model={} msgs={} tools={}",
@@ -131,6 +131,76 @@ def build_deepseek_request_body(
         len(body.get("tools", [])),
     )
     return body
+
+
+def finalize_deepseek_chat_body(
+    body: dict[str, Any], reasoning: ReasoningPolicy
+) -> None:
+    """Apply source-independent DeepSeek policy to one Chat body."""
+    effective_reasoning = reasoning
+    if reasoning.control is not ReasoningControl.OFF:
+        has_tool_history = _has_chat_tool_history(body)
+        has_replayable_tool_thinking = _all_chat_tool_calls_have_reasoning(body)
+        if has_tool_history and not has_replayable_tool_thinking:
+            _remove_deepseek_thinking_hints(body)
+            effective_reasoning = ReasoningPolicy.off()
+
+    _downgrade_chat_forced_tool_choice(body)
+    _apply_deepseek_chat_extras(body, effective_reasoning)
+    if body.get("max_tokens") is None:
+        body["max_tokens"] = ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+
+
+def _has_chat_tool_history(body: Mapping[str, Any]) -> bool:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return False
+    return any(
+        isinstance(message, Mapping)
+        and (
+            message.get("role") == "tool"
+            or (
+                message.get("role") == "assistant"
+                and isinstance(message.get("tool_calls"), list)
+                and bool(message["tool_calls"])
+            )
+        )
+        for message in messages
+    )
+
+
+def _all_chat_tool_calls_have_reasoning(body: Mapping[str, Any]) -> bool:
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return False
+    found_tool_call = False
+    for message in messages:
+        if (
+            not isinstance(message, Mapping)
+            or message.get("role") != "assistant"
+            or not isinstance(message.get("tool_calls"), list)
+            or not message["tool_calls"]
+        ):
+            continue
+        found_tool_call = True
+        if "reasoning_content" not in message and "reasoning" not in message:
+            return False
+    return found_tool_call
+
+
+def _downgrade_chat_forced_tool_choice(body: dict[str, Any]) -> None:
+    tool_choice = body.get("tool_choice")
+    if not isinstance(tool_choice, dict) or tool_choice.get("type") != "function":
+        return
+    function = tool_choice.get("function")
+    if not isinstance(function, dict) or not isinstance(function.get("name"), str):
+        return
+    logger.debug(
+        "DEEPSEEK_REQUEST: downgrading forced tool_choice to auto for unsupported "
+        "native request shape tool={}",
+        function["name"],
+    )
+    body["tool_choice"] = "auto"
 
 
 def sanitize_deepseek_messages_for_openai(messages: Any) -> Any:
@@ -461,25 +531,7 @@ def _normalize_tool_result_content(messages: Any) -> Any:
     return normalized
 
 
-def _downgrade_forced_tool_choice(data: dict[str, Any]) -> None:
-    tool_choice = data.get("tool_choice")
-    if not isinstance(tool_choice, dict):
-        return
-    if tool_choice.get("type") != "tool" or not isinstance(
-        tool_choice.get("name"), str
-    ):
-        return
-    logger.debug(
-        "DEEPSEEK_REQUEST: downgrading forced tool_choice to auto for unsupported "
-        "native request shape tool={}",
-        tool_choice["name"],
-    )
-    data["tool_choice"] = {"type": "auto"}
-
-
-def _apply_deepseek_chat_extras(
-    body: dict[str, Any], _request_data: MessagesRequest, policy: ReasoningPolicy
-) -> None:
+def _apply_deepseek_chat_extras(body: dict[str, Any], policy: ReasoningPolicy) -> None:
     extra_body = body.setdefault("extra_body", {})
     if not isinstance(extra_body, dict):
         return

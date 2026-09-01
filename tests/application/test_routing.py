@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic.models import (
     MessagesRequest,
     TokenCountRequest,
 )
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningEffort
 
 
@@ -268,6 +269,31 @@ def test_model_router_routes_token_count_request(settings):
 
     assert routed.request.model == "qwen2.5-7b"
     assert request.model == "claude-3-haiku-20240307"
+
+
+def test_model_router_routes_responses_request_without_protocol_conversion(settings):
+    settings.model_fallbacks = ("open_router/vendor/fallback",)
+    request = OpenAIResponsesRequest(
+        model="opencode_zen/responses-model",
+        input=[{"role": "user", "content": "hello"}],
+        reasoning={"effort": "high"},
+        previous_response_id="resp_previous",
+    )
+
+    routed = ModelRouter(settings).resolve_responses_request(request)
+
+    assert routed.request.model == "responses-model"
+    assert routed.request.input == request.input
+    assert routed.request.previous_response_id == "resp_previous"
+    assert routed.resolved.original_model == "opencode_zen/responses-model"
+    assert routed.resolved.primary.provider_id == "opencode_zen"
+    assert routed.resolved.primary.provider_model == "responses-model"
+    assert [target.provider_model_ref for target in routed.resolved.fallbacks] == [
+        "open_router/vendor/fallback"
+    ]
+    assert routed.reasoning.control is ReasoningControl.DEFAULT
+    assert routed.reasoning.effort is ReasoningEffort.HIGH
+    assert request.model == "opencode_zen/responses-model"
 
 
 def test_model_router_appends_global_fallbacks_and_skips_only_primary(settings):

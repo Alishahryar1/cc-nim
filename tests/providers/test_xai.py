@@ -12,6 +12,7 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import XAI_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
@@ -163,8 +164,13 @@ async def test_lists_language_models_and_routable_aliases(
                 {
                     "id": "latest",
                     "aliases": ["grok-4.5", "grok-latest"],
+                    "input_modalities": ["text", "image"],
                 },
-                {"id": "grok-4.5", "aliases": []},
+                {
+                    "id": "grok-4.5",
+                    "aliases": [],
+                    "input_modalities": ["text"],
+                },
             ]
         }
     )
@@ -174,9 +180,24 @@ async def test_lists_language_models_and_routable_aliases(
 
     assert model_infos == frozenset(
         {
-            ProviderModelInfo("latest"),
-            ProviderModelInfo("grok-4.5"),
-            ProviderModelInfo("grok-latest"),
+            ProviderModelInfo(
+                "latest",
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "grok-4.5",
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "grok-latest",
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
         }
     )
     xai_provider._client.get.assert_awaited_once_with(

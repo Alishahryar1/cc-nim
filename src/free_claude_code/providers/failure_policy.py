@@ -38,6 +38,7 @@ _BILLING_MESSAGE = (
 )
 _RATE_LIMIT_MESSAGE = "Provider rate limit reached. Please retry shortly."
 _INVALID_REQUEST_MESSAGE = "Invalid request sent to provider."
+_REQUEST_TOO_LARGE_MESSAGE = "Provider rejected the request as too large."
 _CONTEXT_WINDOW_EXCEEDED_MESSAGE = "Provider input exceeds the model context window."
 _OVERLOADED_MESSAGE = "Provider is currently overloaded. Please retry."
 
@@ -114,6 +115,8 @@ def retryable_transient_status(exc: BaseException) -> int | None:
     if isinstance(exc, ExecutionFailure):
         status = exc.status_code
         return status if exc.retryable and _is_retryable_status(status) else None
+    if _reported_status(exc) == 413:
+        return None
     if isinstance(exc, openai.RateLimitError):
         return 429
     if isinstance(exc, httpx.HTTPStatusError):
@@ -264,6 +267,14 @@ def _classify_provider_failure(
     if isinstance(exc, ExecutionFailure):
         return exc
 
+    if _reported_status(exc) == 413:
+        return _failure(
+            FailureKind.INVALID_REQUEST,
+            413,
+            _REQUEST_TOO_LARGE_MESSAGE,
+            False,
+        )
+
     if isinstance(exc, openai.AuthenticationError):
         return _failure(FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False)
     if isinstance(exc, openai.PermissionDeniedError):
@@ -375,6 +386,17 @@ def _stable_upstream(status_code: int) -> str:
 def _status_from_exception(exc: BaseException) -> int | None:
     status = getattr(exc, "status_code", None)
     return status if isinstance(status, int) else None
+
+
+def _reported_status(exc: BaseException) -> int | None:
+    status = _status_from_exception(exc)
+    if status is not None:
+        return status
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    if isinstance(response_status, int):
+        return response_status
+    return _status_from_body(getattr(exc, "body", None))
 
 
 def _status_from_body(body: Any) -> int | None:

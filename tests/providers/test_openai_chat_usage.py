@@ -7,10 +7,15 @@ from unittest.mock import AsyncMock, patch
 import openai
 import pytest
 from httpx2 import Request, Response
+from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.sse_aggregation import (
+    aggregate_anthropic_sse_to_message,
+)
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderOperationKind
 from free_claude_code.providers.openai_chat import (
@@ -148,6 +153,186 @@ def test_usage_int_reads_dict_object_and_model_extra():
     assert usage_int({"prompt_tokens": True}, "prompt_tokens") is None
 
 
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (
+            {"prompt_tokens_details": {"cache_write_tokens": 5}},
+            5,
+        ),
+        (
+            CompletionUsage(
+                completion_tokens=4,
+                prompt_tokens=22,
+                total_tokens=26,
+                prompt_tokens_details=PromptTokensDetails(cache_write_tokens=5),
+            ),
+            5,
+        ),
+        (
+            SimpleNamespace(
+                prompt_tokens_details=None,
+                model_extra={
+                    "prompt_tokens_details": {"cache_write_tokens": 5},
+                },
+            ),
+            5,
+        ),
+        ({"prompt_tokens_details": {"cache_write_tokens": 0}}, 0),
+        ({"prompt_tokens_details": {"cache_write_tokens": True}}, None),
+        ({"prompt_tokens_details": {"cache_write_tokens": 5.0}}, None),
+        ({"prompt_tokens_details": {"cache_write_tokens": "5"}}, None),
+        ({"prompt_tokens_details": None}, None),
+    ],
+)
+def test_extracts_standard_chat_cache_write_tokens(usage, expected) -> None:
+    provider = _UsageTestProvider()
+
+    assert provider._cache_write_input_tokens(usage) == expected
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (
+            {
+                "prompt_tokens": 22,
+                "prompt_tokens_details": {
+                    "cached_tokens": 15,
+                    "cache_write_tokens": 3,
+                },
+            },
+            {
+                "input_tokens": 4,
+                "cache_read_input_tokens": 15,
+                "cache_creation_input_tokens": 3,
+            },
+        ),
+        (
+            CompletionUsage(
+                completion_tokens=4,
+                prompt_tokens=22,
+                total_tokens=26,
+                prompt_tokens_details=PromptTokensDetails(
+                    cached_tokens=15,
+                    cache_write_tokens=3,
+                ),
+            ),
+            {
+                "input_tokens": 4,
+                "cache_read_input_tokens": 15,
+                "cache_creation_input_tokens": 3,
+            },
+        ),
+        (
+            SimpleNamespace(
+                prompt_tokens=22,
+                prompt_tokens_details=None,
+                model_extra={
+                    "prompt_tokens_details": {
+                        "cached_tokens": 15,
+                        "cache_write_tokens": 3,
+                    },
+                },
+            ),
+            {
+                "input_tokens": 4,
+                "cache_read_input_tokens": 15,
+                "cache_creation_input_tokens": 3,
+            },
+        ),
+        (
+            {
+                "prompt_tokens": 22,
+                "prompt_tokens_details": {"cached_tokens": 0},
+            },
+            {"input_tokens": 22, "cache_read_input_tokens": 0},
+        ),
+        (
+            {
+                "prompt_tokens": 0,
+                "prompt_tokens_details": {"cached_tokens": 0},
+            },
+            {"input_tokens": 0, "cache_read_input_tokens": 0},
+        ),
+        (
+            {
+                "prompt_tokens": 22,
+                "prompt_tokens_details": {"cache_write_tokens": 3},
+            },
+            {"input_tokens": 19, "cache_creation_input_tokens": 3},
+        ),
+        (
+            {
+                "prompt_tokens": 22,
+                "prompt_tokens_details": {
+                    "cached_tokens": 15,
+                    "cache_write_tokens": 8,
+                },
+            },
+            {"input_tokens": 7, "cache_read_input_tokens": 15},
+        ),
+    ],
+)
+def test_maps_standard_chat_cache_usage_to_anthropic_fields(usage, expected):
+    provider = _UsageTestProvider()
+
+    assert provider._anthropic_usage_fields(usage) == expected
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        None,
+        {},
+        {"prompt_tokens_details": {"cached_tokens": 15}},
+        {"prompt_tokens": 22},
+        {"prompt_tokens": 22, "prompt_tokens_details": None},
+        {"prompt_tokens": 22, "prompt_tokens_details": "invalid"},
+        {
+            "prompt_tokens": -1,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        },
+        {
+            "prompt_tokens": 22,
+            "prompt_tokens_details": {"cached_tokens": -1},
+        },
+        {
+            "prompt_tokens": 22,
+            "prompt_tokens_details": {"cached_tokens": 23},
+        },
+        {
+            "prompt_tokens": True,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        },
+        {
+            "prompt_tokens": 22.0,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        },
+        {
+            "prompt_tokens": "22",
+            "prompt_tokens_details": {"cached_tokens": 0},
+        },
+        {
+            "prompt_tokens": 22,
+            "prompt_tokens_details": {"cached_tokens": True},
+        },
+        {
+            "prompt_tokens": 22,
+            "prompt_tokens_details": {"cached_tokens": 15.0},
+        },
+        {
+            "prompt_tokens": 22,
+            "prompt_tokens_details": {"cached_tokens": "15"},
+        },
+    ],
+)
+def test_ignores_incomplete_or_inconsistent_standard_cache_usage(usage):
+    provider = _UsageTestProvider()
+
+    assert provider._anthropic_usage_fields(usage) == {}
+
+
 def test_stream_usage_rejection_matches_usage_option_400():
     error = _bad_request(
         "Unrecognized request argument supplied: stream_options",
@@ -170,7 +355,15 @@ def test_stream_usage_rejection_does_not_match_unrelated_400():
 async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens():
     provider = _UsageTestProvider()
     request = make_messages_request(model="m")
-    usage = SimpleNamespace(prompt_tokens=22, completion_tokens=4)
+    usage = CompletionUsage(
+        completion_tokens=4,
+        prompt_tokens=22,
+        total_tokens=26,
+        prompt_tokens_details=PromptTokensDetails(
+            cached_tokens=15,
+            cache_write_tokens=3,
+        ),
+    )
     create = AsyncMock(
         return_value=_stream(
             [
@@ -183,7 +376,7 @@ async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens
 
     with patch.object(provider._client.chat.completions, "create", create):
         events = [
-            event async for event in provider.stream_response(request, input_tokens=7)
+            event async for event in provider.stream_messages(request, input_tokens=7)
         ]
 
     create.assert_awaited_once()
@@ -200,7 +393,96 @@ async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens
         event.data["usage"] for event in parsed if event.event == "message_delta"
     )
     assert start_usage["input_tokens"] == 7
-    assert final_usage == {"input_tokens": 22, "output_tokens": 4}
+    assert final_usage == {
+        "input_tokens": 4,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 15,
+        "cache_creation_input_tokens": 3,
+    }
+    assert sum(event.event == "message_delta" for event in parsed) == 1
+    assert sum(event.event == "message_stop" for event in parsed) == 1
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_nonstream_message_uses_final_cache_partition():
+    provider = _UsageTestProvider()
+    request = make_messages_request(model="m")
+    usage = CompletionUsage(
+        completion_tokens=4,
+        prompt_tokens=22,
+        total_tokens=26,
+        prompt_tokens_details=PromptTokensDetails(
+            cached_tokens=15,
+            cache_write_tokens=3,
+        ),
+    )
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+                _chunk(usage=usage),
+            ]
+        )
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        message, error, _complete = await aggregate_anthropic_sse_to_message(
+            provider.stream_messages(request, input_tokens=7)
+        )
+
+    assert error is None
+    assert message["usage"] == {
+        "input_tokens": 4,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 15,
+        "cache_creation_input_tokens": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_chat_responses_stream_preserves_cache_write_usage():
+    provider = _UsageTestProvider()
+    request = OpenAIResponsesRequest.model_validate({"model": "m", "input": "hello"})
+    usage = CompletionUsage(
+        completion_tokens=4,
+        prompt_tokens=22,
+        total_tokens=26,
+        prompt_tokens_details=PromptTokensDetails(
+            cached_tokens=15,
+            cache_write_tokens=3,
+        ),
+    )
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+                _chunk(usage=usage),
+            ]
+        )
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        events = [
+            event async for event in provider.stream_responses(request, input_tokens=7)
+        ]
+
+    completed = next(
+        event.data["response"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "response.completed"
+    )
+    assert completed["usage"] == {
+        "input_tokens": 22,
+        "input_tokens_details": {
+            "cached_tokens": 15,
+            "cache_write_tokens": 3,
+        },
+        "output_tokens": 4,
+        "output_tokens_details": {"reasoning_tokens": 0},
+        "total_tokens": 26,
+    }
 
 
 @pytest.mark.asyncio
@@ -219,7 +501,7 @@ async def test_openai_chat_stream_keeps_response_model_separate_from_upstream_mo
     with patch.object(provider._client.chat.completions, "create", create):
         events = [
             event
-            async for event in provider.stream_response(
+            async for event in provider.stream_messages(
                 request,
                 response_model="anthropic/test/upstream/model",
             )

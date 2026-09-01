@@ -4,12 +4,13 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Literal
 
-from free_claude_code.core.anthropic import (
-    is_synthetic_openai_tool_turn_boundary,
-)
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
+from free_claude_code.core.openai_chat import (
+    is_synthetic_chat_tool_turn_boundary,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
+
+from .stream_output import ChatStreamOutput
 
 
 def apply_reasoning_details_replay(
@@ -30,7 +31,7 @@ def apply_reasoning_details_replay(
             if (
                 not isinstance(message, dict)
                 or message.get("role") != "assistant"
-                or is_synthetic_openai_tool_turn_boundary(message)
+                or is_synthetic_chat_tool_turn_boundary(message)
             ):
                 continue
             existing = message.get("reasoning_details")
@@ -51,7 +52,7 @@ class StructuredReasoningStream:
     def events(
         self,
         delta: Any,
-        ledger: AnthropicStreamLedger,
+        output: ChatStreamOutput,
         *,
         native_reasoning: str | None,
     ) -> Iterator[str]:
@@ -64,26 +65,19 @@ class StructuredReasoningStream:
                 self._text_source = "details"
 
         if self._text_source == "native" and native_reasoning:
-            yield from ledger.ensure_thinking_block()
-            yield ledger.emit_thinking_delta(native_reasoning)
+            yield from output.ensure_reasoning_block()
+            yield output.emit_reasoning_delta(native_reasoning)
 
         for detail in details:
             if self._text_source == "details":
                 text = _reasoning_detail_text(detail)
                 if text:
-                    yield from ledger.ensure_thinking_block()
-                    yield ledger.emit_thinking_delta(text)
+                    yield from output.ensure_reasoning_block()
+                    yield output.emit_reasoning_delta(text)
 
             preserved = _preserved_reasoning_detail(detail)
             if preserved:
-                yield from ledger.close_content_blocks()
-                index = ledger.blocks.allocate_index()
-                yield ledger.content_block_start(
-                    index,
-                    "redacted_thinking",
-                    data=preserved,
-                )
-                yield ledger.content_block_stop(index)
+                yield from output.emit_opaque_reasoning(preserved)
 
 
 def _reasoning_details(delta: Any) -> Sequence[Any]:

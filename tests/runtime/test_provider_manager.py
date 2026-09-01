@@ -90,6 +90,7 @@ async def test_startup_generation_lease_and_shutdown_close_exactly_once() -> Non
 
     assert lease.generation_id == 1
     assert lease.settings is settings
+    assert lease.model_infos == ()
     assert lease.is_provider_cached("cached") is True
     assert lease.resolve_provider("nvidia_nim") is factory.runtimes[0].provider
     await lease.release()
@@ -790,7 +791,45 @@ async def test_application_catalog_survives_generation_replacement() -> None:
     )
 
     assert manager.cached_model_ids() == {"lmstudio": frozenset({"persisted"})}
-    assert manager.cached_model_supports_thinking("lmstudio", "persisted") is True
+    assert manager.cached_model_info("lmstudio", "persisted") == ProviderModelInfo(
+        "persisted",
+        supports_thinking=True,
+    )
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_lease_keeps_its_model_metadata_after_replacement() -> None:
+    factory = RuntimeFactory()
+    first_settings = _settings("open_router/one").model_copy(
+        update={"open_router_api_key": "open-router-key"}
+    )
+    manager = ProviderRuntimeManager(first_settings, runtime_factory=factory)
+    manager.cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "old-model",
+                context_window_tokens=32_000,
+                max_output_tokens=4_096,
+            )
+        },
+    )
+    lease = await manager.acquire(include_model_infos=True)
+
+    await manager.replace(
+        _settings("nvidia_nim/two"),
+        commit=lambda: None,
+    )
+
+    assert lease.model_infos == (
+        ProviderModelInfo(
+            "open_router/old-model",
+            context_window_tokens=32_000,
+            max_output_tokens=4_096,
+        ),
+    )
+    await lease.release()
     await manager.close()
 
 

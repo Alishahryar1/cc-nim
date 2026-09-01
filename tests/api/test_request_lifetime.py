@@ -23,6 +23,7 @@ from free_claude_code.application.ports import (
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 
@@ -59,6 +60,7 @@ async def _unused_send(_message: Message) -> None:
     [
         _http_scope("/health"),
         _http_scope("/v1/messages", method="OPTIONS"),
+        _http_scope("/admin/api/chat/sessions/session/stop"),
         cast(Scope, {"type": "lifespan", "asgi": {"version": "3.0"}}),
     ],
 )
@@ -91,7 +93,14 @@ async def test_non_inference_scopes_delegate_with_original_callables(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["/v1/messages", "/v1/responses"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/messages",
+        "/v1/responses",
+        "/admin/api/chat/sessions/session/send",
+    ],
+)
 async def test_request_body_frames_are_relayed_once_in_order(path: str) -> None:
     frames: asyncio.Queue[Message] = asyncio.Queue()
     receiver_closed = asyncio.Event()
@@ -384,7 +393,7 @@ class _ControlledProvider:
         self.closed = asyncio.Event()
         self.request_ids: list[str] = []
 
-    def preflight_stream(
+    def preflight_messages(
         self,
         _request: MessagesRequest,
         *,
@@ -392,9 +401,36 @@ class _ControlledProvider:
     ) -> None:
         del reasoning
 
-    async def stream_response(
+    def preflight_responses(
+        self,
+        _request: OpenAIResponsesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+    ) -> None:
+        del reasoning
+
+    async def stream_messages(
         self,
         _request: MessagesRequest,
+        *,
+        input_tokens: int,
+        request_id: str,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        del input_tokens, response_model, reasoning
+        self.request_ids.append(request_id)
+        try:
+            for chunk in self._chunks:
+                yield chunk
+            self.blocked.set()
+            await asyncio.Event().wait()
+        finally:
+            self.closed.set()
+
+    async def stream_responses(
+        self,
+        _request: OpenAIResponsesRequest,
         *,
         input_tokens: int,
         request_id: str,
@@ -417,6 +453,7 @@ class _Lease:
 
     def __init__(self, settings: Settings, provider: ProviderPort) -> None:
         self.settings = settings
+        self.model_infos: tuple[ProviderModelInfo, ...] = ()
         self._provider = provider
         self.release_calls = 0
 
@@ -436,17 +473,20 @@ class _Requests:
     def __init__(self, lease: _Lease) -> None:
         self._lease = lease
 
-    async def acquire(self) -> RequestRuntimeLease:
+    async def acquire(
+        self, *, include_model_infos: bool = False
+    ) -> RequestRuntimeLease:
+        assert include_model_infos is False
         return self._lease
 
     def current_settings(self) -> Settings:
         return self._lease.settings
 
-    def cached_model_supports_thinking(
+    def cached_model_info(
         self,
         provider_id: str,
         model_id: str,
-    ) -> bool | None:
+    ) -> ProviderModelInfo | None:
         del provider_id, model_id
         return None
 
@@ -471,6 +511,23 @@ def _message_start() -> str:
             },
         },
     )
+
+
+def _response_created() -> str:
+    payload = {
+        "type": "response.created",
+        "sequence_number": 0,
+        "response": {
+            "id": "resp_lifetime",
+            "object": "response",
+            "model": "nvidia_nim/test-model",
+            "status": "in_progress",
+            "output": [],
+            "error": None,
+            "usage": None,
+        },
+    }
+    return f"event: response.created\ndata: {json.dumps(payload)}\n\n"
 
 
 def _partial_message_stream() -> tuple[str, ...]:
@@ -617,7 +674,7 @@ async def test_real_messages_post_start_disconnect_has_no_terminal_error() -> No
 
 @pytest.mark.asyncio
 async def test_real_responses_post_start_disconnect_has_no_failed_event() -> None:
-    provider = _ControlledProvider((_message_start(),))
+    provider = _ControlledProvider((_response_created(),))
 
     sent, lease = await _disconnect_real_app(
         path="/v1/responses",

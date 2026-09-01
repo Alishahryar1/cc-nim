@@ -57,6 +57,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.core.token_estimation import estimate_text_tokens
 from free_claude_code.core.version import package_version
@@ -133,12 +134,32 @@ class ScriptedSelectionProvider:
         self.stream_kwargs: list[dict[str, object]] = []
         self.close_count = 0
 
-    def preflight_stream(
+    def preflight_messages(
         self, request: MessagesRequest, *, reasoning: ReasoningPolicy
     ) -> None:
         return None
 
-    async def stream_response(
+    def preflight_responses(
+        self,
+        request: OpenAIResponsesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+    ) -> None:
+        raise AssertionError("Web-search selection received a Responses request")
+
+    async def stream_responses(
+        self,
+        request: OpenAIResponsesRequest,
+        *,
+        input_tokens: int,
+        request_id: str,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        raise AssertionError("Web-search selection received a Responses request")
+        yield ""
+
+    async def stream_messages(
         self,
         request: MessagesRequest,
         *,

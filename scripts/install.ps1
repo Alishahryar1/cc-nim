@@ -26,6 +26,7 @@ $HermesInstallUrl = "https://hermes-agent.nousresearch.com/install.ps1"
 $DshVersion = "0.1.0-rc.8"
 $DshPackage = "@deepseek-ai/dsh@$DshVersion"
 $GrokInstallUrl = "https://x.ai/cli/install.ps1"
+$MuseInstallUrl = "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install-muse.ps1"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -40,6 +41,7 @@ $script:InstallHermes = $true
 $script:InstallDsh = $true
 $script:InstallGrok = $true
 $script:InstallMuse = $true
+$script:InstallAider = $true
 $script:PiAvailable = $false
 $script:MuseAvailable = $false
 $script:EnableRtk = $Rtk.IsPresent
@@ -56,6 +58,7 @@ $FccCommands = @(
     "fcc-dsh",
     "fcc-grok",
     "fcc-muse",
+    "fcc-aider",
     "fcc-init",
     "free-claude-code"
 )
@@ -131,8 +134,11 @@ function Select-CodingAgents {
         $script:InstallMuse = Read-YesNo `
             -Prompt "Install or verify Muse Code for fcc-muse?" `
             -DefaultYes $script:InstallMuse
+        $script:InstallAider = Read-YesNo `
+            -Prompt "Install or verify Aider for fcc-aider?" `
+            -DefaultYes $script:InstallAider
 
-        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline -or $script:InstallHermes -or $script:InstallDsh -or $script:InstallGrok -or $script:InstallMuse) {
+        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline -or $script:InstallHermes -or $script:InstallDsh -or $script:InstallGrok -or $script:InstallMuse -or $script:InstallAider) {
             break
         }
         Write-Host "Select at least one coding agent."
@@ -262,6 +268,17 @@ function Add-PathEntry {
     }
 }
 
+function Prioritize-PathEntry {
+    param([string] $PathEntry)
+
+    if ([string]::IsNullOrWhiteSpace($PathEntry)) {
+        return
+    }
+
+    $separator = [IO.Path]::PathSeparator
+    $env:Path = "$PathEntry$separator$env:Path"
+}
+
 function Add-KnownBinDirectories {
     if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
         Add-PathEntry (Join-Path $env:USERPROFILE ".local\bin")
@@ -273,6 +290,7 @@ function Add-KnownBinDirectories {
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         Add-PathEntry (Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin")
         Add-PathEntry (Join-Path $env:LOCALAPPDATA "pi-node\current")
+        Add-PathEntry (Join-Path $env:LOCALAPPDATA "Programs\Muse Code\bin")
     }
     if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
         Add-PathEntry (Join-Path $env:APPDATA "npm")
@@ -825,15 +843,65 @@ function Ensure-Grok {
     Confirm-Application -CommandName "grok" -DisplayName "Grok Build"
 }
 
-function Ensure-Muse {
-    $script:MuseAvailable = $false
-    $command = Get-ApplicationCommand "muse"
-    if (-not $command) {
-        Write-Host "Muse Code is not installed. Meta does not currently publish an official Windows installer; fcc-muse will be ready when Muse Code is on PATH."
-        return
+function Install-Aider {
+    $uvPath = "uv"
+    if (-not $DryRun) {
+        $uvCommand = Get-ApplicationCommand "uv"
+        if (-not $uvCommand) {
+            throw "Aider installation requires the verified uv command, but it is not available on PATH."
+        }
+        $uvPath = $uvCommand.Source
     }
 
-    Write-Host "Muse Code already found on PATH; verifying it."
+    Invoke-NativeCommand -FilePath $uvPath -Arguments @(
+        "tool",
+        "install",
+        "--force",
+        "--python",
+        "python3.12",
+        "--with",
+        "pip",
+        "aider-chat@latest"
+    )
+}
+
+function Add-UvToolBinDirectory {
+    param([string] $UvPath)
+
+    $toolBin = Invoke-Utf8NativeCapture -FilePath $UvPath -Arguments @("tool", "dir", "--bin")
+    if ([string]::IsNullOrWhiteSpace($toolBin)) {
+        throw "uv returned an empty tool bin directory."
+    }
+
+    Add-PathEntry $toolBin
+    return $toolBin
+}
+
+function Ensure-Aider {
+    $command = Get-ApplicationCommand "aider"
+    if ((-not $command) -and (-not $DryRun)) {
+        $uvCommand = Get-ApplicationCommand "uv"
+        if (-not $uvCommand) {
+            throw "Aider installation requires the verified uv command, but it is not available on PATH."
+        }
+        $null = Add-UvToolBinDirectory -UvPath $uvCommand.Source
+        $command = Get-ApplicationCommand "aider"
+    }
+
+    if ($command) {
+        Write-Host "Aider already found on PATH; verifying it."
+    }
+    else {
+        Install-Aider
+    }
+
+    Confirm-Application -CommandName "aider" -DisplayName "Aider"
+}
+
+function Ensure-Muse {
+    $script:MuseAvailable = $false
+    Invoke-DownloadedPowerShellInstaller -Url $MuseInstallUrl -Name "Muse Code"
+    Add-KnownBinDirectories
     Confirm-Application -CommandName "muse" -DisplayName "Muse Code"
     $script:MuseAvailable = $true
 }
@@ -1006,11 +1074,16 @@ function Ensure-SelectedCodingAgents {
     }
 
     if ($script:InstallMuse) {
-        Write-Step "Checking for Muse Code"
+        Write-Step "Ensuring Muse Code is installed"
         Ensure-Muse
     }
 
-    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline) -and (-not $script:InstallHermes) -and (-not $script:InstallDsh) -and (-not $script:InstallGrok) -and (-not $script:MuseAvailable)) {
+    if ($script:InstallAider) {
+        Write-Step "Ensuring Aider is installed"
+        Ensure-Aider
+    }
+
+    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline) -and (-not $script:InstallHermes) -and (-not $script:InstallDsh) -and (-not $script:InstallGrok) -and (-not $script:MuseAvailable) -and (-not $script:InstallAider)) {
         throw "No selected coding agent was installed. Re-run the installer and choose at least one."
     }
 }
@@ -1045,6 +1118,45 @@ function Confirm-Uv {
     Write-Host "Verified uv $version."
 }
 
+function Get-UvInstallBinDirectory {
+    $forceInstallDirectory = if (-not [string]::IsNullOrWhiteSpace($env:UV_INSTALL_DIR)) {
+        $env:UV_INSTALL_DIR
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:UV_UNMANAGED_INSTALL)) {
+        $env:UV_UNMANAGED_INSTALL
+    }
+    else {
+        $null
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($forceInstallDirectory)) {
+        $cargoHome = if (-not [string]::IsNullOrWhiteSpace($env:CARGO_HOME)) {
+            $env:CARGO_HOME
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($HOME)) {
+            Join-Path $HOME ".cargo"
+        }
+        else {
+            $null
+        }
+        if ($cargoHome -and $forceInstallDirectory.Replace("\\", "\") -eq $cargoHome) {
+            return Join-Path $forceInstallDirectory "bin"
+        }
+        return $forceInstallDirectory
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_BIN_HOME)) {
+        return $env:XDG_BIN_HOME
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:XDG_DATA_HOME)) {
+        return Join-Path $env:XDG_DATA_HOME "..\bin"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        return Join-Path $env:USERPROFILE ".local\bin"
+    }
+
+    throw "Could not determine where the standalone uv installer places uv."
+}
+
 function Ensure-Uv {
     if ($DryRun) {
         if (Get-ApplicationCommand "uv") {
@@ -1073,7 +1185,7 @@ function Ensure-Uv {
     }
 
     Invoke-DownloadedPowerShellInstaller -Url $UvInstallUrl -Name "uv"
-    Add-KnownBinDirectories
+    Prioritize-PathEntry (Get-UvInstallBinDirectory)
     Confirm-Uv
 }
 
@@ -1165,7 +1277,7 @@ function Configure-AndConfirmFreeClaudeCode {
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
-        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, fcc-grok, and fcc-muse in the uv tool bin directory"
+        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, fcc-grok, fcc-muse, and fcc-aider in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
         Export-FccDesktopIcon `
             -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
@@ -1181,18 +1293,13 @@ function Configure-AndConfirmFreeClaudeCode {
         throw "uv is not available for PATH configuration."
     }
     Invoke-NativeCommand -FilePath $uvCommand.Source -Arguments @("tool", "update-shell")
-    $toolBin = Invoke-Utf8NativeCapture -FilePath $uvCommand.Source -Arguments @("tool", "dir", "--bin")
-    if ([string]::IsNullOrWhiteSpace($toolBin)) {
-        throw "uv returned an empty tool bin directory."
-    }
-
-    Add-PathEntry $toolBin
+    $toolBin = Add-UvToolBinDirectory -UvPath $uvCommand.Source
     $toolBinPath = ([IO.Path]::GetFullPath($toolBin)).TrimEnd(
         [IO.Path]::DirectorySeparatorChar,
         [IO.Path]::AltDirectorySeparatorChar
     )
     $installedCommands = @{}
-    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline", "fcc-hermes", "fcc-dsh", "fcc-grok", "fcc-muse")) {
+    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline", "fcc-hermes", "fcc-dsh", "fcc-grok", "fcc-muse", "fcc-aider")) {
         $command = Get-ApplicationCommand $commandName
         if (-not $command) {
             throw "Free Claude Code installation did not create '$commandName'."
@@ -1314,11 +1421,11 @@ if (Test-InteractiveInstaller) {
     Select-CodingAgents
 }
 
-Ensure-SelectedCodingAgents
-Configure-RtkForSelectedAgents
-
 Write-Step "Ensuring uv $MinUvVersion or newer is installed"
 Ensure-Uv
+
+Ensure-SelectedCodingAgents
+Configure-RtkForSelectedAgents
 
 Write-Step "Installing or updating Free Claude Code"
 Install-FreeClaudeCode
@@ -1374,5 +1481,11 @@ else {
     }
     else {
         Write-Host "The fcc-muse wrapper is ready after you install Muse Code."
+    }
+    if ($script:InstallAider) {
+        Write-Host "Run Aider with: fcc-aider"
+    }
+    else {
+        Write-Host "The fcc-aider wrapper is ready after you install Aider."
     }
 }

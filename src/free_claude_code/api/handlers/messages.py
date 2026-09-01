@@ -134,10 +134,8 @@ class MessagesHandler:
             if result is None:
                 logger.debug("No optimization matched, routing to provider")
                 result = _MessagesStreamResult(
-                    self._provider_executor.stream(
+                    self._provider_executor.stream_messages(
                         routed,
-                        wire_api="messages",
-                        raw_log_label="FULL_PAYLOAD",
                         raw_log_payload=routed.request.model_dump(),
                         request_id=request_id,
                     )
@@ -173,7 +171,9 @@ class MessagesHandler:
             # complete JSON Message; the internal pipeline is always SSE, so
             # serving that raw here breaks the client SDK's response parse.
             try:
-                message, error = await aggregate_anthropic_sse_to_message(result.body)
+                message, error, _complete = await aggregate_anthropic_sse_to_message(
+                    result.body
+                )
             except GeneratorExit:
                 raise
             except asyncio.CancelledError:

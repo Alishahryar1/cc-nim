@@ -6,6 +6,7 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import GEMINI_DEFAULT_BASE
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.google_openai import (
@@ -429,7 +430,7 @@ def test_build_request_body_adds_current_turn_fallback_signature(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text(gemini_provider):
+async def test_stream_messages_text(gemini_provider):
     req = make_request(thinking={"type": "enabled"})
 
     mock_chunk = MagicMock()
@@ -455,7 +456,7 @@ async def test_stream_response_text(gemini_provider):
 
         events = [
             event
-            async for event in gemini_provider.stream_response(
+            async for event in gemini_provider.stream_messages(
                 req, reasoning=reasoning_for(req)
             )
         ]
@@ -477,7 +478,7 @@ async def test_stream_response_text(gemini_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_preserves_tool_call_extra_content(gemini_provider):
+async def test_stream_messages_preserves_tool_call_extra_content(gemini_provider):
     req = make_request()
 
     mock_tc = MagicMock()
@@ -509,7 +510,7 @@ async def test_stream_response_preserves_tool_call_extra_content(gemini_provider
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in gemini_provider.stream_response(req)]
+        events = [event async for event in gemini_provider.stream_messages(req)]
 
     tool_starts = [
         event
@@ -525,7 +526,122 @@ async def test_stream_response_preserves_tool_call_extra_content(gemini_provider
 
 
 @pytest.mark.asyncio
-async def test_stream_response_reasoning_content(gemini_provider):
+async def test_colliding_stream_tool_id_rekeys_cached_thought_signature(
+    gemini_provider,
+):
+    """Gemini metadata follows the public ID returned to the client."""
+    history = [
+        {"role": "user", "content": "Find files once."},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "function-call-1",
+                    "name": "Glob",
+                    "input": {"pattern": "*.py"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "function-call-1",
+                    "content": "[]",
+                }
+            ],
+        },
+    ]
+    request = make_request(
+        system=None,
+        messages=[*history, {"role": "user", "content": "Find files again."}],
+    )
+    tool_call = MagicMock()
+    tool_call.index = 0
+    tool_call.id = "function-call-1"
+    tool_call.extra_content = {"google": {"thought_signature": "sig-stream"}}
+    tool_call.function = MagicMock()
+    tool_call.function.name = "Glob"
+    tool_call.function.arguments = '{"pattern":"*.py"}'
+    chunk = MagicMock()
+    chunk.choices = [
+        MagicMock(
+            delta=MagicMock(
+                content=None,
+                reasoning_content=None,
+                tool_calls=[tool_call],
+            ),
+            finish_reason="tool_calls",
+        )
+    ]
+    chunk.usage = MagicMock(completion_tokens=5, prompt_tokens=10)
+
+    async def mock_stream():
+        yield chunk
+
+    with patch.object(
+        gemini_provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        return_value=mock_stream(),
+    ):
+        events = [event async for event in gemini_provider.stream_messages(request)]
+
+    starts = [
+        event.data["content_block"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "content_block_start"
+        and event.data.get("content_block", {}).get("type") == "tool_use"
+    ]
+    [start] = starts
+    public_id = start["id"]
+    assert public_id != "function-call-1"
+    assert gemini_provider._tool_call_extra_content_by_id[public_id] == {
+        "google": {"thought_signature": "sig-stream"}
+    }
+
+    replay = make_request(
+        system=None,
+        messages=[
+            *request.messages,
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": public_id,
+                        "name": "Glob",
+                        "input": {"pattern": "*.py"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": public_id,
+                        "content": "[]",
+                    }
+                ],
+            },
+        ],
+    )
+    body = gemini_provider._build_request_body(
+        replay,
+        reasoning=reasoning_for(replay),
+    )
+    replayed_call = body["messages"][-2]["tool_calls"][0]
+    assert replayed_call["id"] == public_id
+    assert replayed_call["extra_content"] == {
+        "google": {"thought_signature": "sig-stream"}
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_reasoning_content(gemini_provider):
     req = make_request()
 
     mock_chunk = MagicMock()
@@ -549,7 +665,7 @@ async def test_stream_response_reasoning_content(gemini_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in gemini_provider.stream_response(req)]
+        events = [event async for event in gemini_provider.stream_messages(req)]
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

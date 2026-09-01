@@ -18,6 +18,7 @@ from free_claude_code.core.trace import trace_event
 from .dependencies import (
     get_services,
     get_settings,
+    require_anthropic_proxy_auth,
     require_proxy_auth,
     resolve_provider,
 )
@@ -111,7 +112,7 @@ async def create_message(
     request: Request,
     request_data: MessagesRequest,
     services: ApiServices = Depends(get_services),
-    _auth=Depends(require_proxy_auth),
+    _auth=Depends(require_anthropic_proxy_auth),
 ):
     """Create a message (JSON by default; stream=true returns Anthropic SSE)."""
     return await _create_messages_response(
@@ -122,7 +123,7 @@ async def create_message(
 
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])
-async def probe_messages(_auth=Depends(require_proxy_auth)):
+async def probe_messages(_auth=Depends(require_anthropic_proxy_auth)):
     return _probe_response("POST, HEAD, OPTIONS")
 
 
@@ -151,7 +152,7 @@ async def count_tokens(
     request: Request,
     request_data: TokenCountRequest,
     settings: Settings = Depends(get_settings),
-    _auth=Depends(require_proxy_auth),
+    _auth=Depends(require_anthropic_proxy_auth),
 ):
     """Count tokens for a request."""
     handler = TokenCountHandler(settings, token_counter=get_token_count)
@@ -159,7 +160,7 @@ async def count_tokens(
 
 
 @router.api_route("/v1/messages/count_tokens", methods=["HEAD", "OPTIONS"])
-async def probe_count_tokens(_auth=Depends(require_proxy_auth)):
+async def probe_count_tokens(_auth=Depends(require_anthropic_proxy_auth)):
     return _probe_response("POST, HEAD, OPTIONS")
 
 
