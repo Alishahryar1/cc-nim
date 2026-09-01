@@ -368,6 +368,65 @@ def test_load_or_create_front_identity_survives_permissive_umask(
     assert secret_file.stat().st_mode & 0o777 == 0o600
 
 
+def test_load_or_create_front_identity_tightens_existing_permissive_home(
+    tmp_path: Path,
+) -> None:
+    """A pre-existing permissive Caddy home is tightened before use.
+
+    Regression guard for the Greptile "shared Caddy state directory remains
+    writable" finding: ``mkdir(mode=0o700)`` only governs directories the
+    call itself creates, so a home that already exists with 0777 (inherited
+    under a permissive umask or created by an older install) would keep
+    letting other local users traverse and write into the directory that
+    holds the credential-bearing front's identity secret. Creation must
+    restrict the existing directory itself.
+    """
+
+    home = tmp_path / "caddy"
+    # chmod (not mkdir's mode arg) defeats the test process's own umask,
+    # which would otherwise leave the directory at 0775 instead of 0777 —
+    # the permissive state the finding describes.
+    home.mkdir()
+    home.chmod(0o777)
+    assert home.stat().st_mode & 0o777 == 0o777
+
+    tls_proxy.load_or_create_front_identity(home)
+
+    assert home.stat().st_mode & 0o777 == 0o700
+    secret_file = tls_proxy.front_identity_path(home)
+    assert secret_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_caddy_start_tightens_existing_permissive_home(tmp_path: Path) -> None:
+    """The managed front's state directory is forced owner-only on start.
+
+    Companion to the identity test: ``CaddyTlsProxy.start`` writes the
+    Caddyfile (which embeds the identity secret) and gives the managed
+    caddy its whole sandbox here, so the same pre-existing-permissive-home
+    hole applies on the proxy-start path.
+    """
+
+    settings = Settings.model_construct(
+        host="127.0.0.1", port=8082, tls_proxy_enabled=True, tls_proxy_port=18443
+    )
+    home = tmp_path / "caddy"
+    home.mkdir()
+    home.chmod(0o777)
+    proxy = tls_proxy.CaddyTlsProxy(settings, home_dir=home)
+
+    with (
+        patch.object(tls_proxy, "load_or_create_front_identity", return_value="s"),
+        patch.object(tls_proxy, "probe_fcc_front", return_value=False),
+        patch.object(tls_proxy, "shutil") as fake_shutil,
+        patch.object(tls_proxy, "subprocess") as fake_subprocess,
+    ):
+        fake_shutil.which.return_value = "/usr/bin/caddy"
+        fake_subprocess.Popen.return_value = MagicMock()
+        proxy.start()
+
+    assert home.stat().st_mode & 0o777 == 0o700
+
+
 def test_resolve_gateway_base_url_https_when_probe_succeeds(
     settings: Settings,
 ) -> None:

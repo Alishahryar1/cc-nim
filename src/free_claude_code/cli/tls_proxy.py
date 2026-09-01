@@ -77,6 +77,24 @@ def _default_home_dir() -> Path:
     return base / CADDY_HOME_DIRNAME
 
 
+def _restrict_home_permissions(directory: Path) -> None:
+    """Tighten an existing Caddy home to owner-only access.
+
+    ``mkdir(mode=0o700)`` only applies to directories the call itself
+    creates; a home that already exists keeps whatever mode it was made
+    with, so under a permissive umask an inherited ``0777`` home lets any
+    local user traverse and write into the directory holding the
+    credential-bearing front's identity secret, Caddyfile, and CA state.
+    The managed front writes its state here, so the directory is forced
+    to owner-only before any of those files exist.
+    """
+
+    current = directory.stat().st_mode
+    target = stat.S_IRWXU
+    if current & 0o777 != target:
+        directory.chmod(target)
+
+
 def front_identity_path(home_dir: Path | None = None) -> Path:
     """File holding this install's front-identity secret (owner-only)."""
 
@@ -131,6 +149,7 @@ def load_or_create_front_identity(home_dir: Path | None = None) -> str:
         return existing
 
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _restrict_home_permissions(path.parent)
     secret = secrets.token_hex(FRONT_IDENTITY_BYTES)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
@@ -362,6 +381,7 @@ class CaddyTlsProxy:
 
         try:
             self._home_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            _restrict_home_permissions(self._home_dir)
             self._write_caddyfile(self.render_caddyfile(identity))
         except OSError as exc:
             logger.warning(
