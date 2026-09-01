@@ -1364,6 +1364,39 @@ client environment.
   Codex surface one credential owner instead of competing with Codex's signed-in
   OpenAI authorization.
 
+[application/work/codex.py](src/free_claude_code/application/work/codex.py)
+defines the concrete Codex Direct port and values for the future Work
+application. It deliberately preserves Codex-native thread, turn, control,
+notification, and server-request identities instead of introducing a generic
+harness abstraction before a second rich harness contract exists.
+
+[runtime/codex_app_server.py](src/free_claude_code/runtime/codex_app_server.py)
+implements that port over Codex's supported `app-server --stdio` JSONL
+interface:
+
+- One application-owned child starts lazily, performs the required
+  `initialize`/`initialized` handshake, and supports concurrent native threads
+  through serialized writes and correlated out-of-order responses.
+- The child reuses the exact ephemeral FCC provider, command-backed proxy auth,
+  generated model catalog, credential scrubbing, `CODEX_HOME`, and loopback
+  bypass assembled by `fcc-codex`; synchronous catalog discovery runs outside
+  the event loop.
+- A bounded single-consumer event stream carries native notifications and the
+  supported interactive server requests without interpreting them as Work
+  state. `currentTime/read` is answered locally and unnegotiated server methods
+  receive method-not-found rather than hanging the child.
+- Added fields and notification methods are preserved, malformed or oversized
+  protocol data and event overflow fail one connection generation visibly, and
+  a later operation may start a clean child. Submitted turns are never replayed
+  after an uncertain failure because that could duplicate commands or edits.
+- Shutdown closes stdin first, then terminates and kills only if the child does
+  not exit. All response futures and stdio readers remain owned until cleanup is
+  complete, including on Windows.
+
+This boundary has no HTTP route, persistence, or visible Work UI yet. Those
+belong to later Work application and adapter changes; the existing Chat product
+does not depend on this Codex-specific transport.
+
 [cli/launchers/model_catalog.py](src/free_claude_code/cli/launchers/model_catalog.py)
 consumes the direct Responses view, validates its nested `provider/model`
 references, and is shared by Codex, OpenCode, Cline, Hermes, DeepSeek Harness,
