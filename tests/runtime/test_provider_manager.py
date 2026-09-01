@@ -8,6 +8,7 @@ from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.settings import Settings
+from free_claude_code.core import gateway_model_ids as gmi
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.runtime import ProviderRuntime
@@ -240,6 +241,47 @@ async def test_catalog_publication_tracks_replacement_and_its_refresh() -> None:
         ("nvidia_nim/two", ()),
     ]
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_publish_reconciles_picker_aliases_with_cache_mutations() -> None:
+    gmi.clear_picker_aliases()
+    try:
+        factory = RuntimeFactory()
+        connected: set[str] = set()
+        manager = ProviderRuntimeManager(
+            _settings("nvidia_nim/one"),
+            runtime_factory=factory,
+            connected_provider_ids=lambda: tuple(connected),
+            model_catalog_publisher=RecordingModelCatalogPublisher(),
+        )
+        factory.runtimes[0].provider.list_model_infos = AsyncMock(
+            return_value=frozenset(
+                {ProviderModelInfo(model_id="old-model", supports_thinking=True)}
+            )
+        )
+
+        connected.add("openai")
+        await manager.connected_provider_changed("openai", connected=True)
+        old_alias = gmi.picker_alias_for("openai/old-model")
+        assert old_alias is not None
+
+        # A later cache mutation replaces the inventory: the new ref must gain
+        # an alias immediately, and the removed ref's alias retires instead of
+        # silently re-pointing at the replacement model.
+        manager.cache_model_infos(
+            "openai",
+            [ProviderModelInfo(model_id="new-model", supports_thinking=None)],
+        )
+
+        new_alias = gmi.picker_alias_for("openai/new-model")
+        assert new_alias is not None
+        assert gmi.picker_alias_for("openai/old-model") is None
+        assert new_alias != old_alias
+        assert gmi.resolve_picker_alias(old_alias) is None
+        await manager.close()
+    finally:
+        gmi.clear_picker_aliases()
 
 
 @pytest.mark.asyncio
