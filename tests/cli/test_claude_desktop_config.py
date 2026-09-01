@@ -483,6 +483,70 @@ def test_configure_unconfigure_roundtrip_restores_non_object_inference(
     assert restored == original
 
 
+@pytest.mark.parametrize("raw_inference", ["legacy-scalar", None])
+def test_unconfigure_cleans_non_object_origin_after_user_adds_field(
+    fake_config: Path,
+    fake_settings: Settings,
+    raw_inference: object,
+) -> None:
+    # Regression guard for the Greptile "scalar-origin routing survives
+    # unconfigure" finding: when configure replaces a scalar or null
+    # ``inference`` with its managed mapping and the user later adds one
+    # unrelated field, whole-mapping ownership would break and leave every
+    # FCC routing key installed. Cleanup must stay per-key: managed keys
+    # still holding their written values are removed, the user's field
+    # survives.
+    original = {"inference": raw_inference}
+    fake_config.write_text(json.dumps(original), encoding="utf-8")
+
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    data["inference"]["userAddedAfterConfigure"] = "must-survive"
+    fake_config.write_text(json.dumps(data), encoding="utf-8")
+
+    assert (
+        claude_desktop.unconfigure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    result = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert result["inference"] == {"userAddedAfterConfigure": "must-survive"}
+
+
+def test_unconfigure_keeps_user_edited_managed_key_over_scalar_origin(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    # A user-edited managed key is user-owned and survives unconfigure,
+    # while every managed key still at its written value is removed.
+    fake_config.write_text(json.dumps({"inference": "legacy-scalar"}), encoding="utf-8")
+
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    data = json.loads(fake_config.read_text(encoding="utf-8"))
+    data["inference"]["inferenceGatewayBaseUrl"] = "user-edited-url"
+    fake_config.write_text(json.dumps(data), encoding="utf-8")
+
+    assert (
+        claude_desktop.unconfigure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    result = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert result["inference"] == {"inferenceGatewayBaseUrl": "user-edited-url"}
+
+
 def test_unconfigure_roundtrip_is_clean_noop(
     fake_config: Path,
     fake_settings: Settings,
