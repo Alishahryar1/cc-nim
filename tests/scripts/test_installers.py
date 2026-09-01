@@ -2655,7 +2655,8 @@ def test_install_ps1_rejects_conflicting_rtk_command(
     result = powershell_harness.run("-Rtk")
 
     assert result.returncode != 0
-    assert "not a compatible Rust Token Killer installation" in result.stderr
+    normalized_stderr = " ".join(result.stderr.split())
+    assert "not a compatible Rust Token Killer installation" in normalized_stderr
     assert not any("rtk-ai/rtk" in call for call in powershell_harness.calls())
     _assert_uv_ready_without_fcc_install(powershell_harness.calls())
 
@@ -3218,7 +3219,7 @@ Invoke-DownloadedPowerShellInstaller `
         "Example installer from 'https://example.test/install.ps1' is not valid PowerShell"
         in normalized_stderr
     )
-    assert "network proxy or filter" in result.stderr
+    assert "network proxy or filter" in normalized_stderr
     assert "invalid installer reached execution" not in result.stderr
 
 

@@ -565,15 +565,25 @@ function Confirm-RtkApplication {
         throw "RTK was installed, but 'rtk' is not available on PATH."
     }
 
+    # Probe with a real RTK-only subcommand ("gain") rather than trusting
+    # --version output alone: an unrelated "rtk" on PATH can still print a
+    # plausible-looking "rtk <version>" string. Keep the diagnostic detail
+    # out of the thrown message so the compatibility error is never
+    # obscured by the raw failing-command text.
+    $compatible = $true
     try {
         Invoke-RtkCommand -Arguments @("--version")
         Invoke-RtkCommand -Arguments @("gain")
     }
     catch {
-        throw "The 'rtk' command at '$($command.Source)' is not a compatible Rust Token Killer installation. Remove the conflicting command from PATH, then rerun the installer. $($_.Exception.Message)"
+        $compatible = $false
+        Write-Host "RTK compatibility check failed: $($_.Exception.Message)"
+    }
+
+    if (-not $compatible) {
+        throw "The 'rtk' command at '$($command.Source)' is not a compatible Rust Token Killer installation. Remove the conflicting command from PATH, then rerun the installer."
     }
 }
-
 function Ensure-Rtk {
     if (Get-ApplicationCommand "rtk") {
         Write-Host "RTK already found on PATH; verifying it without updating it."
