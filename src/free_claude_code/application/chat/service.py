@@ -1,11 +1,10 @@
 """Application lifecycle and commands for durable local Chat Sessions."""
 
 import asyncio
-import contextlib
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
@@ -30,19 +29,23 @@ from .context import (
     PreparedChatRequest,
     compaction_target_tokens,
 )
+from .events import ChatEventPublisher
 from .models import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
+    ChatActiveOperation,
     ChatCompaction,
     ChatConflictError,
     ChatContextEstimate,
     ChatModelOption,
+    ChatOperationAcknowledgement,
+    ChatOperationKind,
+    ChatOperationPhase,
     ChatPreferences,
     ChatReasoning,
     ChatSegment,
     ChatSession,
     ChatSessionDetail,
     ChatSessionPage,
-    ChatStreamEvent,
     ChatTranscript,
     ChatTurn,
     ChatUnavailableError,
@@ -50,9 +53,8 @@ from .models import (
     GenerationStatus,
     SegmentKind,
 )
-from .ports import ChatOperationStream, ChatStorePort
+from .ports import ChatEventSubscriptionPort, ChatStorePort
 
-_EVENT_QUEUE_SIZE = 128
 _PERSIST_INTERVAL_SECONDS = 0.25
 _PERSIST_CHARACTER_THRESHOLD = 4_096
 _TURN_PAGE_LIMIT = 50
@@ -60,13 +62,6 @@ _SESSION_PAGE_LIMIT = 25
 _STORAGE_RESTART_MESSAGE = (
     "Chat storage became unavailable. Restart FCC to repair Chat Sessions."
 )
-
-
-class _OperationKind(StrEnum):
-    SEND = "send"
-    RETRY = "retry"
-    REGENERATE = "regenerate"
-    COMPACT = "compact"
 
 
 class _CancellationReason(StrEnum):
@@ -83,49 +78,18 @@ class _TerminalPersistenceError(ChatUnavailableError):
 class _ActiveOperation:
     session_id: str
     operation_id: str
-    kind: _OperationKind
-    queue: asyncio.Queue[ChatStreamEvent | None] = field(
-        default_factory=lambda: asyncio.Queue(maxsize=_EVENT_QUEUE_SIZE)
-    )
+    kind: ChatOperationKind
+    phase: ChatOperationPhase
+    submitted_text: str | None = None
     task: asyncio.Task[None] | None = None
     cancellation_reason: _CancellationReason | None = None
+    turn_id: str | None = None
     generation_id: str | None = None
     regeneration: bool = False
     segments: list[ChatSegment] = field(default_factory=list)
     event_sequence: int = 0
     actual_model: str | None = None
-    terminal_emitted: bool = False
-
-
-class _OperationStream:
-    """Initiating browser view of one application-owned operation."""
-
-    def __init__(self, service: ChatService, active: _ActiveOperation) -> None:
-        self._service = service
-        self._active = active
-        self.operation_id = active.operation_id
-        self._closed = False
-
-    def __aiter__(self) -> AsyncIterator[ChatStreamEvent]:
-        return self._events()
-
-    async def _events(self) -> AsyncIterator[ChatStreamEvent]:
-        while True:
-            event = await self._active.queue.get()
-            if event is None:
-                return
-            yield event
-
-    async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        task = self._active.task
-        if task is not None and not task.done():
-            await self._service._cancel_active(
-                self._active,
-                reason=_CancellationReason.STOPPED,
-            )
+    terminal_event: tuple[str, JsonObject] | None = None
 
 
 class ChatService:
@@ -135,6 +99,7 @@ class ChatService:
         self._runtime = runtime
         self._store = store
         self._context = ChatContextBuilder(runtime)
+        self._events = ChatEventPublisher()
         self._active: dict[str, _ActiveOperation] = {}
         self._deleting: set[str] = set()
         self._active_lock = asyncio.Lock()
@@ -177,6 +142,7 @@ class ChatService:
                 for operation in active
             )
         )
+        self._events.close()
         await self._store.close()
         self._started = False
         self._unavailable_message = "Chat Sessions is stopped."
@@ -187,17 +153,25 @@ class ChatService:
     def models(self) -> tuple[ChatModelOption, ...]:
         return self._context.models()
 
+    def subscribe(self) -> ChatEventSubscriptionPort:
+        self._require_available()
+        return self._events.subscribe()
+
     async def preferences(self) -> ChatPreferences:
         self._require_available()
         return await self._store.load_preferences()
 
     async def save_system_prompt(self, value: str) -> ChatPreferences:
         self._require_available()
-        return await self._store.save_system_prompt(value)
+        preferences = await self._store.save_system_prompt(value)
+        self._publish_preferences(preferences)
+        return preferences
 
     async def reset_system_prompt(self) -> ChatPreferences:
         self._require_available()
-        return await self._store.save_system_prompt(DEFAULT_CHAT_SYSTEM_PROMPT)
+        preferences = await self._store.save_system_prompt(DEFAULT_CHAT_SYSTEM_PROMPT)
+        self._publish_preferences(preferences)
+        return preferences
 
     async def create_session(self) -> ChatSession:
         self._require_available()
@@ -219,11 +193,13 @@ class ChatService:
         reasoning = preferences.last_reasoning
         if available[model].supports_reasoning is False:
             reasoning = ChatReasoning.OFF
-        return await self._store.create_session(
+        session = await self._store.create_session(
             session_id=str(uuid.uuid4()),
             model=model,
             reasoning=reasoning,
         )
+        self._events.publish("session.created", _session_event_data(session))
+        return session
 
     async def list_sessions(
         self,
@@ -233,10 +209,24 @@ class ChatService:
         limit: int,
     ) -> ChatSessionPage:
         self._require_available()
-        return await self._store.list_sessions(
+        page = await self._store.list_sessions(
             query=query,
             cursor=cursor,
             limit=max(1, min(_SESSION_PAGE_LIMIT, limit)),
+        )
+        async with self._active_lock:
+            active_kinds = {
+                session_id: active.kind for session_id, active in self._active.items()
+            }
+        return replace(
+            page,
+            sessions=tuple(
+                replace(
+                    session,
+                    active_operation=active_kinds.get(session.id),
+                )
+                for session in page.sessions
+            ),
         )
 
     async def get_session(self, session_id: str) -> ChatSession:
@@ -247,31 +237,32 @@ class ChatService:
         self._require_available()
         session_id = _canonical_uuid(session_id, "session")
         async with self._active_lock:
-            active_operation = session_id in self._active
-            transcript = await self._store.get_transcript(session_id)
-            prompt = (await self._store.load_preferences()).system_prompt
-            context: ChatContextEstimate | None
-            context_error: str | None = None
-            try:
-                context = self._context.prepare(
-                    transcript,
-                    system_prompt=prompt,
-                ).estimate
-            except ChatValidationError as exc:
-                context = None
-                context_error = str(exc)
-            has_more = len(transcript.turns) > _TURN_PAGE_LIMIT
-            turns = transcript.turns[-_TURN_PAGE_LIMIT:]
-            next_before = turns[0].sequence if has_more and turns else None
-            return ChatSessionDetail(
-                session=transcript.session,
-                turns=turns,
-                next_before=next_before,
-                compaction=transcript.compaction,
-                context=context,
-                context_error=context_error,
-                active_operation=active_operation,
-            )
+            active = self._active.get(session_id)
+            active_operation = _active_snapshot(active) if active is not None else None
+        transcript = await self._store.get_transcript(session_id)
+        prompt = (await self._store.load_preferences()).system_prompt
+        context: ChatContextEstimate | None
+        context_error: str | None = None
+        try:
+            context = self._context.prepare(
+                transcript,
+                system_prompt=prompt,
+            ).estimate
+        except ChatValidationError as exc:
+            context = None
+            context_error = str(exc)
+        has_more = len(transcript.turns) > _TURN_PAGE_LIMIT
+        turns = transcript.turns[-_TURN_PAGE_LIMIT:]
+        next_before = turns[0].sequence if has_more and turns else None
+        return ChatSessionDetail(
+            session=transcript.session,
+            turns=turns,
+            next_before=next_before,
+            compaction=transcript.compaction,
+            context=context,
+            context_error=context_error,
+            active_operation=active_operation,
+        )
 
     async def update_session(
         self,
@@ -301,13 +292,15 @@ class ChatService:
                 raise ChatConflictError(
                     "Model and thinking cannot change while this chat is running."
                 )
-            return await self._store.update_session(
+            session = await self._store.update_session(
                 session_id,
                 expected_revision=expected_revision,
                 title=title,
                 model=model,
                 reasoning=reasoning,
             )
+        self._events.publish("session.updated", _session_event_data(session))
+        return session
 
     async def delete_session(self, session_id: str, *, expected_revision: int) -> None:
         self._require_available()
@@ -327,6 +320,7 @@ class ChatService:
                 session_id,
                 expected_revision=current.revision,
             )
+            self._events.publish("session.deleted", {"session_id": session_id})
         finally:
             async with self._active_lock:
                 self._deleting.discard(session_id)
@@ -366,7 +360,7 @@ class ChatService:
         expected_revision: int,
         operation_id: str,
         text: str,
-    ) -> ChatOperationStream:
+    ) -> ChatOperationAcknowledgement:
         self._require_available()
         session_id = _canonical_uuid(session_id, "session")
         operation_id = _canonical_uuid(operation_id, "operation")
@@ -379,7 +373,8 @@ class ChatService:
         return await self._start_operation(
             session_id,
             operation_id=operation_id,
-            kind=_OperationKind.SEND,
+            kind=ChatOperationKind.SEND,
+            submitted_text=text,
             action=lambda active: self._run_send(
                 active,
                 expected_revision=expected_revision,
@@ -393,7 +388,7 @@ class ChatService:
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream:
+    ) -> ChatOperationAcknowledgement:
         self._require_available()
         session_id = _canonical_uuid(session_id, "session")
         operation_id = _canonical_uuid(operation_id, "operation")
@@ -415,7 +410,7 @@ class ChatService:
         return await self._start_operation(
             session_id,
             operation_id=operation_id,
-            kind=_OperationKind.RETRY,
+            kind=ChatOperationKind.RETRY,
             action=lambda active: self._run_retry(
                 active,
                 expected_revision=expected_revision,
@@ -428,7 +423,7 @@ class ChatService:
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream:
+    ) -> ChatOperationAcknowledgement:
         self._require_available()
         session_id = _canonical_uuid(session_id, "session")
         operation_id = _canonical_uuid(operation_id, "operation")
@@ -446,7 +441,7 @@ class ChatService:
         return await self._start_operation(
             session_id,
             operation_id=operation_id,
-            kind=_OperationKind.REGENERATE,
+            kind=ChatOperationKind.REGENERATE,
             action=lambda active: self._run_regenerate(
                 active,
                 expected_revision=expected_revision,
@@ -459,7 +454,7 @@ class ChatService:
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream:
+    ) -> ChatOperationAcknowledgement:
         self._require_available()
         session_id = _canonical_uuid(session_id, "session")
         operation_id = _canonical_uuid(operation_id, "operation")
@@ -472,7 +467,7 @@ class ChatService:
         return await self._start_operation(
             session_id,
             operation_id=operation_id,
-            kind=_OperationKind.COMPACT,
+            kind=ChatOperationKind.COMPACT,
             action=lambda active: self._run_manual_compaction(
                 active,
                 expected_revision=expected_revision,
@@ -497,9 +492,10 @@ class ChatService:
         session_id: str,
         *,
         operation_id: str,
-        kind: _OperationKind,
+        kind: ChatOperationKind,
+        submitted_text: str | None = None,
         action: Callable[[_ActiveOperation], Awaitable[None]],
-    ) -> _OperationStream:
+    ) -> ChatOperationAcknowledgement:
         async with self._active_lock:
             if not self._accepting:
                 raise ChatUnavailableError("Chat Sessions is shutting down.")
@@ -511,13 +507,32 @@ class ChatService:
                 session_id=session_id,
                 operation_id=operation_id,
                 kind=kind,
+                phase=(
+                    ChatOperationPhase.COMPACTING
+                    if kind is ChatOperationKind.COMPACT
+                    else ChatOperationPhase.GENERATING
+                ),
+                submitted_text=submitted_text,
             )
             self._active[session_id] = active
             active.task = asyncio.create_task(
                 self._run_active(active, action),
                 name=f"fcc-chat-{kind.value}-{operation_id}",
             )
-        return _OperationStream(self, active)
+            self._emit(
+                active,
+                "operation.started",
+                {
+                    "kind": kind.value,
+                    "phase": active.phase.value,
+                    "submitted_text": submitted_text,
+                },
+            )
+        return ChatOperationAcknowledgement(
+            session_id=session_id,
+            operation_id=operation_id,
+            kind=kind,
+        )
 
     async def _run_active(
         self,
@@ -598,7 +613,8 @@ class ChatService:
                     effective_output_limit=prepared.routed.request.max_tokens or 1,
                 ),
             )
-            await self._emit(
+            active.turn_id = turn_id
+            self._emit(
                 active,
                 "turn.started",
                 {
@@ -664,7 +680,8 @@ class ChatService:
                     effective_output_limit=prepared.routed.request.max_tokens or 1,
                 ),
             )
-            await self._emit(
+            active.turn_id = latest.id
+            self._emit(
                 active,
                 "turn.started",
                 {
@@ -732,7 +749,8 @@ class ChatService:
                     effective_output_limit=prepared.routed.request.max_tokens or 1,
                 ),
             )
-            await self._emit(
+            active.turn_id = latest.id
+            self._emit(
                 active,
                 "turn.started",
                 {
@@ -881,7 +899,7 @@ class ChatService:
             name=f"fcc-chat-generation-commit-{generation_id}",
         )
         session, _cancellation = await _await_task_despite_cancellation(commit_task)
-        self._emit_terminal_nowait(
+        self._stage_terminal(
             active,
             "turn.completed",
             {
@@ -933,7 +951,7 @@ class ChatService:
             ordinal = len(active.segments)
             active.segments.append(ChatSegment(ordinal=ordinal, kind=kind, text=""))
             block_segments[index] = ordinal
-            await self._emit(
+            self._emit(
                 active,
                 "segment.started",
                 {"ordinal": ordinal, "kind": kind.value},
@@ -972,7 +990,7 @@ class ChatService:
             ordinal = block_segments.pop(index, None)
             if ordinal is not None:
                 await self._flush_segments(active)
-                await self._emit(active, "segment.completed", {"ordinal": ordinal})
+                self._emit(active, "segment.completed", {"ordinal": ordinal})
             return 0, False, None
         if payload_type == "message_delta":
             delta = data.get("delta")
@@ -989,7 +1007,7 @@ class ChatService:
     ) -> None:
         current = active.segments[ordinal]
         active.segments[ordinal] = replace(current, text=f"{current.text}{delta}")
-        await self._emit(
+        self._emit(
             active,
             "segment.delta",
             {"ordinal": ordinal, "kind": current.kind.value, "delta": delta},
@@ -1024,7 +1042,8 @@ class ChatService:
             raise ChatValidationError(
                 "There is not enough older conversation to compact."
             )
-        await self._emit(active, "compaction.started", {})
+        active.phase = ChatOperationPhase.COMPACTING
+        self._emit(active, "compaction.started", {"phase": active.phase.value})
         option = builder.model(transcript.session.model)
         output_tokens = builder.summary_output_tokens(option)
         retain_count = min(4, len(remaining) - 1)
@@ -1104,10 +1123,12 @@ class ChatService:
             "covered_through_sequence": covered,
             "revision": transcript.session.revision + 1,
         }
-        if active.kind is _OperationKind.COMPACT:
-            self._emit_terminal_nowait(active, "compaction.completed", completion)
+        if active.kind is ChatOperationKind.COMPACT:
+            self._stage_terminal(active, "compaction.completed", completion)
         else:
-            self._emit_nowait(active, "compaction.completed", completion)
+            active.phase = ChatOperationPhase.GENERATING
+            completion["phase"] = active.phase.value
+            self._emit(active, "compaction.completed", completion)
             if cancellation is not None:
                 raise cancellation
         return compaction
@@ -1222,7 +1243,7 @@ class ChatService:
             raise ChatValidationError(
                 "The provider did not identify the compaction model."
             )
-        await self._emit(
+        self._emit(
             active,
             "compaction.progress",
             {"covered_exchange_count": 1},
@@ -1231,6 +1252,7 @@ class ChatService:
 
     async def _handle_cancelled(self, active: _ActiveOperation) -> None:
         reason = active.cancellation_reason or _CancellationReason.STOPPED
+        terminal_data: JsonObject = {"reason": reason.value}
         if active.generation_id is not None:
             try:
                 if active.regeneration:
@@ -1242,13 +1264,14 @@ class ChatService:
                         if reason is _CancellationReason.INTERRUPTED
                         else GenerationStatus.STOPPED
                     )
-                    await self._finish_generation(
+                    session = await self._finish_generation(
                         active.generation_id,
                         status=status,
                         stop_reason=reason.value,
                         error_code=None,
                         error_message=None,
                     )
+                    terminal_data["revision"] = session.revision
             except Exception as exc:
                 if reason is _CancellationReason.INTERRUPTED:
                     logger.warning(
@@ -1262,7 +1285,7 @@ class ChatService:
                 self._disable_after_terminal_write_failure(active, exc)
                 if reason is _CancellationReason.DELETED:
                     raise
-                self._emit_terminal_nowait(
+                self._stage_terminal(
                     active,
                     "turn.failed",
                     {
@@ -1275,20 +1298,24 @@ class ChatService:
             return
         event = (
             "compaction.stopped"
-            if active.kind is _OperationKind.COMPACT
+            if active.kind is ChatOperationKind.COMPACT
             else "turn.stopped"
         )
-        self._emit_terminal_nowait(active, event, {"reason": reason.value})
+        self._stage_terminal(active, event, terminal_data)
 
     async def _handle_failure(self, active: _ActiveOperation, exc: Exception) -> None:
         if isinstance(exc, _TerminalPersistenceError):
             self._disable_after_terminal_write_failure(active, exc)
             event = (
                 "compaction.failed"
-                if active.kind is _OperationKind.COMPACT
-                else "turn.failed"
+                if active.kind is ChatOperationKind.COMPACT
+                else (
+                    "turn.failed"
+                    if active.generation_id is not None
+                    else "operation.failed"
+                )
             )
-            self._emit_terminal_nowait(
+            self._stage_terminal(
                 active,
                 event,
                 {
@@ -1315,11 +1342,12 @@ class ChatService:
                 active.operation_id,
                 type(exc).__name__,
             )
+        terminal_data: JsonObject = {"code": code, "message": message}
         if active.generation_id is not None:
             try:
                 await self._flush_terminal_segments(active)
                 if active.regeneration:
-                    await self._finish_regeneration(
+                    session = await self._finish_regeneration(
                         active.generation_id,
                         status=GenerationStatus.FAILED,
                         stop_reason=None,
@@ -1327,13 +1355,14 @@ class ChatService:
                         error_message=message,
                     )
                 else:
-                    await self._finish_generation(
+                    session = await self._finish_generation(
                         active.generation_id,
                         status=GenerationStatus.FAILED,
                         stop_reason=None,
                         error_code=code,
                         error_message=message,
                     )
+                terminal_data["revision"] = session.revision
             except Exception as persistence_exc:
                 self._disable_after_terminal_write_failure(
                     active,
@@ -1341,12 +1370,15 @@ class ChatService:
                 )
                 code = "chat_storage_unavailable"
                 message = _STORAGE_RESTART_MESSAGE
+                terminal_data = {"code": code, "message": message}
         event = (
             "compaction.failed"
-            if active.kind is _OperationKind.COMPACT
+            if active.kind is ChatOperationKind.COMPACT
             else "turn.failed"
+            if active.generation_id is not None
+            else "operation.failed"
         )
-        self._emit_terminal_nowait(active, event, {"code": code, "message": message})
+        self._stage_terminal(active, event, terminal_data)
 
     async def _flush_terminal_segments(self, active: _ActiveOperation) -> None:
         await self._retry_terminal_persistence(
@@ -1436,48 +1468,29 @@ class ChatService:
             type(exc).__name__,
         )
 
-    async def _emit(
-        self, active: _ActiveOperation, event: str, data: JsonObject
-    ) -> None:
+    def _emit(self, active: _ActiveOperation, event: str, data: JsonObject) -> None:
         active.event_sequence += 1
         payload: JsonObject = {
             "session_id": active.session_id,
             "operation_id": active.operation_id,
+            "operation_sequence": active.event_sequence,
             **data,
         }
-        await active.queue.put(
-            ChatStreamEvent(
-                event=event,
-                sequence=active.event_sequence,
-                data=payload,
-            )
-        )
+        self._events.publish(event, payload)
 
-    def _emit_terminal_nowait(
+    def _stage_terminal(
         self, active: _ActiveOperation, event: str, data: JsonObject
     ) -> None:
-        if active.terminal_emitted:
+        if active.terminal_event is not None:
             return
-        self._emit_nowait(active, event, data)
-        active.terminal_emitted = True
-
-    def _emit_nowait(
-        self, active: _ActiveOperation, event: str, data: JsonObject
-    ) -> None:
         active.event_sequence += 1
         payload: JsonObject = {
             "session_id": active.session_id,
             "operation_id": active.operation_id,
+            "operation_sequence": active.event_sequence,
             **data,
         }
-        _make_queue_room(active.queue)
-        active.queue.put_nowait(
-            ChatStreamEvent(
-                event=event,
-                sequence=active.event_sequence,
-                data=payload,
-            )
-        )
+        active.terminal_event = event, payload
 
     async def _cancel_active(
         self,
@@ -1486,11 +1499,13 @@ class ChatService:
         reason: _CancellationReason,
     ) -> None:
         task = active.task
-        if task is None or task.done():
+        if task is None:
             return
         if active.cancellation_reason is None:
             active.cancellation_reason = reason
-            task.cancel()
+            if not task.done():
+                task.cancel()
+        effective_reason = active.cancellation_reason
         cancellation: asyncio.CancelledError | None = None
         try:
             _result, cancellation = await _await_task_despite_cancellation(task)
@@ -1499,6 +1514,20 @@ class ChatService:
             if current is not None and current.cancelling():
                 raise
         finally:
+            if (
+                active.terminal_event is None
+                and effective_reason is not _CancellationReason.DELETED
+            ):
+                event = (
+                    "compaction.stopped"
+                    if active.kind is ChatOperationKind.COMPACT
+                    else "turn.stopped"
+                )
+                self._stage_terminal(
+                    active,
+                    event,
+                    {"reason": effective_reason.value},
+                )
             await self._release_active(active)
         if cancellation is not None:
             raise cancellation
@@ -1508,14 +1537,26 @@ class ChatService:
             if self._active.get(active.session_id) is not active:
                 return
             self._active.pop(active.session_id, None)
-        _make_queue_room(active.queue)
-        active.queue.put_nowait(None)
+        if active.terminal_event is not None:
+            event, payload = active.terminal_event
+            self._events.publish(event, payload)
 
     def _require_available(self) -> None:
         if not self._started or not self._accepting:
             raise ChatUnavailableError(
                 self._unavailable_message or "Chat Sessions is unavailable."
             )
+
+    def _publish_preferences(self, preferences: ChatPreferences) -> None:
+        self._events.publish(
+            "preferences.updated",
+            {
+                "system_prompt": preferences.system_prompt,
+                "last_model": preferences.last_model,
+                "last_reasoning": preferences.last_reasoning.value,
+                "updated_at": preferences.updated_at,
+            },
+        )
 
 
 async def _commit_generation_start(
@@ -1638,7 +1679,29 @@ def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _make_queue_room(queue: asyncio.Queue[ChatStreamEvent | None]) -> None:
-    if queue.full():
-        with contextlib.suppress(asyncio.QueueEmpty):
-            queue.get_nowait()
+def _active_snapshot(active: _ActiveOperation) -> ChatActiveOperation:
+    return ChatActiveOperation(
+        session_id=active.session_id,
+        operation_id=active.operation_id,
+        kind=active.kind,
+        phase=active.phase,
+        operation_sequence=active.event_sequence,
+        submitted_text=active.submitted_text,
+        turn_id=active.turn_id,
+        generation_id=active.generation_id,
+        regeneration=active.regeneration,
+        actual_model=active.actual_model,
+        segments=tuple(active.segments),
+    )
+
+
+def _session_event_data(session: ChatSession) -> JsonObject:
+    return {
+        "session_id": session.id,
+        "title": session.title,
+        "model": session.model,
+        "reasoning": session.reasoning.value,
+        "revision": session.revision,
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+    }

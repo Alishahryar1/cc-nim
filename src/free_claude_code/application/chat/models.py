@@ -48,6 +48,22 @@ class SegmentKind(StrEnum):
     TEXT = "text"
 
 
+class ChatOperationKind(StrEnum):
+    """Long-running Chat commands owned by the application."""
+
+    SEND = "send"
+    RETRY = "retry"
+    REGENERATE = "regenerate"
+    COMPACT = "compact"
+
+
+class ChatOperationPhase(StrEnum):
+    """Current work phase exposed to Chat observers."""
+
+    GENERATING = "generating"
+    COMPACTING = "compacting"
+
+
 @dataclass(frozen=True, slots=True)
 class ChatPreferences:
     system_prompt: str
@@ -77,6 +93,7 @@ class ChatSessionSummary:
     preview: str
     created_at: int
     updated_at: int
+    active_operation: ChatOperationKind | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +177,28 @@ class ChatContextEstimate:
 
 
 @dataclass(frozen=True, slots=True)
+class ChatOperationAcknowledgement:
+    session_id: str
+    operation_id: str
+    kind: ChatOperationKind
+
+
+@dataclass(frozen=True, slots=True)
+class ChatActiveOperation:
+    session_id: str
+    operation_id: str
+    kind: ChatOperationKind
+    phase: ChatOperationPhase
+    operation_sequence: int
+    submitted_text: str | None
+    turn_id: str | None
+    generation_id: str | None
+    regeneration: bool
+    actual_model: str | None
+    segments: tuple[ChatSegment, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ChatSessionDetail:
     session: ChatSession
     turns: tuple[ChatTurn, ...]
@@ -167,13 +206,13 @@ class ChatSessionDetail:
     compaction: ChatCompaction | None
     context: ChatContextEstimate | None
     context_error: str | None
-    active_operation: bool
+    active_operation: ChatActiveOperation | None
 
 
 @dataclass(frozen=True, slots=True)
-class ChatStreamEvent:
+class ChatPublishedEvent:
     event: str
-    sequence: int
+    id: int
     data: JsonObject
 
 
@@ -195,3 +234,11 @@ class ChatConflictError(ChatError):
 
 class ChatValidationError(ChatError):
     """The requested Chat operation cannot be executed as supplied."""
+
+
+class ChatEventOverflowError(ChatError):
+    """One slow Chat observer must reconnect from a fresh snapshot."""
+
+    def __init__(self, cursor: int) -> None:
+        super().__init__("Chat event subscription overflowed.")
+        self.cursor = cursor

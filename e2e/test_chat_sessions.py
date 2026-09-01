@@ -400,15 +400,17 @@ def test_rejected_send_preserves_draft_after_stale_revision(
 ) -> None:
     _new_chat(page, admin_base_url)
     session_id = page.url.rsplit("/", 1)[-1]
+    _hold_next_chat_operation(page, "send")
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("do not discard this draft")
+    page.get_by_role("button", name="Send").click()
+
     renamed = page.request.patch(
         f"{admin_base_url}/admin/api/chat/sessions/{session_id}",
         data={"expected_revision": 1, "title": "Changed elsewhere"},
     )
     assert renamed.ok
-
-    message = page.get_by_role("textbox", name="Message", exact=True)
-    message.fill("do not discard this draft")
-    page.get_by_role("button", name="Send").click()
+    page.evaluate("() => { window.__releaseHeldChatRequest(); }")
 
     expect(message).to_have_value("do not discard this draft")
     expect(page.locator("#chatNotice")).to_contain_text("changed in another tab")
@@ -503,7 +505,7 @@ def test_chat_stop_then_retry_uses_one_operation_owner(
     expect(page.get_by_text("E2E answer")).to_be_visible()
 
 
-def test_chat_opened_in_another_tab_recovers_when_operation_stops(
+def test_chat_opened_in_another_tab_shares_live_operation_and_stop(
     page: Page,
     admin_base_url: str,
 ) -> None:
@@ -515,12 +517,169 @@ def test_chat_opened_in_another_tab_recovers_when_operation_stops(
     other = page.context.new_page()
     try:
         other.goto(page.url)
-        expect(other.locator("#chatComposerStatus")).to_contain_text(
-            "running in another tab"
-        )
-        page.get_by_role("button", name="Stop").click()
+        expect(other.get_by_text("E2E answer", exact=True)).to_be_visible()
+        expect(other.get_by_role("button", name="Stop")).to_be_visible()
+        other.get_by_role("button", name="Stop").click()
         expect(page.get_by_role("button", name="Retry")).to_be_visible()
         expect(other.get_by_role("button", name="Retry")).to_be_visible(timeout=3_000)
+    finally:
+        other.close()
+
+
+def test_refresh_keeps_one_live_operation_and_reconstructs_its_answer(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("[slow] survive refresh")
+    message.press("Enter")
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+
+    page.reload()
+
+    expect(page.get_by_text("[slow] survive refresh", exact=True)).to_have_count(1)
+    expect(page.locator(".assistant-message")).to_have_count(1)
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Stop").click()
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+
+
+def test_two_sessions_run_concurrently_across_navigation(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    first_url = page.url
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("[slow] first active chat")
+    message.press("Enter")
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.get_by_role("button", name="New chat", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/admin/chat/[0-9a-f-]{36}$"))
+    second_url = page.url
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("[slow] second active chat")
+    message.press("Enter")
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    expect(page.locator(".chat-session-status", has_text="Thinking…")).to_have_count(2)
+
+    page.goto(first_url)
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Stop").click()
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+
+    page.goto(second_url)
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Stop").click()
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+
+
+def test_chat_operation_continues_while_providers_view_is_open(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    session_url = page.url
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("[slow] keep running outside chat")
+    message.press("Enter")
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
+
+    page.get_by_role("button", name="Providers", exact=True).click()
+    expect(page.locator("#pageTitle")).to_have_text("Providers")
+    page.goto(session_url)
+
+    expect(
+        page.get_by_text("[slow] keep running outside chat", exact=True)
+    ).to_have_count(1)
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Stop")).to_be_visible()
+    page.get_by_role("button", name="Stop").click()
+    expect(page.get_by_role("button", name="Retry")).to_be_visible()
+
+
+def test_event_feed_reconnect_preserves_transcript_and_draft(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("before reconnect")
+    message.press("Enter")
+    expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
+    message.fill("draft during reconnect")
+
+    page.context.set_offline(True)
+    expect(page.locator("#chatComposerStatus")).to_have_text("Reconnecting…")
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
+    expect(message).to_have_value("draft during reconnect")
+    expect(page.get_by_role("button", name="Send")).to_be_disabled()
+
+    page.context.set_offline(False)
+    expect(page.locator("#chatComposerStatus")).to_be_empty(timeout=10_000)
+    expect(message).to_have_value("draft during reconnect")
+    expect(page.get_by_role("button", name="Send")).to_be_enabled()
+    expect(page.get_by_text("E2E answer", exact=True)).to_have_count(1)
+
+
+def test_drafts_are_session_scoped_and_private_to_each_tab(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    first_url = page.url
+    message = page.get_by_role("textbox", name="Message", exact=True)
+    message.fill("first private draft")
+    page.reload()
+    expect(message).to_have_value("first private draft")
+
+    other = page.context.new_page()
+    try:
+        other.goto(first_url)
+        expect(other.get_by_role("textbox", name="Message", exact=True)).to_be_empty()
+    finally:
+        other.close()
+
+    page.get_by_role("button", name="Chats", exact=False).click()
+    page.get_by_role("button", name="New chat", exact=True).click()
+    page.get_by_role("textbox", name="Message", exact=True).fill("second private draft")
+    page.goto(first_url)
+    expect(page.get_by_role("textbox", name="Message", exact=True)).to_have_value(
+        "first private draft"
+    )
+
+
+def test_session_settings_sync_without_disturbing_another_tab_draft(
+    page: Page,
+    admin_base_url: str,
+) -> None:
+    _new_chat(page, admin_base_url)
+    other = page.context.new_page()
+    try:
+        other.goto(page.url)
+        other_message = other.get_by_role("textbox", name="Message", exact=True)
+        other_message.fill("private draft")
+
+        title = page.get_by_label("Chat title")
+        title.fill("Shared title")
+        with page.expect_response(lambda response: response.request.method == "PATCH"):
+            title.press("Enter")
+        expect(other.get_by_label("Chat title")).to_have_value("Shared title")
+
+        _select_model(page, "open_router/vendor/model-b")
+        expect(other.get_by_label("Selected model")).to_have_value(
+            "open_router/vendor/model-b"
+        )
+        with page.expect_response(lambda response: response.request.method == "PATCH"):
+            page.get_by_label("Thinking").select_option("high")
+        expect(other.get_by_label("Thinking")).to_have_value("high")
+        expect(other_message).to_have_value("private draft")
     finally:
         other.close()
 
@@ -538,9 +697,8 @@ def test_active_chat_deleted_in_another_tab_returns_to_library(
     other = page.context.new_page()
     try:
         other.goto(session_url)
-        expect(other.locator("#chatComposerStatus")).to_contain_text(
-            "running in another tab"
-        )
+        expect(other.get_by_text("E2E answer", exact=True)).to_be_visible()
+        expect(other.get_by_role("button", name="Stop")).to_be_visible()
         other.on("dialog", lambda dialog: dialog.accept())
         other.get_by_role("button", name="Delete").click()
         expect(other).to_have_url(f"{admin_base_url}/admin/chat")
@@ -606,12 +764,11 @@ def test_regeneration_is_visible_and_recovers_in_another_tab(
     other = page.context.new_page()
     try:
         other.goto(page.url)
-        expect(other.locator("#chatComposerStatus")).to_contain_text(
-            "running in another tab"
-        )
+        expect(other.get_by_text("E2E answer", exact=True)).to_be_visible()
+        expect(other.get_by_role("button", name="Stop")).to_be_visible()
         expect(other.get_by_label("Selected model")).to_be_disabled()
 
-        page.get_by_role("button", name="Stop").click()
+        other.get_by_role("button", name="Stop").click()
 
         expect(other.get_by_label("Selected model")).to_be_enabled(timeout=3_000)
         expect(other.get_by_role("button", name="Regenerate")).to_be_visible()
@@ -658,12 +815,11 @@ def test_manual_compaction_is_visible_and_recovers_in_another_tab(
     other = page.context.new_page()
     try:
         other.goto(page.url)
-        expect(other.locator("#chatComposerStatus")).to_contain_text(
-            "running in another tab"
-        )
+        expect(other.locator("#chatComposerStatus")).to_have_text("Compacting…")
+        expect(other.get_by_role("button", name="Stop")).to_be_visible()
         expect(other.get_by_label("Thinking")).to_be_disabled()
 
-        page.get_by_role("button", name="Stop").click()
+        other.get_by_role("button", name="Stop").click()
 
         expect(other.get_by_label("Thinking")).to_be_enabled(timeout=3_000)
     finally:

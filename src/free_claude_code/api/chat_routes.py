@@ -1,24 +1,26 @@
 """Loopback-only HTTP adapter for local Chat Sessions."""
 
 import base64
-import json
 import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
 
 from free_claude_code.application.chat import (
+    ChatActiveOperation,
     ChatApplicationPort,
     ChatCompaction,
     ChatContextEstimate,
+    ChatEventOverflowError,
     ChatModelOption,
-    ChatOperationStream,
+    ChatOperationAcknowledgement,
     ChatPreferences,
+    ChatPublishedEvent,
     ChatReasoning,
     ChatSession,
     ChatSessionSummary,
-    ChatStreamEvent,
     ChatTurn,
     ChatUnavailableError,
     ChatValidationError,
@@ -30,7 +32,6 @@ from .admin_security import require_loopback_admin
 from .chat_markdown import render_chat_markdown
 from .dependencies import get_services
 from .ports import ApiServices
-from .response_streams import ManagedStreamingResponse
 
 router = APIRouter()
 
@@ -93,6 +94,33 @@ async def chat_bootstrap(
     return payload
 
 
+@router.get("/admin/api/chat/events", response_class=EventSourceResponse)
+async def chat_events(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+) -> AsyncIterator[ServerSentEvent]:
+    require_loopback_admin(request)
+    subscription = _chat(services).subscribe()
+    try:
+        yield ServerSentEvent(
+            event="feed.ready",
+            id=str(subscription.cursor),
+            retry=1_000,
+            data={"cursor": subscription.cursor},
+        )
+        try:
+            async for event in subscription:
+                yield _sse_event(event)
+        except ChatEventOverflowError as exc:
+            yield ServerSentEvent(
+                event="feed.resync_required",
+                id=str(exc.cursor),
+                data={"cursor": exc.cursor},
+            )
+    finally:
+        await subscription.aclose()
+
+
 @router.get("/admin/api/chat/sessions")
 async def list_chat_sessions(
     request: Request,
@@ -139,7 +167,7 @@ async def get_chat_session(
             _estimate_payload(detail.context) if detail.context is not None else None
         ),
         "context_error": detail.context_error,
-        "active_operation": detail.active_operation,
+        "active_operation": _active_operation_payload(detail.active_operation),
     }
 
 
@@ -211,7 +239,7 @@ async def estimate_chat_context(
     return _estimate_payload(estimate)
 
 
-@router.post("/admin/api/chat/sessions/{session_id}/send")
+@router.post("/admin/api/chat/sessions/{session_id}/send", status_code=202)
 async def send_chat_message(
     session_id: str,
     payload: ChatSendPayload,
@@ -219,16 +247,16 @@ async def send_chat_message(
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    stream = await _chat(services).send(
+    acknowledgement = await _chat(services).send(
         session_id,
         expected_revision=payload.expected_revision,
         operation_id=payload.operation_id,
         text=payload.text,
     )
-    return _stream_response(stream)
+    return _operation_acknowledgement_payload(acknowledgement)
 
 
-@router.post("/admin/api/chat/sessions/{session_id}/retry")
+@router.post("/admin/api/chat/sessions/{session_id}/retry", status_code=202)
 async def retry_chat_message(
     session_id: str,
     payload: ChatOperationPayload,
@@ -236,15 +264,15 @@ async def retry_chat_message(
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    stream = await _chat(services).retry(
+    acknowledgement = await _chat(services).retry(
         session_id,
         expected_revision=payload.expected_revision,
         operation_id=payload.operation_id,
     )
-    return _stream_response(stream)
+    return _operation_acknowledgement_payload(acknowledgement)
 
 
-@router.post("/admin/api/chat/sessions/{session_id}/regenerate")
+@router.post("/admin/api/chat/sessions/{session_id}/regenerate", status_code=202)
 async def regenerate_chat_message(
     session_id: str,
     payload: ChatOperationPayload,
@@ -252,15 +280,15 @@ async def regenerate_chat_message(
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    stream = await _chat(services).regenerate(
+    acknowledgement = await _chat(services).regenerate(
         session_id,
         expected_revision=payload.expected_revision,
         operation_id=payload.operation_id,
     )
-    return _stream_response(stream)
+    return _operation_acknowledgement_payload(acknowledgement)
 
 
-@router.post("/admin/api/chat/sessions/{session_id}/compact")
+@router.post("/admin/api/chat/sessions/{session_id}/compact", status_code=202)
 async def compact_chat_session(
     session_id: str,
     payload: ChatOperationPayload,
@@ -268,12 +296,12 @@ async def compact_chat_session(
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    stream = await _chat(services).compact(
+    acknowledgement = await _chat(services).compact(
         session_id,
         expected_revision=payload.expected_revision,
         operation_id=payload.operation_id,
     )
-    return _stream_response(stream)
+    return _operation_acknowledgement_payload(acknowledgement)
 
 
 @router.post("/admin/api/chat/sessions/{session_id}/stop")
@@ -325,32 +353,22 @@ def _chat(services: ApiServices) -> ChatApplicationPort:
     return services.chat
 
 
-def _stream_response(stream: ChatOperationStream) -> ManagedStreamingResponse:
-    response = ManagedStreamingResponse(
-        _stream_events(stream),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-store",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "X-Content-Type-Options": "nosniff",
-        },
+def _sse_event(event: ChatPublishedEvent) -> ServerSentEvent:
+    return ServerSentEvent(
+        event=event.event,
+        id=str(event.id),
+        data=event.data,
     )
-    response.bind_release(stream.aclose)
-    return response
 
 
-async def _stream_events(stream: ChatOperationStream) -> AsyncIterator[str]:
-    try:
-        async for event in stream:
-            yield _sse_event(event)
-    finally:
-        await stream.aclose()
-
-
-def _sse_event(event: ChatStreamEvent) -> str:
-    data = json.dumps(event.data, ensure_ascii=False, separators=(",", ":"))
-    return f"id: {event.sequence}\nevent: {event.event}\ndata: {data}\n\n"
+def _operation_acknowledgement_payload(
+    acknowledgement: ChatOperationAcknowledgement,
+) -> JsonObject:
+    return {
+        "session_id": acknowledgement.session_id,
+        "operation_id": acknowledgement.operation_id,
+        "kind": acknowledgement.kind.value,
+    }
 
 
 def _encode_cursor(cursor: tuple[int, str] | None) -> str | None:
@@ -434,6 +452,38 @@ def _session_summary_payload(session: ChatSessionSummary) -> JsonObject:
             )
         ),
         "preview": session.preview[:240],
+        "active_operation": (
+            session.active_operation.value
+            if session.active_operation is not None
+            else None
+        ),
+    }
+
+
+def _active_operation_payload(
+    active: ChatActiveOperation | None,
+) -> JsonObject | None:
+    if active is None:
+        return None
+    return {
+        "session_id": active.session_id,
+        "operation_id": active.operation_id,
+        "kind": active.kind.value,
+        "phase": active.phase.value,
+        "operation_sequence": active.operation_sequence,
+        "submitted_text": active.submitted_text,
+        "turn_id": active.turn_id,
+        "generation_id": active.generation_id,
+        "regeneration": active.regeneration,
+        "actual_model": active.actual_model,
+        "segments": [
+            {
+                "ordinal": segment.ordinal,
+                "kind": segment.kind.value,
+                "text": segment.text,
+            }
+            for segment in active.segments
+        ],
     }
 
 

@@ -112,6 +112,11 @@
   font-size: 12px;
 }
 
+.chat-session-card .chat-session-status {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .chat-load-more {
   margin-top: 18px;
 }

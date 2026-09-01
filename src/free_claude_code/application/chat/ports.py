@@ -8,13 +8,14 @@ from .models import (
     ChatContextEstimate,
     ChatGeneration,
     ChatModelOption,
+    ChatOperationAcknowledgement,
     ChatPreferences,
+    ChatPublishedEvent,
     ChatReasoning,
     ChatSegment,
     ChatSession,
     ChatSessionDetail,
     ChatSessionPage,
-    ChatStreamEvent,
     ChatTranscript,
     ChatTurn,
     GenerationStatus,
@@ -155,12 +156,12 @@ class ChatStorePort(Protocol):
     ) -> ChatCompaction: ...
 
 
-class ChatOperationStream(Protocol):
-    """One initiating browser's event stream and cancellation boundary."""
+class ChatEventSubscriptionPort(Protocol):
+    """Read-only process-local Chat event subscription."""
 
-    operation_id: str
+    cursor: int
 
-    def __aiter__(self) -> AsyncIterator[ChatStreamEvent]: ...
+    def __aiter__(self) -> AsyncIterator[ChatPublishedEvent]: ...
 
     async def aclose(self) -> None: ...
 
@@ -171,6 +172,8 @@ class ChatApplicationPort(Protocol):
     def availability(self) -> tuple[bool, str | None]: ...
 
     def models(self) -> tuple[ChatModelOption, ...]: ...
+
+    def subscribe(self) -> ChatEventSubscriptionPort: ...
 
     async def preferences(self) -> ChatPreferences: ...
 
@@ -223,7 +226,7 @@ class ChatApplicationPort(Protocol):
         expected_revision: int,
         operation_id: str,
         text: str,
-    ) -> ChatOperationStream: ...
+    ) -> ChatOperationAcknowledgement: ...
 
     async def retry(
         self,
@@ -231,7 +234,7 @@ class ChatApplicationPort(Protocol):
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream: ...
+    ) -> ChatOperationAcknowledgement: ...
 
     async def regenerate(
         self,
@@ -239,7 +242,7 @@ class ChatApplicationPort(Protocol):
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream: ...
+    ) -> ChatOperationAcknowledgement: ...
 
     async def compact(
         self,
@@ -247,6 +250,6 @@ class ChatApplicationPort(Protocol):
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream: ...
+    ) -> ChatOperationAcknowledgement: ...
 
     async def stop(self, session_id: str, *, operation_id: str) -> bool: ...
