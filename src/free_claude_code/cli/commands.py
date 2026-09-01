@@ -261,47 +261,75 @@ class ServerSupervisor:
         return readiness
 
     def _await_gateway_https_readiness(self, settings: Settings) -> None:
-        """Publish the TLS-prefixed gateway URL once the front verifies."""
+        """Publish the TLS-prefixed gateway URL once the front verifies.
+
+        The upgrade is retryable for the whole readiness window: the
+        persisted-config rewrite and the in-memory publication commit
+        together, so a transient rewrite failure keeps both surfaces on
+        the plain-HTTP fallback and the next probe reattempts the pair
+        rather than leaving them split across two URLs.
+        """
 
         root = tls_root_url(settings)
         deadline = time.monotonic() + GATEWAY_HEALTH_UPGRADE_SECONDS
         while time.monotonic() < deadline:
-            if probe_fcc_front(root):
-                self._publish_verified_https_gateway_url(settings, root)
+            if probe_fcc_front(root) and self._publish_verified_https_gateway_url(
+                settings, root
+            ):
                 return
+            # A probe that verifies the front but fails the persisted
+            # config rewrite keeps both surfaces on the consistent
+            # plain-HTTP fallback; fall through to the sleep and retry the
+            # whole upgrade on the next probe — the readiness window is
+            # the only time the write and the publication can be made
+            # atomic together.
             time.sleep(0.25)
 
     def _publish_verified_https_gateway_url(
         self, settings: Settings, root: str
-    ) -> None:
+    ) -> bool:
         """Publish the TLS-prefixed URL for a front that just verified.
 
         Publishes the verified root directly — re-resolving would probe the
         front a second time for the same answer. The persisted Claude
-        Desktop config is re-merged with the verified URL too: the
-        pre-lifecycle merge recorded the plain-HTTP fallback while the
-        front was still starting, and Claude Desktop reads the config file,
-        not this process's memory.
+        Desktop config is re-merged with the verified URL BEFORE the
+        in-memory value swaps: the pre-lifecycle merge recorded the
+        plain-HTTP fallback while the front was still starting, Claude
+        Desktop reads the config file (not this process's memory), so an
+        in-memory upgrade the file never received would advertise an HTTPS
+        endpoint Claude Desktop cannot use. Persist-first also makes the
+        write failure the caller's signal to keep probing: a transient
+        ``OSError`` (disk full, EBUSY rename) leaves both surfaces on the
+        consistent plain-HTTP fallback instead of splitting them, and the
+        readiness loop retries the whole upgrade on its next probe.
+
+        Returns whether the HTTPS URL was published — ``False`` means the
+        persisted config could not be rewritten and the caller should
+        retry.
         """
 
         gateway_url = desktop_gateway_base_url(settings, base_url=root)
+        if not self._repersist_verified_gateway_url(settings, gateway_url):
+            return False
         with self._lock:
             self._desktop_gateway_url = gateway_url
         logger.info("Claude Desktop gateway: {}", gateway_url)
-        self._repersist_verified_gateway_url(settings, gateway_url)
+        return True
 
     def _repersist_verified_gateway_url(
         self, settings: Settings, gateway_url: str
-    ) -> None:
+    ) -> bool:
         """Rewrite the Claude Desktop routing block onto the verified front.
 
-        Runs once per verified readiness upgrade, inside the live serving
-        window. The persisted URL is the desktop-scoped one — the same
-        value published in memory — because Claude Desktop discovers
+        Runs once per verified readiness upgrade attempt, inside the live
+        serving window. The persisted URL is the desktop-scoped one — the
+        same value published in memory — because Claude Desktop discovers
         models against the prefix mount that serves picker aliases, not
-        the bare root. Failures downgrade to a warning: the in-memory
-        publication already succeeded, and a config-merge failure must
-        not take the serving generation down.
+        the bare root. Failures downgrade to a warning and return
+        ``False``: the in-memory publication is deferred until the write
+        lands, so a config-merge failure must not take the serving
+        generation down and must not strand the two surfaces on different
+        URLs either.
         """
 
         try:
@@ -311,11 +339,12 @@ class ServerSupervisor:
             )
         except OSError as exc:
             logger.warning("Could not re-merge the Claude Desktop config: {}", exc)
-            return
+            return False
         logger.info(
             "Claude Desktop routing re-merged onto the verified HTTPS front{}.",
             "" if merged else " (no change needed)",
         )
+        return True
 
     def _request_runtime_restart(self) -> None:
         self.request_restart()

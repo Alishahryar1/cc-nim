@@ -465,20 +465,28 @@ def test_verified_https_readiness_repersists_desktop_config() -> None:
             return_value=True,
         ) as remerge,
     ):
-        supervisor._publish_verified_https_gateway_url(
+        published = supervisor._publish_verified_https_gateway_url(
             settings, "https://localhost:8444"
         )
 
     remerge.assert_called_once_with(
         settings=settings, gateway_base_url="https://localhost:8444/claude-desktop"
     )
+    assert published is True
+    assert supervisor.desktop_gateway_url() == "https://localhost:8444/claude-desktop"
 
 
-def test_verified_https_repersist_failure_does_not_raise() -> None:
+def test_verified_https_repersist_failure_keeps_both_surfaces_on_http() -> None:
     """A config re-merge failure downgrades to a warning, not a crash.
 
     The re-merge runs inside the live serving window on the readiness
     thread; a filesystem failure there must not take the generation down.
+    It must not split the two surfaces either: Claude Desktop reads the
+    persisted config file, so publishing the HTTPS URL in memory while
+    the file still carries the plain-HTTP fallback would advertise an
+    endpoint Claude Desktop cannot use. The publication is deferred
+    until the write lands, and the return value tells the readiness loop
+    to retry the whole upgrade on its next probe.
     """
 
     supervisor = ServerSupervisor(console_logging=False)
@@ -491,10 +499,55 @@ def test_verified_https_repersist_failure_does_not_raise() -> None:
             commands,
             "configure_claude_desktop_config",
             side_effect=OSError("disk full"),
-        ),
+        ) as remerge,
     ):
-        supervisor._publish_verified_https_gateway_url(
+        published = supervisor._publish_verified_https_gateway_url(
             settings, "https://localhost:8444"
         )
 
+    assert published is False
+    assert remerge.call_count == 1
+    # Nothing was published: the in-memory URL stays None (the supervisor
+    # never got past the deferred publication), so memory and the
+    # persisted file agree on the plain-HTTP fallback.
+    assert supervisor.desktop_gateway_url() is None
+
+
+def test_verified_https_readiness_retries_until_repersist_lands() -> None:
+    """The readiness loop retries a failed config rewrite on later probes.
+
+    Regression guard for the Greptile "HTTPS config refresh is discarded"
+    finding: a transient ``OSError`` (disk full, EBUSY rename) on the
+    first verified probe used to strand the persisted config on the
+    plain-HTTP fallback forever while the serving window continued. The
+    upgrade is now retryable for the whole readiness window: each probe
+    that verifies the front reattempts the persisted rewrite, and the
+    moment one lands the in-memory publication follows atomically.
+    """
+
+    supervisor = ServerSupervisor(console_logging=False)
+    settings = Settings.model_construct(
+        host="0.0.0.0", port=8082, tls_proxy_enabled=True, tls_proxy_port=8444
+    )
+    remerge_results = iter([OSError("disk full"), OSError("disk full"), True])
+
+    def flaky_remerge(**_kwargs: object) -> bool:
+        result = next(remerge_results)
+        if isinstance(result, OSError):
+            raise result
+        return result
+
+    with (
+        patch.object(commands, "probe_fcc_front", return_value=True),
+        patch.object(commands, "GATEWAY_HEALTH_UPGRADE_SECONDS", 5.0),
+        patch.object(commands.time, "sleep"),
+        patch.object(
+            commands,
+            "configure_claude_desktop_config",
+            side_effect=flaky_remerge,
+        ) as remerge,
+    ):
+        supervisor._await_gateway_https_readiness(settings)
+
+    assert remerge.call_count == 3
     assert supervisor.desktop_gateway_url() == "https://localhost:8444/claude-desktop"
