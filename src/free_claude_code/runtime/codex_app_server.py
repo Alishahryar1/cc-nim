@@ -38,7 +38,11 @@ from free_claude_code.cli.launchers.codex import (
     codex_binary_name,
     codex_model_catalog_plan,
 )
-from free_claude_code.cli.process_registry import register_pid, unregister_pid
+from free_claude_code.cli.process_registry import (
+    kill_pid_tree_best_effort,
+    register_pid,
+    unregister_pid,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.core.version import package_version
@@ -51,6 +55,7 @@ _TERMINATE_SECONDS = 2.0
 _VERSION_TIMEOUT_SECONDS = 5.0
 _STDERR_CHUNK_BYTES = 8192
 _METHOD_NOT_FOUND = -32601
+_IS_WINDOWS = os.name == "nt"
 
 _INTERACTIVE_SERVER_METHODS = frozenset(
     {
@@ -95,7 +100,7 @@ class _Connection:
     reader_task: asyncio.Task[None] | None = None
     stderr_task: asyncio.Task[None] | None = None
     closed: bool = False
-    shutdown_complete: asyncio.Event = field(default_factory=asyncio.Event)
+    shutdown_task: asyncio.Task[None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,19 +311,22 @@ class CodexAppServerClient:
     async def close(self) -> None:
         """Close the owned child once, escalating only when it does not exit."""
 
+        shutdown_task: asyncio.Task[None] | None = None
         async with self._connection_lock:
-            if self._closed:
-                return
-            self._closed = True
+            first_close = not self._closed
+            if first_close:
+                self._closed = True
             connection = self._connection
-            self._connection = None
             if connection is not None:
-                await self._shutdown_connection(
+                shutdown_task = self._begin_connection_shutdown(
                     connection,
                     error=CodexConnectionError("Codex Direct mode closed."),
                     emit_event=False,
                 )
-            self._finish_event_stream()
+            if first_close:
+                self._finish_event_stream()
+        if shutdown_task is not None:
+            await asyncio.shield(shutdown_task)
 
     async def _get_plan(self) -> CodexAppServerProcessPlan:
         plan = self._plan
@@ -340,7 +348,9 @@ class CodexAppServerClient:
             if connection is not None and not connection.closed:
                 return connection
             if connection is not None:
-                await connection.shutdown_complete.wait()
+                shutdown_task = connection.shutdown_task
+                if shutdown_task is not None:
+                    await asyncio.shield(shutdown_task)
             plan = await self._get_plan()
             try:
                 process = await asyncio.create_subprocess_exec(
@@ -410,8 +420,6 @@ class CodexAppServerClient:
                     error=_connection_error(exc),
                     emit_event=False,
                 )
-                if self._connection is connection:
-                    self._connection = None
                 raise
             logger.info(
                 "Codex app-server initialized: connection_id={} version={}",
@@ -741,34 +749,72 @@ class CodexAppServerClient:
         error: Exception,
         emit_event: bool,
     ) -> None:
-        if connection.closed:
-            await connection.shutdown_complete.wait()
-            return
+        task = self._begin_connection_shutdown(
+            connection,
+            error=error,
+            emit_event=emit_event,
+        )
+        await asyncio.shield(task)
+
+    def _begin_connection_shutdown(
+        self,
+        connection: _Connection,
+        *,
+        error: Exception,
+        emit_event: bool,
+    ) -> asyncio.Task[None]:
+        task = connection.shutdown_task
+        if task is not None:
+            return task
         connection.closed = True
+        for pending in tuple(connection.pending.values()):
+            if not pending.future.done():
+                pending.future.set_exception(error)
+        connection.pending.clear()
+        if emit_event:
+            self._emit_connection_lost(connection.id, str(error))
+        task = asyncio.create_task(
+            self._run_connection_shutdown(
+                connection,
+                error=error,
+            ),
+            name=f"fcc-codex-app-server-shutdown-{connection.id}",
+        )
+        connection.shutdown_task = task
+        return task
+
+    async def _run_connection_shutdown(
+        self,
+        connection: _Connection,
+        *,
+        error: Exception,
+    ) -> None:
         try:
-            for pending in tuple(connection.pending.values()):
-                if not pending.future.done():
-                    pending.future.set_exception(error)
-            connection.pending.clear()
-            if emit_event:
-                self._emit_connection_lost(connection.id, str(error))
-            await _stop_process(connection.process)
-            current_task = asyncio.current_task()
-            tasks = tuple(
-                task
-                for task in (connection.reader_task, connection.stderr_task)
-                if task is not None and task is not current_task and not task.done()
-            )
-            if tasks:
-                try:
-                    async with asyncio.timeout(_TERMINATE_SECONDS):
-                        await asyncio.gather(*tasks, return_exceptions=True)
-                except TimeoutError:
+            try:
+                await _stop_process(connection.process)
+            finally:
+                tasks = tuple(
+                    task
+                    for task in (connection.reader_task, connection.stderr_task)
+                    if task is not None and not task.done()
+                )
+                if tasks:
                     for task in tasks:
                         task.cancel()
-                    await asyncio.gather(*tasks, return_exceptions=True)
-            if connection.process.pid is not None:
-                unregister_pid(connection.process.pid)
+                    try:
+                        async with asyncio.timeout(_TERMINATE_SECONDS):
+                            await asyncio.gather(*tasks, return_exceptions=True)
+                    except TimeoutError:
+                        logger.warning(
+                            "Codex app-server I/O tasks did not stop within the "
+                            "deadline: connection_id={}",
+                            connection.id,
+                        )
+                if (
+                    connection.process.pid is not None
+                    and connection.process.returncode is not None
+                ):
+                    unregister_pid(connection.process.pid)
             logger.info(
                 "Codex app-server closed: connection_id={} reason={}",
                 connection.id,
@@ -777,7 +823,6 @@ class CodexAppServerClient:
         finally:
             if self._connection is connection:
                 self._connection = None
-            connection.shutdown_complete.set()
 
     def _emit_connection_lost(self, connection_id: str, message: str) -> None:
         event = CodexConnectionLost(
@@ -945,8 +990,11 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
     stdin = process.stdin
     if stdin is not None:
         stdin.close()
-        with suppress(BrokenPipeError, ConnectionResetError):
-            await stdin.wait_closed()
+        try:
+            async with asyncio.timeout(_TERMINATE_SECONDS):
+                await stdin.wait_closed()
+        except TimeoutError, BrokenPipeError, ConnectionResetError:
+            pass
     if process.returncode is not None:
         await process.wait()
         return
@@ -955,8 +1003,15 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
             await process.wait()
             return
     except TimeoutError:
-        with suppress(ProcessLookupError):
-            process.terminate()
+        if _IS_WINDOWS and process.pid is not None:
+            await asyncio.to_thread(
+                kill_pid_tree_best_effort,
+                process.pid,
+                timeout_seconds=_TERMINATE_SECONDS,
+            )
+        else:
+            with suppress(ProcessLookupError):
+                process.terminate()
     try:
         async with asyncio.timeout(_TERMINATE_SECONDS):
             await process.wait()
@@ -964,7 +1019,13 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
     except TimeoutError:
         with suppress(ProcessLookupError):
             process.kill()
-        await process.wait()
+        try:
+            async with asyncio.timeout(_TERMINATE_SECONDS):
+                await process.wait()
+        except TimeoutError as exc:
+            raise CodexConnectionError(
+                "Codex app-server did not exit after forced termination."
+            ) from exc
 
 
 def _thread_params(settings: CodexThreadSettings) -> JsonObject:

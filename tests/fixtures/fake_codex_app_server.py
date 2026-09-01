@@ -105,6 +105,9 @@ def main() -> None:
             sys.stdout.buffer.write(b'{"oversized":"' + b"x" * _LINE_LIMIT + b'"}\n')
             sys.stdout.buffer.flush()
             continue
+        if method == "thread/start" and scenario == "invalid_thread_result":
+            _emit({"id": request_id, "result": []})
+            continue
         if method == "turn/start" and scenario == "fail_once" and launch_number == 1:
             sys.exit(7)
         if scenario == "missing_method" and method == "permissionProfile/list":

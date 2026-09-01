@@ -327,3 +327,164 @@ async def test_close_is_idempotent_and_escalates_for_child_ignoring_eof(
 
     availability = await client.availability()
     assert availability.available is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_close_waiter_does_not_cancel_owned_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(codex_app_server, "_GRACEFUL_CLOSE_SECONDS", 0.05)
+    monkeypatch.setattr(codex_app_server, "_TERMINATE_SECONDS", 0.05)
+    client = _client(tmp_path, scenario="hang_on_close")
+    await client.initialize()
+    connection = client._connection
+    assert connection is not None
+    process = connection.process
+    events = client.events()
+    stop_started = asyncio.Event()
+    release_stop = asyncio.Event()
+    stop_calls = 0
+    original_stop = codex_app_server._stop_process
+
+    async def blocking_stop(target: asyncio.subprocess.Process) -> None:
+        nonlocal stop_calls
+        stop_calls += 1
+        stop_started.set()
+        await release_stop.wait()
+        await original_stop(target)
+
+    monkeypatch.setattr(codex_app_server, "_stop_process", blocking_stop)
+    first_close = asyncio.create_task(client.close())
+    second_close: asyncio.Task[None] | None = None
+    try:
+        async with asyncio.timeout(1):
+            await stop_started.wait()
+        first_close.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first_close
+
+        second_close = asyncio.create_task(client.close())
+        await asyncio.sleep(0)
+        assert not second_close.done()
+
+        release_stop.set()
+        async with asyncio.timeout(1):
+            await second_close
+
+        assert stop_calls == 1
+        assert process.returncode is not None
+        with pytest.raises(StopAsyncIteration):
+            async with asyncio.timeout(1):
+                await anext(events)
+    finally:
+        release_stop.set()
+        if second_close is not None and not second_close.done():
+            second_close.cancel()
+            await asyncio.gather(second_close, return_exceptions=True)
+        if process.returncode is None:
+            await original_stop(process)
+        if process.pid is not None:
+            codex_app_server.unregister_pid(process.pid)
+
+
+@pytest.mark.asyncio
+async def test_stalled_stdin_close_reaches_bounded_process_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(codex_app_server, "_GRACEFUL_CLOSE_SECONDS", 0.05)
+    monkeypatch.setattr(codex_app_server, "_TERMINATE_SECONDS", 0.05)
+    client = _client(tmp_path, scenario="hang_on_close")
+    await client.initialize()
+    connection = client._connection
+    assert connection is not None
+    process = connection.process
+    never_closed = asyncio.Event()
+    original_stop = codex_app_server._stop_process
+
+    async def stalled_wait_closed(_writer: asyncio.StreamWriter) -> None:
+        await never_closed.wait()
+
+    try:
+        with monkeypatch.context() as context:
+            context.setattr(asyncio.StreamWriter, "wait_closed", stalled_wait_closed)
+            async with asyncio.timeout(1):
+                await client.close()
+        assert process.returncode is not None
+    finally:
+        if process.returncode is None:
+            await original_stop(process)
+        if process.pid is not None:
+            codex_app_server.unregister_pid(process.pid)
+
+
+@pytest.mark.asyncio
+async def test_windows_forced_shutdown_targets_tree_before_root_only_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "import sys, time; sys.stdin.read(); time.sleep(60)",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    tree_calls: list[tuple[int, float | None, bool]] = []
+    terminate_called = False
+
+    def tree_kill(pid: int, *, timeout_seconds: float | None = None) -> None:
+        tree_calls.append((pid, timeout_seconds, process.returncode is None))
+
+    original_terminate = process.terminate
+
+    def record_terminate() -> None:
+        nonlocal terminate_called
+        terminate_called = True
+        original_terminate()
+
+    monkeypatch.setattr(codex_app_server, "_IS_WINDOWS", True)
+    monkeypatch.setattr(codex_app_server, "_GRACEFUL_CLOSE_SECONDS", 0.05)
+    monkeypatch.setattr(codex_app_server, "_TERMINATE_SECONDS", 0.05)
+    monkeypatch.setattr(codex_app_server, "kill_pid_tree_best_effort", tree_kill)
+    monkeypatch.setattr(process, "terminate", record_terminate)
+    try:
+        await codex_app_server._stop_process(process)
+        assert tree_calls == [(process.pid, 0.05, True)]
+        assert terminate_called is False
+        assert process.returncode is not None
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+
+@pytest.mark.asyncio
+async def test_method_result_shape_failure_keeps_healthy_connection(
+    tmp_path: Path,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    launch_counter = tmp_path / "launch-count"
+    client = _client(
+        tmp_path,
+        scenario="invalid_thread_result",
+        request_log=request_log,
+        launch_counter=launch_counter,
+    )
+    try:
+        with pytest.raises(
+            CodexProtocolError,
+            match="Codex thread/start returned a non-object result",
+        ):
+            await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+
+        await client.delete_thread("thread-existing")
+
+        assert launch_counter.read_text(encoding="utf-8") == "1"
+        assert (
+            request_log.read_text(encoding="utf-8").splitlines().count("thread/delete")
+            == 1
+        )
+    finally:
+        await client.close()
