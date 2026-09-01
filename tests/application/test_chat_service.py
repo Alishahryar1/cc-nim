@@ -1285,16 +1285,336 @@ async def test_stop_at_generation_commit_preserves_completed_result(
         stop_task = asyncio.create_task(
             service.stop(session.id, operation_id=operation_id)
         )
-        await asyncio.sleep(0.05)
-        assert not stop_task.done()
+        assert await asyncio.wait_for(stop_task, timeout=1) is False
         release_commit.set()
 
-        assert await asyncio.wait_for(stop_task, timeout=1) is True
         events = await _drain(stream)
         generation = (await store.get_transcript(session.id)).turns[0].generation
         assert events[-1] == "turn.completed"
         assert generation.status is GenerationStatus.COMPLETED
     finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_never_advertises_unpublished_terminal_sequence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service, _runtime, _store = await _service(tmp_path, FakeChatProvider())
+    release_terminal = asyncio.Event()
+    late_subscription: ChatEventSubscriptionPort | None = None
+    fresh_subscription: ChatEventSubscriptionPort | None = None
+    try:
+        entered_terminal = asyncio.Event()
+        original_release_active = service._release_active
+
+        async def observed_release_active(active):
+            entered_terminal.set()
+            await release_terminal.wait()
+            return await original_release_active(active)
+
+        monkeypatch.setattr(service, "_release_active", observed_release_active)
+        session = await service.create_session()
+        operation_id = "025295bc-d2f5-4208-9dab-ed507471fb33"
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="publish this terminal event",
+        )
+        await asyncio.wait_for(entered_terminal.wait(), timeout=1)
+
+        late_subscription, active = await service.subscribe()
+        assert len(active) == 1
+        assert active[0].operation_id == operation_id
+        snapshot_sequence = active[0].operation_sequence
+
+        release_terminal.set()
+        late_events = late_subscription.__aiter__()
+        terminal = await asyncio.wait_for(anext(late_events), timeout=1)
+        assert terminal.event == "turn.completed"
+        assert terminal.data["operation_sequence"] == snapshot_sequence + 1
+        assert (await _drain(stream))[-1] == "turn.completed"
+
+        fresh_subscription, current_active = await service.subscribe()
+        assert current_active == ()
+    finally:
+        release_terminal.set()
+        if late_subscription is not None:
+            await late_subscription.aclose()
+        if fresh_subscription is not None:
+            await fresh_subscription.aclose()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_after_completed_regeneration_cannot_discard_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service, _runtime, store = await _service(tmp_path, FakeChatProvider())
+    release_terminal = asyncio.Event()
+    try:
+        session = await service.create_session()
+        initial = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="25362cff-95ae-4051-9d15-36317753eb29",
+            text="replace this answer",
+        )
+        await _drain(initial)
+        before = await store.get_transcript(session.id)
+
+        entered_terminal = asyncio.Event()
+        original_release_active = service._release_active
+
+        async def observed_release_active(active):
+            entered_terminal.set()
+            await release_terminal.wait()
+            return await original_release_active(active)
+
+        discarded = 0
+        original_discard_generation = store.discard_generation
+
+        async def observed_discard_generation(*args, **kwargs):
+            nonlocal discarded
+            discarded += 1
+            return await original_discard_generation(*args, **kwargs)
+
+        monkeypatch.setattr(service, "_release_active", observed_release_active)
+        monkeypatch.setattr(store, "discard_generation", observed_discard_generation)
+        operation_id = "a2f69564-3eb5-4805-8578-2be42d710e5a"
+        replacement = await _observe_call(
+            service,
+            service.regenerate,
+            session.id,
+            expected_revision=before.session.revision,
+            operation_id=operation_id,
+        )
+        await asyncio.wait_for(entered_terminal.wait(), timeout=1)
+
+        assert await service.stop(session.id, operation_id=operation_id) is False
+        release_terminal.set()
+        assert (await _drain(replacement))[-1] == "turn.completed"
+
+        after = await store.get_transcript(session.id)
+        assert discarded == 0
+        assert after.turns[-1].generation.status is GenerationStatus.COMPLETED
+        assert service.availability()[0] is True
+    finally:
+        release_terminal.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_waits_for_terminal_settlement_before_removing_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service, _runtime, store = await _service(tmp_path, FakeChatProvider())
+    release_commit = asyncio.Event()
+    try:
+        entered_commit = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_commit.set()
+            await release_commit.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="77a5fc8a-6043-49f9-a291-b0545bd47ed8",
+            text="finish before deletion",
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+        running = await service.get_session(session.id)
+
+        delete_task = asyncio.create_task(
+            service.delete_session(session.id, expected_revision=running.revision)
+        )
+        await asyncio.sleep(0.05)
+        assert not delete_task.done()
+        release_commit.set()
+        await asyncio.wait_for(delete_task, timeout=1)
+
+        with pytest.raises(ChatNotFoundError):
+            await service.get_session(session.id)
+        await stream.aclose()
+    finally:
+        release_commit.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_terminal_settlement(tmp_path: Path, monkeypatch):
+    service, _runtime, store = await _service(tmp_path, FakeChatProvider())
+    release_commit = asyncio.Event()
+    service_closed = False
+    reopened: SQLiteChatStore | None = None
+    try:
+        entered_commit = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_commit.set()
+            await release_commit.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="aa6d0128-de80-43ff-ab8c-aa1f7c4bf5ba",
+            text="finish before shutdown",
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+
+        close_task = asyncio.create_task(service.close())
+        await asyncio.sleep(0.05)
+        assert not close_task.done()
+        release_commit.set()
+        await asyncio.wait_for(close_task, timeout=1)
+        service_closed = True
+        await stream.aclose()
+
+        reopened = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+        await reopened.start()
+        transcript = await reopened.get_transcript(session.id)
+        assert transcript.turns[-1].generation.status is GenerationStatus.COMPLETED
+    finally:
+        release_commit.set()
+        if reopened is not None:
+            await reopened.close()
+        if not service_closed:
+            await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stop_waiter_does_not_cancel_supervisor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_settlement = asyncio.Event()
+    try:
+        entered_settlement = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_settlement.set()
+            await release_settlement.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        operation_id = "13d97a77-aef0-4f2c-8415-1525ab70c427"
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="stop independently of this request",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+
+        stop_task = asyncio.create_task(
+            service.stop(session.id, operation_id=operation_id)
+        )
+        await asyncio.wait_for(entered_settlement.wait(), timeout=1)
+        stop_task.cancel()
+        await asyncio.sleep(0.05)
+        assert not stop_task.done()
+
+        release_settlement.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(stop_task, timeout=1)
+        assert (await _drain(stream))[-1] == "turn.stopped"
+        transcript = await store.get_transcript(session.id)
+        assert transcript.turns[-1].generation.status is GenerationStatus.STOPPED
+    finally:
+        release_settlement.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_precedes_best_effort_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service, _runtime, store = await _service(tmp_path, FakeChatProvider())
+    release_summary = asyncio.Event()
+    fresh_subscription: ChatEventSubscriptionPort | None = None
+    try:
+        entered_summary = asyncio.Event()
+        blocked_summary = False
+        original_get_session_summary = store.get_session_summary
+
+        async def observed_get_session_summary(session_id: str):
+            nonlocal blocked_summary
+            transcript = await store.get_transcript(session_id)
+            completed = bool(
+                transcript.turns
+                and transcript.turns[-1].generation.status is GenerationStatus.COMPLETED
+            )
+            if completed and not blocked_summary:
+                blocked_summary = True
+                entered_summary.set()
+                await release_summary.wait()
+                raise ChatUnavailableError("Summary read failed.")
+            return await original_get_session_summary(session_id)
+
+        monkeypatch.setattr(
+            store,
+            "get_session_summary",
+            observed_get_session_summary,
+        )
+        session = await service.create_session()
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="526be960-a16f-4d83-8f02-d51568003b60",
+            text="publish before the summary",
+        )
+
+        assert (await _drain(stream))[-1] == "turn.completed"
+        await asyncio.wait_for(entered_summary.wait(), timeout=1)
+        fresh_subscription, active = await service.subscribe()
+        assert active == ()
+
+        current = await service.get_session(session.id)
+        next_stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=current.revision,
+            operation_id="ee7985a6-adf8-454f-9785-53d13c4eef8d",
+            text="start while the old summary waits",
+        )
+        release_summary.set()
+        assert (await _drain(next_stream))[-1] == "turn.completed"
+        assert service.availability()[0] is True
+    finally:
+        release_summary.set()
+        if fresh_subscription is not None:
+            await fresh_subscription.aclose()
         await service.close()
 
 
@@ -1516,13 +1836,11 @@ async def test_stop_during_compaction_commit_waits_and_reports_completion(
         stop_task = asyncio.create_task(
             service.stop(session.id, operation_id=operation_id)
         )
-        await asyncio.sleep(0.05)
-        assert not stop_task.done()
+        assert await asyncio.wait_for(stop_task, timeout=1) is False
 
         blocker.commit()
         blocker.close()
         blocker = None
-        assert await asyncio.wait_for(stop_task, timeout=1) is True
         events = await _drain(compact)
 
         transcript = await store.get_transcript(session.id)

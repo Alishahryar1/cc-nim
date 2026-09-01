@@ -22,6 +22,7 @@
     sessionSummaries: new Map(),
     sessionRevisions: new Map(),
     deletedSessions: new Set(),
+    retiredTitleInputs: new WeakSet(),
     draft: "",
     draftSessionId: null,
     draftOperationId: null,
@@ -1063,6 +1064,10 @@
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
     const session = state.session;
     if (!session) return;
+    const previousTitle = document.querySelector(".chat-title");
+    if (previousTitle instanceof HTMLInputElement) {
+      state.retiredTitleInputs.add(previousTitle);
+    }
     state.modelComboboxes.clear();
     const shell = node("div", "chat-session-shell");
     const header = renderSessionHeader(session);
@@ -1101,7 +1106,14 @@
     title.value = session.title;
     title.maxLength = 200;
     title.setAttribute("aria-label", "Chat title");
-    title.addEventListener("change", () => updateSession({ title: title.value }));
+    title.addEventListener("blur", () => {
+      if (
+        title.isConnected &&
+        !state.retiredTitleInputs.has(title) &&
+        title.value !== state.session?.title
+      )
+        void updateSession({ title: title.value });
+    });
     title.addEventListener("keydown", (event) => {
       if (event.key === "Enter") title.blur();
     });

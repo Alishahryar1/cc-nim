@@ -71,6 +71,18 @@ class _CancellationReason(StrEnum):
     DELETED = "deleted"
 
 
+class _OperationLifecycle(StrEnum):
+    RUNNING = "running"
+    SETTLING = "settling"
+
+
+@dataclass(frozen=True, slots=True)
+class _TerminalEvent:
+    event: str
+    data: JsonObject
+    publish_summary: bool
+
+
 class _TerminalPersistenceError(ChatUnavailableError):
     """A bounded terminal write failed and requires startup repair."""
 
@@ -82,7 +94,9 @@ class _ActiveOperation:
     kind: ChatOperationKind
     phase: ChatOperationPhase
     submitted_text: str | None = None
-    task: asyncio.Task[None] | None = None
+    work_task: asyncio.Task[None] | None = None
+    supervisor_task: asyncio.Task[None] | None = None
+    lifecycle: _OperationLifecycle = _OperationLifecycle.RUNNING
     cancellation_reason: _CancellationReason | None = None
     turn_id: str | None = None
     generation_id: str | None = None
@@ -90,7 +104,7 @@ class _ActiveOperation:
     segments: list[ChatSegment] = field(default_factory=list)
     event_sequence: int = 0
     actual_model: str | None = None
-    terminal_event: tuple[str, JsonObject] | None = None
+    terminal_event: _TerminalEvent | None = None
 
 
 class ChatService:
@@ -139,6 +153,7 @@ class ChatService:
                 self._cancel_active(
                     operation,
                     reason=_CancellationReason.INTERRUPTED,
+                    wait_if_settling=True,
                 )
                 for operation in active
             )
@@ -306,7 +321,11 @@ class ChatService:
             current = await self._store.get_session(session_id)
             _expect_revision(current, expected_revision)
             if active is not None:
-                await self._cancel_active(active, reason=_CancellationReason.DELETED)
+                await self._cancel_active(
+                    active,
+                    reason=_CancellationReason.DELETED,
+                    wait_if_settling=True,
+                )
                 current = await self._store.get_session(session_id)
             await self._store.delete_session(
                 session_id,
@@ -472,12 +491,15 @@ class ChatService:
         operation_id = _canonical_uuid(operation_id, "operation")
         async with self._active_lock:
             active = self._active.get(session_id)
-        if active is None:
-            return False
-        if active.operation_id != operation_id:
-            raise ChatConflictError("That operation is no longer active.")
-        await self._cancel_active(active, reason=_CancellationReason.STOPPED)
-        return True
+            if active is None:
+                return False
+            if active.operation_id != operation_id:
+                raise ChatConflictError("That operation is no longer active.")
+        return await self._cancel_active(
+            active,
+            reason=_CancellationReason.STOPPED,
+            wait_if_settling=False,
+        )
 
     async def _start_operation(
         self,
@@ -506,9 +528,17 @@ class ChatService:
                 ),
                 submitted_text=submitted_text,
             )
+
+            async def run_work() -> None:
+                await action(active)
+
             self._active[session_id] = active
-            active.task = asyncio.create_task(
-                self._run_active(active, action),
+            active.work_task = asyncio.create_task(
+                run_work(),
+                name=f"fcc-chat-{kind.value}-{operation_id}-work",
+            )
+            active.supervisor_task = asyncio.create_task(
+                self._run_active(active),
                 name=f"fcc-chat-{kind.value}-{operation_id}",
             )
             self._emit(
@@ -529,28 +559,28 @@ class ChatService:
     async def _run_active(
         self,
         active: _ActiveOperation,
-        action: Callable[[_ActiveOperation], Awaitable[None]],
     ) -> None:
+        work_task = active.work_task
+        if work_task is None:
+            raise RuntimeError("Chat operation work was not initialized.")
         try:
-            await action(active)
+            await work_task
         except asyncio.CancelledError:
-            settlement = asyncio.create_task(
-                self._handle_cancelled(active),
-                name=f"fcc-chat-settle-cancelled-{active.operation_id}",
+            await self._claim_settlement(
+                active,
+                reason=active.cancellation_reason or _CancellationReason.STOPPED,
             )
-            await _await_task_despite_cancellation(settlement)
+            await self._handle_cancelled(active)
         except Exception as exc:
-            settlement = asyncio.create_task(
-                self._handle_failure(active, exc),
-                name=f"fcc-chat-settle-failed-{active.operation_id}",
-            )
-            await _await_task_despite_cancellation(settlement)
+            await self._claim_settlement(active)
+            if active.cancellation_reason is not None:
+                await self._handle_cancelled(active)
+            else:
+                await self._handle_failure(active, exc)
         finally:
-            release_task = asyncio.create_task(
-                self._release_active(active),
-                name=f"fcc-chat-release-{active.operation_id}",
-            )
-            await _await_task_despite_cancellation(release_task)
+            publish_summary = await self._release_active(active)
+            if publish_summary:
+                await self._publish_session_summary(active.session_id)
 
     async def _run_send(
         self,
@@ -871,6 +901,9 @@ class ChatService:
         if not saw_message_stop:
             raise ChatValidationError("The provider stream ended before completing.")
 
+        if not await self._claim_settlement(active):
+            raise asyncio.CancelledError
+
         async def commit_completion() -> ChatSession:
             await self._flush_terminal_segments(active)
             if active.regeneration:
@@ -889,11 +922,7 @@ class ChatService:
                 error_message=None,
             )
 
-        commit_task = asyncio.create_task(
-            commit_completion(),
-            name=f"fcc-chat-generation-commit-{generation_id}",
-        )
-        session, _cancellation = await _await_task_despite_cancellation(commit_task)
+        session = await commit_completion()
         self._stage_terminal(
             active,
             "turn.completed",
@@ -902,8 +931,8 @@ class ChatService:
                 "revision": session.revision,
                 "actual_model": active.actual_model,
             },
+            publish_summary=True,
         )
-        await self._publish_session_summary(active.session_id)
 
     async def _handle_sse_event(
         self,
@@ -1114,24 +1143,37 @@ class ChatService:
                 ),
             )
 
-        commit_task = asyncio.create_task(
-            commit_compaction(),
-            name=f"fcc-chat-compaction-commit-{transcript.session.id}",
-        )
-        compaction, cancellation = await _await_task_despite_cancellation(commit_task)
+        cancellation: asyncio.CancelledError | None = None
+        if active.kind is ChatOperationKind.COMPACT:
+            if not await self._claim_settlement(active):
+                raise asyncio.CancelledError
+            compaction = await commit_compaction()
+        else:
+            commit_task = asyncio.create_task(
+                commit_compaction(),
+                name=f"fcc-chat-compaction-commit-{transcript.session.id}",
+            )
+            compaction, cancellation = await _await_task_despite_cancellation(
+                commit_task
+            )
         completion: JsonObject = {
             "covered_through_sequence": covered,
             "revision": transcript.session.revision + 1,
         }
         if active.kind is ChatOperationKind.COMPACT:
-            self._stage_terminal(active, "compaction.completed", completion)
+            self._stage_terminal(
+                active,
+                "compaction.completed",
+                completion,
+                publish_summary=True,
+            )
         else:
             active.phase = ChatOperationPhase.GENERATING
             completion["phase"] = active.phase.value
             self._emit(active, "compaction.completed", completion)
             if cancellation is not None:
                 raise cancellation
-        await self._publish_session_summary(active.session_id)
+            await self._publish_session_summary(active.session_id)
         return compaction
 
     async def _summarize_turns(
@@ -1254,6 +1296,7 @@ class ChatService:
     async def _handle_cancelled(self, active: _ActiveOperation) -> None:
         reason = active.cancellation_reason or _CancellationReason.STOPPED
         terminal_data: JsonObject = {"reason": reason.value}
+        publish_summary = False
         if active.generation_id is not None:
             try:
                 if active.regeneration:
@@ -1273,7 +1316,7 @@ class ChatService:
                         error_message=None,
                     )
                     terminal_data["revision"] = session.revision
-                    await self._publish_session_summary(active.session_id)
+                    publish_summary = True
             except Exception as exc:
                 if reason is _CancellationReason.INTERRUPTED:
                     logger.warning(
@@ -1303,7 +1346,12 @@ class ChatService:
             if active.kind is ChatOperationKind.COMPACT
             else "turn.stopped"
         )
-        self._stage_terminal(active, event, terminal_data)
+        self._stage_terminal(
+            active,
+            event,
+            terminal_data,
+            publish_summary=publish_summary,
+        )
 
     async def _handle_failure(self, active: _ActiveOperation, exc: Exception) -> None:
         if isinstance(exc, _TerminalPersistenceError):
@@ -1345,6 +1393,7 @@ class ChatService:
                 type(exc).__name__,
             )
         terminal_data: JsonObject = {"code": code, "message": message}
+        publish_summary = False
         if active.generation_id is not None:
             try:
                 await self._flush_terminal_segments(active)
@@ -1365,7 +1414,7 @@ class ChatService:
                         error_message=message,
                     )
                 terminal_data["revision"] = session.revision
-                await self._publish_session_summary(active.session_id)
+                publish_summary = True
             except Exception as persistence_exc:
                 self._disable_after_terminal_write_failure(
                     active,
@@ -1381,7 +1430,12 @@ class ChatService:
             if active.generation_id is not None
             else "operation.failed"
         )
-        self._stage_terminal(active, event, terminal_data)
+        self._stage_terminal(
+            active,
+            event,
+            terminal_data,
+            publish_summary=publish_summary,
+        )
 
     async def _flush_terminal_segments(self, active: _ActiveOperation) -> None:
         await self._retry_terminal_persistence(
@@ -1483,68 +1537,78 @@ class ChatService:
         self._events.publish(event, payload)
 
     def _stage_terminal(
-        self, active: _ActiveOperation, event: str, data: JsonObject
+        self,
+        active: _ActiveOperation,
+        event: str,
+        data: JsonObject,
+        *,
+        publish_summary: bool = False,
     ) -> None:
         if active.terminal_event is not None:
             return
-        active.event_sequence += 1
-        payload: JsonObject = {
-            "session_id": active.session_id,
-            "operation_id": active.operation_id,
-            "kind": active.kind.value,
-            "operation_sequence": active.event_sequence,
-            **data,
-        }
-        active.terminal_event = event, payload
+        active.terminal_event = _TerminalEvent(
+            event=event,
+            data={**data},
+            publish_summary=publish_summary,
+        )
+
+    async def _claim_settlement(
+        self,
+        active: _ActiveOperation,
+        *,
+        reason: _CancellationReason | None = None,
+    ) -> bool:
+        async with self._active_lock:
+            if self._active.get(active.session_id) is not active:
+                return False
+            if active.lifecycle is _OperationLifecycle.SETTLING:
+                return False
+            active.lifecycle = _OperationLifecycle.SETTLING
+            active.cancellation_reason = reason
+            return True
 
     async def _cancel_active(
         self,
         active: _ActiveOperation,
         *,
         reason: _CancellationReason,
-    ) -> None:
-        task = active.task
-        if task is None:
-            return
-        if active.cancellation_reason is None:
-            active.cancellation_reason = reason
-            if not task.done():
-                task.cancel()
-        effective_reason = active.cancellation_reason
-        cancellation: asyncio.CancelledError | None = None
-        try:
-            _result, cancellation = await _await_task_despite_cancellation(task)
-        except asyncio.CancelledError:
-            current = asyncio.current_task()
-            if current is not None and current.cancelling():
-                raise
-        finally:
-            if (
-                active.terminal_event is None
-                and effective_reason is not _CancellationReason.DELETED
-            ):
-                event = (
-                    "compaction.stopped"
-                    if active.kind is ChatOperationKind.COMPACT
-                    else "turn.stopped"
-                )
-                self._stage_terminal(
-                    active,
-                    event,
-                    {"reason": effective_reason.value},
-                )
-            await self._release_active(active)
-        if cancellation is not None:
-            raise cancellation
-
-    async def _release_active(self, active: _ActiveOperation) -> None:
+        wait_if_settling: bool,
+    ) -> bool:
         async with self._active_lock:
             if self._active.get(active.session_id) is not active:
-                return
+                return False
+            accepted = False
+            if active.lifecycle is _OperationLifecycle.RUNNING:
+                active.lifecycle = _OperationLifecycle.SETTLING
+                active.cancellation_reason = reason
+                accepted = True
+                work_task = active.work_task
+                if work_task is not None and not work_task.done():
+                    work_task.cancel()
+            elif (
+                reason is _CancellationReason.STOPPED
+                and active.cancellation_reason is _CancellationReason.STOPPED
+            ):
+                accepted = True
+            supervisor_task = active.supervisor_task
+        if supervisor_task is not None and (accepted or wait_if_settling):
+            cancellation = await _wait_task_despite_cancellation(supervisor_task)
+            supervisor_task.result()
+            if cancellation is not None:
+                raise cancellation
+        return accepted
+
+    async def _release_active(self, active: _ActiveOperation) -> bool:
+        publish_summary = False
+        async with self._active_lock:
+            if self._active.get(active.session_id) is not active:
+                return False
             self._active.pop(active.session_id, None)
-        if active.terminal_event is not None:
-            event, payload = active.terminal_event
-            self._events.publish(event, payload)
+            terminal = active.terminal_event
+            if terminal is not None:
+                self._emit(active, terminal.event, terminal.data)
+                publish_summary = terminal.publish_summary
+        return publish_summary
 
     def _require_available(self) -> None:
         if not self._started or not self._accepting:
@@ -1571,6 +1635,7 @@ class ChatService:
     ) -> None:
         try:
             summary = await self._store.get_session_summary(session_id)
+            self._events.publish(event, _session_summary_event_data(summary))
         except Exception as exc:
             logger.warning(
                 "Could not publish Chat session summary: session_id={} exc_type={}",
@@ -1578,7 +1643,6 @@ class ChatService:
                 type(exc).__name__,
             )
             return
-        self._events.publish(event, _session_summary_event_data(summary))
 
 
 async def _commit_generation_start(

@@ -1,7 +1,7 @@
 import json
 import re
 
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Request, expect
 
 
 def _new_chat(page: Page, admin_base_url: str) -> None:
@@ -726,6 +726,13 @@ def test_session_settings_sync_without_disturbing_another_tab_draft(
     other = page.context.new_page()
     try:
         other.goto(page.url)
+        other_patches: list[str] = []
+
+        def remember_other_patch(request: Request) -> None:
+            if request.method == "PATCH":
+                other_patches.append(request.post_data or "")
+
+        other.on("request", remember_other_patch)
         other_message = other.get_by_role("textbox", name="Message", exact=True)
         other_message.fill("private draft")
         other_title = other.get_by_label("Chat title")
@@ -736,8 +743,11 @@ def test_session_settings_sync_without_disturbing_another_tab_draft(
         with page.expect_response(lambda response: response.request.method == "PATCH"):
             title.press("Enter")
         expect(other_title).to_have_value("Local title draft")
+        other.wait_for_timeout(50)
+        assert other_patches == []
         with other.expect_response(lambda response: response.request.method == "PATCH"):
             other_title.press("Enter")
+        assert len(other_patches) == 1
         expect(title).to_have_value("Local title draft")
 
         _select_model(page, "open_router/vendor/model-b")
