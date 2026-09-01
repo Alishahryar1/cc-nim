@@ -14,6 +14,7 @@ from free_claude_code.core.anthropic.server_tool_sse import (
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.json_types import JsonValue
+from free_claude_code.core.token_estimation import estimate_text_tokens
 
 from . import outbound
 from .constants import _MAX_FETCH_CHARS
@@ -32,8 +33,32 @@ def _search_summary(query: str, results: list[dict[str, str]]) -> str:
         return f"No web search results found for: {query}"
     lines = [f"Search results for: {query}"]
     for index, result in enumerate(results, start=1):
-        lines.append(f"{index}. {result['title']}\n{result['url']}")
+        item = f"{index}. {result['title']}\n{result['url']}"
+        if content := result.get("content"):
+            item = f"{item}\n{content}"
+        lines.append(item)
     return "\n\n".join(lines)
+
+
+def _bounded_parallel_search_summary(summary: str, max_tokens: int | None) -> str:
+    if max_tokens is not None and max_tokens <= 0:
+        return ""
+
+    character_limit = _MAX_FETCH_CHARS
+    if max_tokens is not None:
+        character_limit = min(character_limit, max_tokens * 4)
+    upper = min(len(summary), character_limit)
+    if max_tokens is None or estimate_text_tokens(summary[:upper]) <= max_tokens:
+        return summary[:upper]
+
+    lower = 0
+    while lower < upper:
+        middle = (lower + upper + 1) // 2
+        if estimate_text_tokens(summary[:middle]) <= max_tokens:
+            lower = middle
+        else:
+            upper = middle - 1
+    return summary[:lower]
 
 
 async def stream_web_server_tool_response(
@@ -43,6 +68,7 @@ async def stream_web_server_tool_response(
     web_fetch_egress: WebFetchEgressPolicy,
     response_model: str | None = None,
     verbose_client_errors: bool = False,
+    search_provider: str = "duckduckgo",
 ) -> AsyncIterator[str]:
     """Stream the existing forced `web_search` / `web_fetch` local fallback."""
     tool_name = forced_server_tool_name(request)
@@ -62,6 +88,8 @@ async def stream_web_server_tool_response(
         web_fetch_egress=web_fetch_egress,
         response_model=request.model if response_model is None else response_model,
         verbose_client_errors=verbose_client_errors,
+        search_provider=search_provider,
+        max_output_tokens=request.max_tokens,
     ):
         yield frame
 
@@ -74,6 +102,8 @@ async def stream_selected_web_search_response(
     provider_usage: Mapping[str, object],
     result_filter: SearchResultFilter,
     verbose_client_errors: bool = False,
+    search_provider: str = "duckduckgo",
+    max_output_tokens: int | None = None,
 ) -> AsyncIterator[str]:
     """Stream the existing local result shape for one provider-selected query."""
     async for frame in _stream_local_web_tool_response(
@@ -85,6 +115,8 @@ async def stream_selected_web_search_response(
         verbose_client_errors=verbose_client_errors,
         provider_usage=provider_usage,
         search_result_filter=result_filter,
+        search_provider=search_provider,
+        max_output_tokens=max_output_tokens,
     ):
         yield frame
 
@@ -99,6 +131,8 @@ async def _stream_local_web_tool_response(
     verbose_client_errors: bool,
     provider_usage: Mapping[str, object] | None = None,
     search_result_filter: SearchResultFilter | None = None,
+    search_provider: str = "duckduckgo",
+    max_output_tokens: int | None = None,
 ) -> AsyncIterator[str]:
     message_id = f"msg_{uuid.uuid4()}"
     tool_id = f"srvtoolu_{uuid.uuid4().hex}"
@@ -150,7 +184,11 @@ async def _stream_local_web_tool_response(
     try:
         if tool_name == "web_search":
             query = tool_input["query"]
-            results = await outbound._run_web_search(query)
+            results = (
+                await outbound._run_web_search(query)
+                if search_provider == "duckduckgo"
+                else await outbound._run_web_search(query, provider=search_provider)
+            )
             if search_result_filter is not None:
                 results = search_result_filter(results)
             result_content: JsonValue = [
@@ -162,6 +200,8 @@ async def _stream_local_web_tool_response(
                 for result in results
             ]
             summary = _search_summary(query, results)
+            if search_provider == "parallel":
+                summary = _bounded_parallel_search_summary(summary, max_output_tokens)
             result_block_type = WEB_SEARCH_TOOL_RESULT
         else:
             if web_fetch_egress is None:
