@@ -196,7 +196,6 @@ textarea {
 }
 
 .brand-mark {
-.brand-mark {
   display: block;
   flex: 0 0 auto;
   width: 40px;
@@ -207,7 +206,6 @@ textarea {
   display: block;
   width: 100%;
   height: 100%;
-}
 }
 
 .brand-icon {
