@@ -412,14 +412,24 @@ def test_configure_keeps_first_snapshot_across_remerges(
     }
 
 
-def test_configure_unconfigure_roundtrip_restores_disabled_discovery(
+def test_configure_unconfigure_roundtrip_hands_off_disabled_discovery(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
-    # Regression guard for the Greptile "discovery value restores
-    # incorrectly" finding: a user who explicitly disabled model discovery
-    # must get ``false`` back after unconfigure — presence alone would
-    # restore ``true`` and permanently flip the preference.
+    """A recorded non-``True`` discovery original hands the final value off.
+
+    Originally guarded the "discovery value restores incorrectly" finding
+    (presence-only snapshots restored ``true`` over an explicit ``false``).
+    The ownership gate since the "final discovery preference is
+    overwritten" finding supersedes the restore: with a recorded
+    non-``True`` original, a current ``True`` is either configure's
+    untouched write or the user's explicit re-enable, and no file state can
+    tell them apart. Unconfigure therefore hands the flag off verbatim —
+    here the merge's own contractual ``True``, the last thing the user saw
+    on disk — rather than risk reverting a deliberate re-enable. The
+    inference keys still round-trip losslessly.
+    """
+
     original = {
         "modelDiscoveryEnabled": False,
         "inference": {"provider": "anthropic"},
@@ -443,7 +453,10 @@ def test_configure_unconfigure_roundtrip_restores_disabled_discovery(
         is True
     )
     restored = json.loads(fake_config.read_text(encoding="utf-8"))
-    assert restored == original
+    assert restored == {
+        "modelDiscoveryEnabled": True,
+        "inference": {"provider": "anthropic"},
+    }
 
 
 @pytest.mark.parametrize(
@@ -1184,8 +1197,11 @@ def test_remerge_absorbs_user_edited_managed_keys(
         is True
     )
     assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    # The discovery original is False, so the flag hands off verbatim
+    # (see the roundtrip handoff test); the inference restore is the
+    # point of this test and stays lossless.
     assert json.loads(fake_config.read_text(encoding="utf-8")) == {
-        "modelDiscoveryEnabled": False,
+        "modelDiscoveryEnabled": True,
         "inference": {
             "provider": "user-later-provider",
             "userExtra": "keep",
@@ -1197,7 +1213,13 @@ def test_remerge_keeps_frozen_snapshot_without_user_edits(
     fake_config: Path,
     fake_settings: Settings,
 ) -> None:
-    """An untouched re-merge never rewrites the frozen original snapshot."""
+    """An untouched re-merge never rewrites the frozen original snapshot.
+
+    The discovery original is False, so unconfigure hands that flag off
+    verbatim (current True, unattributable) rather than restoring the
+    snapshot; the inference snapshot stays frozen at first-merge values,
+    which is what the re-merge here exercises.
+    """
 
     original = {
         "modelDiscoveryEnabled": False,
@@ -1217,7 +1239,10 @@ def test_remerge_keeps_frozen_snapshot_without_user_edits(
         is False
     )
     assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
-    assert json.loads(fake_config.read_text(encoding="utf-8")) == original
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+        "modelDiscoveryEnabled": True,
+        "inference": {"provider": "user-provider", "userExtra": "keep"},
+    }
 
 
 def test_remerge_marks_user_disabled_discovery_user_owned(
@@ -1380,6 +1405,51 @@ def test_unconfigure_keeps_user_final_discovery_reenable(
                     fake_config, settings=fake_settings
                 )
                 is True
+            )
+            continue
+        current = json.loads(fake_config.read_text(encoding="utf-8"))
+        current["modelDiscoveryEnabled"] = value
+        fake_config.write_text(json.dumps(current), encoding="utf-8")
+    assert claude_desktop.unconfigure_claude_desktop_config(fake_config) is True
+    assert json.loads(fake_config.read_text(encoding="utf-8")) == {
+        "modelDiscoveryEnabled": True,
+        "inference": {"provider": "p"},
+    }
+
+
+def test_unconfigure_keeps_user_reenable_over_recorded_disabled_original(
+    fake_config: Path,
+    fake_settings: Settings,
+) -> None:
+    """A re-enable over a recorded ``False`` original is never reverted.
+
+    Regression guard for the Greptile "final discovery preference is
+    overwritten" finding: the flag was explicitly ``False`` before FCC
+    installed, configure wrote its always-``True``, and the user then
+    re-enabled it (a byte-identical ``True``). Restoring the recorded
+    ``False`` here would silently discard that final choice — the recorded
+    value is stale by unconfigure time. Ownership of a current ``True``
+    cannot be established when the original is non-``True``, so the flag
+    hands off verbatim.
+    """
+
+    fake_config.write_text(
+        json.dumps({"modelDiscoveryEnabled": False, "inference": {"provider": "p"}}),
+        encoding="utf-8",
+    )
+    assert (
+        claude_desktop.configure_claude_desktop_config(
+            fake_config, settings=fake_settings
+        )
+        is True
+    )
+    for value in ("merge", True):
+        if value == "merge":
+            assert (
+                claude_desktop.configure_claude_desktop_config(
+                    fake_config, settings=fake_settings
+                )
+                is False
             )
             continue
         current = json.loads(fake_config.read_text(encoding="utf-8"))

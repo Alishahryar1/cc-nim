@@ -375,7 +375,13 @@ def unconfigure_claude_desktop_config(
     wrote, so those are deleted and the snapshot's prior presence and values
     are restored, while values the user changed after configure are kept as
     they are (restoring the stale snapshot entry would overwrite the user's
-    post-install choice). A non-object ``inference`` value recorded verbatim
+    post-install choice). The discovery flag additionally hands off verbatim
+    when its current ``True`` cannot be attributed to configure's own always-
+    ``True`` write: a recorded non-``True`` original means the current value
+    is either configure's untouched write or the user's explicit re-enable,
+    and no file state can tell them apart — preserving the final value is
+    the only choice that never destroys an explicit user decision. A
+    non-object ``inference`` value recorded verbatim
     by the snapshot is restored exactly, but only while the inference block
     still exactly matches what the merge wrote — a retained auth token alone
     does not prove whole-block ownership, since a user can keep the token
@@ -467,16 +473,25 @@ def unconfigure_claude_desktop_config(
         # still removed below.
         block_fcc_owned = isinstance(inference_raw, dict) and inference_dict == written
 
-        # A user-owned discovery flag (the adoption marker set when the key
-        # was absent before the first merge and the user later chose a
-        # non-``True`` value) is handed off verbatim: it is neither
-        # deleted as FCC's nor restored from any recorded value, since
-        # every value the user set in between is stale by unconfigure
-        # time and the final one is indistinguishable from configure's
-        # own always-``True`` write.
+        # A discovery flag is FCC's only while a current ``True`` is
+        # attributable to configure's own always-``True`` write. Two states
+        # break that attribution and hand the flag off verbatim instead —
+        # neither deleted as FCC's nor restored from any recorded value,
+        # since destroying an explicit user choice is the worse failure:
+        # (1) the adoption marker (the key was absent before the first
+        # merge and the user later chose a non-``True`` value); (2) a
+        # recorded non-``True`` original with a current ``True`` — the
+        # current value may be configure's untouched write (restoring the
+        # original would be correct) or the user's explicit re-enable (the
+        # original is stale), and no file state can tell them apart. The
+        # re-enable case is the reason the handoff wins: a user who
+        # deliberately turned discovery back on must not have that choice
+        # silently reverted.
+        recorded_discovery = backup.get("discovery")
         discovery_fcc_owned = (
             data.get(_DISCOVERY_KEY) is True
             and backup.get("discoveryUserOwned") is not True
+            and not ("discovery" in backup and recorded_discovery is not True)
         )
         if discovery_fcc_owned:
             del data[_DISCOVERY_KEY]
@@ -523,7 +538,9 @@ def unconfigure_claude_desktop_config(
             changed = True
         # Restore the original discovery value only when the flag was still
         # FCC's (the user did not change it after configure) and the key was
-        # present before the first merge; leave it deleted when it was absent.
+        # present before the first merge; leave it deleted when it was
+        # absent, and hand it off untouched when ownership could not be
+        # established (see the gate above).
         if discovery_fcc_owned and "discovery" in backup:
             data[_DISCOVERY_KEY] = backup["discovery"]
             changed = True
