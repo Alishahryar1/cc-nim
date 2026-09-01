@@ -28,6 +28,8 @@ CODESTRAL_DEFAULT_BASE = "https://codestral.mistral.ai/v1"
 LMSTUDIO_DEFAULT_BASE = "http://localhost:1234/v1"
 LLAMACPP_DEFAULT_BASE = "http://localhost:8080/v1"
 OLLAMA_DEFAULT_BASE = "http://localhost:11434"
+# OmniRoute local gateway OpenAI-compatible Chat Completions endpoint.
+OMNIROUTE_DEFAULT_BASE = "http://localhost:20128/v1"
 OLLAMA_CLOUD_DEFAULT_BASE = "https://ollama.com/v1"
 OPENCODE_ZEN_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
@@ -557,6 +559,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="ollama_api_key",
         default_base_url=OLLAMA_CLOUD_DEFAULT_BASE,
         proxy_attr="ollama_cloud_proxy",
+    ),
+    "omniroute": ProviderDescriptor(
+        provider_id="omniroute",
+        display_name="OmniRoute",
+        credential_env="OMNIROUTE_API_KEY",
+        credential_attr="omniroute_api_key",
+        default_base_url=OMNIROUTE_DEFAULT_BASE,
+        base_url_attr="omniroute_base_url",
+        proxy_attr="omniroute_proxy",
     ),
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",

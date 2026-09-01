@@ -233,6 +233,7 @@ from more than one provider before succeeding.
 | [Poolside AI](https://platform.poolside.ai/) | `POOLSIDE_API_KEY` | `poolside/poolside/laguna-s-2.1` |
 | [LLM7.io](https://dash.llm7.io/) | `LLM7_API_KEY` | `llm7/default` |
 | [Ollama Cloud](https://ollama.com/settings/keys) | `OLLAMA_API_KEY` | `ollama_cloud/qwen3-coder:480b` |
+| [OmniRoute](https://omniroute.ai) | `OMNIROUTE_API_KEY` | `omniroute/auto/best-coding` |
 | [LM Studio](https://lmstudio.ai/) | `LM_STUDIO_BASE_URL` | `lmstudio/<model-id>` |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | `LLAMACPP_BASE_URL` | `llamacpp/<model-id>` |
 | [Ollama](https://ollama.com/) | `OLLAMA_BASE_URL` | `ollama/<model-tag>` |
@@ -267,6 +268,9 @@ from more than one provider before succeeding.
   files and attached service accounts also work. Set `VERTEX_PROJECT_ID`, and
   optionally change `VERTEX_LOCATION` from its `global` default.
 - Cloudflare requires both its API token and account ID.
+- OmniRoute runs a local OpenAI-compatible gateway at `http://localhost:20128/v1`;
+  set `OMNIROUTE_API_KEY` and select an `auto/`-prefixed model from the picker
+  (override `OMNIROUTE_BASE_URL` if needed).
 - For Ollama Cloud, use the exact model IDs shown in the model picker. Local
   Ollama uses the separate `ollama/` prefix.
 - Prefer tool-capable models for coding agents. Local models also need enough context for the agent's system prompt and tool definitions.

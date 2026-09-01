@@ -17,6 +17,7 @@ from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
     NARAROUTE_DEFAULT_BASE,
+    OMNIROUTE_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
     TOKENROUTER_DEFAULT_BASE,
 )
@@ -194,6 +195,15 @@ class Settings(BaseModel):
     nararoute_base_url: NonEmptyString = Field(
         default=NARAROUTE_DEFAULT_BASE,
         validation_alias="NARAROUTE_BASE_URL",
+    )
+
+    # ==================== OmniRoute Config ====================
+    omniroute_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OMNIROUTE_API_KEY"
+    )
+    omniroute_base_url: NonEmptyString = Field(
+        default=OMNIROUTE_DEFAULT_BASE,
+        validation_alias="OMNIROUTE_BASE_URL",
     )
 
     # ==================== Poolside AI (OpenAI-compatible) ====================
@@ -491,6 +501,9 @@ class Settings(BaseModel):
     )
     nararoute_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="NARAROUTE_PROXY"
+    )
+    omniroute_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OMNIROUTE_PROXY"
     )
     poolside_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="POOLSIDE_PROXY"

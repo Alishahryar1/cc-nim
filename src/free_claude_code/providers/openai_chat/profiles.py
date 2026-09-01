@@ -738,4 +738,17 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
     ),
+    "omniroute": OpenAIChatProfile(
+        _policy(
+            "OMNIROUTE",
+            ReasoningReplayMode.REASONING_CONTENT,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+        model_listing=OpenAIModelListing(
+            thinking_boolean_path=("capabilities", "reasoning"),
+            context_window_tokens_path=("context_length",),
+            max_output_tokens_path=("max_output_tokens",),
+        ),
+    ),
 }
