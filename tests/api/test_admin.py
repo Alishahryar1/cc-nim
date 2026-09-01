@@ -1994,3 +1994,43 @@ def test_admin_launch_url_uses_loopback_for_wildcard_host():
     settings = Settings.model_construct(host="0.0.0.0", port=8082)
 
     assert local_admin_url(settings) == "http://127.0.0.1:8082/admin"
+
+
+def test_admin_static_no_longer_requests_validate_on_load():
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "/admin/api/config/validate" not in script
+    assert "validate(false)" not in script
+    assert "async function validate(" not in script
+    assert "showValidationResult" not in script
+
+
+def test_admin_static_poll_updates_kpi_after_both_connected_and_disconnected():
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+    poll_start = script.index("function pollConnectedAccount")
+    poll_block = script[poll_start : poll_start + 900]
+    assert "updateConnectedAccountCard(provider, status);" in poll_block
+    assert 'if (status.state === "connecting")' in poll_block
+    assert "state.authPollers.delete(provider.provider_id);" in poll_block
+    # hydrate only when connected, updateStats always
+    assert "if (status.connected) {" in poll_block
+    assert "await hydrateModelOptions();" in poll_block
+    # updateStats must be outside the if-connected block but inside terminal else
+    hydrate_index = poll_block.index("await hydrateModelOptions();")
+    update_index = poll_block.index("updateStats();", hydrate_index)
+    if_connected_index = poll_block.index("if (status.connected) {")
+    # hydrate is inside if, updateStats is after it, both inside else branch
+    assert if_connected_index < hydrate_index < update_index
+    # ensure updateStats is not inside the if-connected braces only
+    # count occurrences: poll should have exactly one hydrate and one updateStats
+    assert poll_block.count("await hydrateModelOptions();") == 1
+    assert poll_block.count("updateStats();") == 1
+    # ensure no duplicate hydrate outside poll is counted here
+    assert (
+        "state.authPollers.set(provider.provider_id, window.setTimeout(poll, 1000));"
+        in poll_block
+    )
