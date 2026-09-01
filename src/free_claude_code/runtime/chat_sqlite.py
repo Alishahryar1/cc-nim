@@ -35,6 +35,15 @@ T = TypeVar("T")
 _SCHEMA_VERSION = 1
 _BUSY_TIMEOUT_MS = 5_000
 _NEW_CHAT_TITLE = "New chat"
+_SESSION_SUMMARY_SELECT = """
+    SELECT s.*,
+        COALESCE((
+            SELECT t.user_text FROM chat_turns AS t
+            WHERE t.session_id = s.id
+            ORDER BY t.sequence DESC LIMIT 1
+        ), '') AS preview
+    FROM chat_sessions AS s
+"""
 
 
 class SQLiteChatStore:
@@ -149,13 +158,7 @@ class SQLiteChatStore:
             where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
             rows = connection.execute(
                 f"""
-                SELECT s.*,
-                    COALESCE((
-                        SELECT t.user_text FROM chat_turns AS t
-                        WHERE t.session_id = s.id
-                        ORDER BY t.sequence DESC LIMIT 1
-                    ), '') AS preview
-                FROM chat_sessions AS s
+                {_SESSION_SUMMARY_SELECT}
                 {where}
                 ORDER BY s.updated_at DESC, s.id DESC
                 LIMIT ?
@@ -170,6 +173,18 @@ class SQLiteChatStore:
                 last = selected[-1]
                 next_cursor = (_row_int(last, "updated_at"), _row_str(last, "id"))
             return ChatSessionPage(sessions=sessions, next_cursor=next_cursor)
+
+        return await self._run(operation)
+
+    async def get_session_summary(self, session_id: str) -> ChatSessionSummary:
+        def operation(connection: sqlite3.Connection) -> ChatSessionSummary:
+            row = connection.execute(
+                f"{_SESSION_SUMMARY_SELECT} WHERE s.id = ?",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                raise ChatNotFoundError("Chat session not found.")
+            return _session_summary_from_row(row)
 
         return await self._run(operation)
 

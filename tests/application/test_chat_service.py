@@ -1,13 +1,17 @@
 import asyncio
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from free_claude_code.application.chat import (
     ChatConflictError,
+    ChatEventSubscriptionPort,
     ChatNotFoundError,
+    ChatOperationAcknowledgement,
+    ChatOperationKind,
     ChatService,
     ChatUnavailableError,
     GenerationStatus,
@@ -280,9 +284,60 @@ async def _service(
     return service, runtime, store
 
 
-async def _drain(stream) -> list[str]:
-    events = [event.event async for event in stream]
-    await stream.aclose()
+_TURN_TERMINAL_EVENTS = frozenset(
+    {"turn.completed", "turn.failed", "turn.stopped", "operation.failed"}
+)
+_COMPACTION_TERMINAL_EVENTS = frozenset(
+    {
+        "compaction.completed",
+        "compaction.failed",
+        "compaction.stopped",
+        "operation.failed",
+    }
+)
+
+
+@dataclass(slots=True)
+class _ObservedOperation:
+    acknowledgement: ChatOperationAcknowledgement
+    subscription: ChatEventSubscriptionPort
+
+    async def aclose(self) -> None:
+        await self.subscription.aclose()
+
+
+async def _observe_call[**P](
+    service: ChatService,
+    command: Callable[P, Awaitable[ChatOperationAcknowledgement]],
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> _ObservedOperation:
+    subscription, _active = await service.subscribe()
+    try:
+        acknowledgement = await command(*args, **kwargs)
+    except BaseException:
+        await subscription.aclose()
+        raise
+    return _ObservedOperation(acknowledgement, subscription)
+
+
+async def _drain(operation: _ObservedOperation) -> list[str]:
+    events: list[str] = []
+    terminal_events = (
+        _COMPACTION_TERMINAL_EVENTS
+        if operation.acknowledgement.kind is ChatOperationKind.COMPACT
+        else _TURN_TERMINAL_EVENTS
+    )
+    try:
+        async for event in operation.subscription:
+            if event.data.get("operation_id") != operation.acknowledgement.operation_id:
+                continue
+            assert event.data["kind"] == operation.acknowledgement.kind.value
+            events.append(event.event)
+            if event.event in terminal_events:
+                break
+    finally:
+        await operation.aclose()
     return events
 
 
@@ -292,7 +347,9 @@ async def test_send_streams_and_persists_interleaved_segments(tmp_path: Path):
     service, runtime, store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="b21677f0-aa9a-4acb-b197-64d3dbd56536",
@@ -334,7 +391,9 @@ async def test_completion_persistence_exhaustion_never_downgrades_to_failed(
             return await original_finish_generation(*args, **kwargs)
 
         monkeypatch.setattr(store, "finish_generation", unavailable_completion)
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="f69c7c4d-9a46-40f0-b6ad-7f288a2c2dd7",
@@ -362,7 +421,9 @@ async def test_regeneration_retries_an_ambiguous_terminal_commit(
     service, _runtime, store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        initial = await service.send(
+        initial = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="e8476211-c6a1-45c4-a463-b7d92bfcc7d8",
@@ -388,7 +449,9 @@ async def test_regeneration_retries_an_ambiguous_terminal_commit(
             "finish_regeneration",
             ambiguous_finish_regeneration,
         )
-        replacement = await service.regenerate(
+        replacement = await _observe_call(
+            service,
+            service.regenerate,
             session.id,
             expected_revision=before.session.revision,
             operation_id="8a99c4a9-e4f5-4ebd-a8c9-982a9227a557",
@@ -413,7 +476,9 @@ async def test_failed_regeneration_replaces_original_with_failed_generation(
     service, _runtime, store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        initial = await service.send(
+        initial = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="01355e92-06c4-4820-b80a-fc8e0dff2553",
@@ -458,7 +523,9 @@ async def test_failed_regeneration_replaces_original_with_failed_generation(
             )
 
         monkeypatch.setattr(provider, "stream_messages", failing_stream)
-        replacement = await service.regenerate(
+        replacement = await _observe_call(
+            service,
+            service.regenerate,
             session.id,
             expected_revision=before.session.revision,
             operation_id="810b8d15-adab-4df6-9084-3189ca534d09",
@@ -483,7 +550,9 @@ async def test_stopped_regeneration_retries_an_ambiguous_discard(
     service, _runtime, store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        initial = await service.send(
+        initial = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="14e14878-842d-425a-952c-4e9f105760c0",
@@ -516,7 +585,9 @@ async def test_stopped_regeneration_retries_an_ambiguous_discard(
         )
         provider.started.clear()
         provider.block_after_delta = True
-        replacement = await service.regenerate(
+        replacement = await _observe_call(
+            service,
+            service.regenerate,
             session.id,
             expected_revision=before.session.revision,
             operation_id="19cbb991-38ff-4cd2-a20e-f94783f78003",
@@ -540,23 +611,39 @@ async def test_stopped_regeneration_retries_an_ambiguous_discard(
 
 
 @pytest.mark.asyncio
-async def test_closing_initiating_stream_cancels_and_persists_partial_answer(
+async def test_closing_subscription_does_not_cancel_active_operation(
     tmp_path: Path,
 ):
     provider = FakeChatProvider(block_after_delta=True)
     service, runtime, store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="9781df8c-aa92-422e-97d9-e9ea7f542b89",
             text="hello",
         )
-        collector = asyncio.create_task(_drain(stream))
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         await stream.aclose()
-        events = await asyncio.wait_for(collector, timeout=1)
+
+        assert runtime.leases[0].released == 0
+        assert provider.closed == 0
+
+        replacement_subscription, active_operations = await service.subscribe()
+        assert [active.operation_id for active in active_operations] == [
+            stream.acknowledgement.operation_id
+        ]
+        replacement_observer = _ObservedOperation(
+            stream.acknowledgement, replacement_subscription
+        )
+        assert await service.stop(
+            session.id,
+            operation_id=stream.acknowledgement.operation_id,
+        )
+        events = await asyncio.wait_for(_drain(replacement_observer), timeout=1)
 
         generation = (await store.get_transcript(session.id)).turns[0].generation
         assert events[-1] == "turn.stopped"
@@ -578,7 +665,9 @@ async def test_stop_retries_transient_terminal_persistence_failure(
     try:
         session = await service.create_session()
         operation_id = "3a1c071f-f558-4be3-a072-f9af230352ec"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -604,10 +693,14 @@ async def test_stop_retries_transient_terminal_persistence_failure(
         transcript = await store.get_transcript(session.id)
         assert attempts == 2
         assert transcript.turns[-1].generation.status is GenerationStatus.STOPPED
-        assert (await service.get_detail(session.id)).active_operation is False
+        snapshot_subscription, active_operations = await service.subscribe()
+        await snapshot_subscription.aclose()
+        assert active_operations == ()
 
         provider.block_after_delta = False
-        replacement = await service.send(
+        replacement = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=transcript.session.revision,
             operation_id="f5190fdb-ce16-402d-a5a2-1633ba0cae55",
@@ -628,7 +721,9 @@ async def test_stop_retries_transient_terminal_segment_flush(
     try:
         session = await service.create_session()
         operation_id = "242841f6-d826-48b5-9ed7-bf073b17840e"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -671,7 +766,9 @@ async def test_terminal_persistence_failure_disables_chat_instead_of_lying(
     try:
         session = await service.create_session()
         operation_id = "f744570e-0ec6-4f70-b74d-19de6bc60547"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -719,7 +816,9 @@ async def test_immediate_stop_before_operation_task_starts_releases_owner(
     try:
         session = await service.create_session()
         operation_id = "2029b65e-f4d9-4b80-8c6a-563a32fb8b8f"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -727,9 +826,11 @@ async def test_immediate_stop_before_operation_task_starts_releases_owner(
         )
 
         assert await service.stop(session.id, operation_id=operation_id) is True
-        assert await _drain(stream) == []
+        assert (await _drain(stream))[-1] == "turn.stopped"
 
-        replacement = await service.send(
+        replacement = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="4b50506e-92bf-46ba-aa35-333dc0946e14",
@@ -756,7 +857,9 @@ async def test_ambiguous_generation_start_adopts_the_committed_owner(
             raise ChatUnavailableError("Chat commit result was unavailable.")
 
         monkeypatch.setattr(store, "begin_send", ambiguous_begin_send)
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="cc47acc3-d7c2-46d0-a1b6-fe2acda191e4",
@@ -779,7 +882,7 @@ async def test_ambiguous_generation_start_adopts_the_committed_owner(
 
 
 @pytest.mark.asyncio
-async def test_disconnect_cannot_interrupt_failure_terminalization(
+async def test_disconnect_does_not_interrupt_failure_terminalization(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -838,7 +941,9 @@ async def test_disconnect_cannot_interrupt_failure_terminalization(
         )
         session = await service.create_session()
         operation_id = "63523531-024d-47f2-a0ce-ff7104d4e3af"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -846,13 +951,14 @@ async def test_disconnect_cannot_interrupt_failure_terminalization(
         )
         await asyncio.wait_for(entered_flush.wait(), timeout=1)
 
-        close_task = asyncio.create_task(stream.aclose())
-        await asyncio.sleep(0.05)
-        assert not close_task.done()
+        await stream.aclose()
+        replacement_subscription, _active = await service.subscribe()
+        replacement_observer = _ObservedOperation(
+            stream.acknowledgement, replacement_subscription
+        )
         release_flush.set()
-        await asyncio.wait_for(close_task, timeout=1)
 
-        assert (await _drain(stream))[-1] == "turn.failed"
+        assert (await _drain(replacement_observer))[-1] == "turn.failed"
         generation = (await store.get_transcript(session.id)).turns[0].generation
         assert generation.status is GenerationStatus.FAILED
         assert await service.stop(session.id, operation_id=operation_id) is False
@@ -868,7 +974,9 @@ async def test_second_operation_on_same_session_is_rejected(tmp_path: Path):
     service, _runtime, _store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        first = await service.send(
+        first = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="3e363fbc-25ee-414e-a954-02d11990497f",
@@ -877,7 +985,9 @@ async def test_second_operation_on_same_session_is_rejected(tmp_path: Path):
         await asyncio.wait_for(provider.started.wait(), timeout=1)
         running = await service.get_session(session.id)
         with pytest.raises(ChatConflictError, match="active operation"):
-            await service.send(
+            await _observe_call(
+                service,
+                service.send,
                 session.id,
                 expected_revision=running.revision,
                 operation_id="223ad9ac-e830-42ec-b73d-b1cbd81511c4",
@@ -885,6 +995,61 @@ async def test_second_operation_on_same_session_is_rejected(tmp_path: Path):
             )
         await first.aclose()
     finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_durable_mutations_publish_once_and_stale_mutation_publishes_nothing(
+    tmp_path: Path,
+):
+    service, _runtime, _store = await _service(tmp_path, FakeChatProvider())
+    subscription, active_operations = await service.subscribe()
+    assert active_operations == ()
+    events = subscription.__aiter__()
+    try:
+        session = await service.create_session()
+        created = await anext(events)
+
+        with pytest.raises(ChatConflictError, match="another tab"):
+            await service.update_session(
+                session.id,
+                expected_revision=session.revision + 10,
+                title="Stale title",
+                model=None,
+                reasoning=None,
+            )
+
+        updated = await service.update_session(
+            session.id,
+            expected_revision=session.revision,
+            title="Durable title",
+            model=None,
+            reasoning=None,
+        )
+        update_event = await anext(events)
+        preferences = await service.save_system_prompt("Shared prompt")
+        preferences_event = await anext(events)
+        await service.delete_session(
+            session.id,
+            expected_revision=updated.revision,
+        )
+        deleted = await anext(events)
+
+        assert [
+            (created.id, created.event),
+            (update_event.id, update_event.event),
+            (preferences_event.id, preferences_event.event),
+            (deleted.id, deleted.event),
+        ] == [
+            (1, "session.created"),
+            (2, "session.updated"),
+            (3, "preferences.updated"),
+            (4, "session.deleted"),
+        ]
+        assert update_event.data["revision"] == updated.revision
+        assert preferences_event.data["updated_at"] == preferences.updated_at
+    finally:
+        await subscription.aclose()
         await service.close()
 
 
@@ -897,7 +1062,9 @@ async def test_delete_validates_stale_revision_before_cancelling_active_send(
     try:
         session = await service.create_session()
         operation_id = "3b4390e2-bbd0-499a-94c5-d7813b1d5f75"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -928,7 +1095,9 @@ async def test_delete_active_send_finishes_generation_before_removing_session(
     service, _runtime, _store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="0162e7e5-aabd-4ffb-ae50-ed864825ec71",
@@ -956,7 +1125,9 @@ async def test_cancellation_waits_for_generation_start_commit_before_cleanup(
     blocker: sqlite3.Connection | None = None
     try:
         session = await service.create_session()
-        initial_stream = await service.send(
+        initial_stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="7f4c7a3f-c06e-42c3-9887-f748dc5aa518",
@@ -982,7 +1153,9 @@ async def test_cancellation_waits_for_generation_start_commit_before_cleanup(
         blocker.execute("BEGIN IMMEDIATE")
 
         current = await service.get_session(session.id)
-        retry_stream = await service.retry(
+        retry_stream = await _observe_call(
+            service,
+            service.retry,
             session.id,
             expected_revision=current.revision,
             operation_id="38dcb3e5-04b7-4ecf-bc8b-7c72550839b0",
@@ -990,13 +1163,19 @@ async def test_cancellation_waits_for_generation_start_commit_before_cleanup(
         await asyncio.wait_for(entered.wait(), timeout=1)
         await asyncio.sleep(0.05)
 
-        close_task = asyncio.create_task(retry_stream.aclose())
+        stop_task = asyncio.create_task(
+            service.stop(
+                session.id,
+                operation_id=retry_stream.acknowledgement.operation_id,
+            )
+        )
         await asyncio.sleep(0.05)
-        waited_for_commit = not close_task.done()
+        waited_for_commit = not stop_task.done()
         blocker.commit()
         blocker.close()
         blocker = None
-        await asyncio.wait_for(close_task, timeout=1)
+        assert await asyncio.wait_for(stop_task, timeout=1) is True
+        assert (await _drain(retry_stream))[-1] == "turn.stopped"
 
         generation = (await store.get_transcript(session.id)).turns[-1].generation
         assert waited_for_commit
@@ -1019,7 +1198,9 @@ async def test_repeated_cancellation_waits_for_terminal_cleanup(
     try:
         session = await service.create_session()
         operation_id = "f02c0da7-1ec9-4433-bef3-dc760753e451"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -1043,20 +1224,23 @@ async def test_repeated_cancellation_waits_for_terminal_cleanup(
         blocker.execute("PRAGMA journal_mode = WAL")
         blocker.execute("BEGIN IMMEDIATE")
 
-        close_task = asyncio.create_task(stream.aclose())
+        first_stop_task = asyncio.create_task(
+            service.stop(session.id, operation_id=operation_id)
+        )
         await asyncio.wait_for(entered_cleanup.wait(), timeout=1)
-        stop_task = asyncio.create_task(
+        second_stop_task = asyncio.create_task(
             service.stop(session.id, operation_id=operation_id)
         )
         await asyncio.sleep(0.05)
 
-        assert not close_task.done()
-        assert not stop_task.done()
+        assert not first_stop_task.done()
+        assert not second_stop_task.done()
         blocker.commit()
         blocker.close()
         blocker = None
-        await asyncio.wait_for(close_task, timeout=1)
-        assert await asyncio.wait_for(stop_task, timeout=1) is True
+        assert await asyncio.wait_for(first_stop_task, timeout=1) is True
+        assert await asyncio.wait_for(second_stop_task, timeout=1) is True
+        assert (await _drain(stream))[-1] == "turn.stopped"
 
         generation = (await store.get_transcript(session.id)).turns[0].generation
         assert generation.status is GenerationStatus.STOPPED
@@ -1088,7 +1272,9 @@ async def test_stop_at_generation_commit_preserves_completed_result(
         monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
         session = await service.create_session()
         operation_id = "03ba5dce-bd47-452c-a878-229d4df65944"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -1099,16 +1285,398 @@ async def test_stop_at_generation_commit_preserves_completed_result(
         stop_task = asyncio.create_task(
             service.stop(session.id, operation_id=operation_id)
         )
-        await asyncio.sleep(0.05)
-        assert not stop_task.done()
+        assert await asyncio.wait_for(stop_task, timeout=1) is False
         release_commit.set()
 
-        assert await asyncio.wait_for(stop_task, timeout=1) is True
         events = await _drain(stream)
         generation = (await store.get_transcript(session.id)).turns[0].generation
         assert events[-1] == "turn.completed"
         assert generation.status is GenerationStatus.COMPLETED
     finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_never_advertises_unpublished_terminal_sequence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service, _runtime, _store = await _service(tmp_path, FakeChatProvider())
+    release_terminal = asyncio.Event()
+    late_subscription: ChatEventSubscriptionPort | None = None
+    fresh_subscription: ChatEventSubscriptionPort | None = None
+    try:
+        entered_terminal = asyncio.Event()
+        original_release_active = service._release_active
+
+        async def observed_release_active(active):
+            entered_terminal.set()
+            await release_terminal.wait()
+            return await original_release_active(active)
+
+        monkeypatch.setattr(service, "_release_active", observed_release_active)
+        session = await service.create_session()
+        operation_id = "025295bc-d2f5-4208-9dab-ed507471fb33"
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="publish this terminal event",
+        )
+        await asyncio.wait_for(entered_terminal.wait(), timeout=1)
+
+        late_subscription, active = await service.subscribe()
+        assert len(active) == 1
+        assert active[0].operation_id == operation_id
+        snapshot_sequence = active[0].operation_sequence
+
+        release_terminal.set()
+        late_events = late_subscription.__aiter__()
+        terminal = await asyncio.wait_for(anext(late_events), timeout=1)
+        assert terminal.event == "turn.completed"
+        assert terminal.data["operation_sequence"] == snapshot_sequence + 1
+        assert (await _drain(stream))[-1] == "turn.completed"
+
+        fresh_subscription, current_active = await service.subscribe()
+        assert current_active == ()
+    finally:
+        release_terminal.set()
+        if late_subscription is not None:
+            await late_subscription.aclose()
+        if fresh_subscription is not None:
+            await fresh_subscription.aclose()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_after_completed_regeneration_cannot_discard_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service, _runtime, store = await _service(tmp_path, FakeChatProvider())
+    release_terminal = asyncio.Event()
+    try:
+        session = await service.create_session()
+        initial = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="25362cff-95ae-4051-9d15-36317753eb29",
+            text="replace this answer",
+        )
+        await _drain(initial)
+        before = await store.get_transcript(session.id)
+
+        entered_terminal = asyncio.Event()
+        original_release_active = service._release_active
+
+        async def observed_release_active(active):
+            entered_terminal.set()
+            await release_terminal.wait()
+            return await original_release_active(active)
+
+        discarded = 0
+        original_discard_generation = store.discard_generation
+
+        async def observed_discard_generation(*args, **kwargs):
+            nonlocal discarded
+            discarded += 1
+            return await original_discard_generation(*args, **kwargs)
+
+        monkeypatch.setattr(service, "_release_active", observed_release_active)
+        monkeypatch.setattr(store, "discard_generation", observed_discard_generation)
+        operation_id = "a2f69564-3eb5-4805-8578-2be42d710e5a"
+        replacement = await _observe_call(
+            service,
+            service.regenerate,
+            session.id,
+            expected_revision=before.session.revision,
+            operation_id=operation_id,
+        )
+        await asyncio.wait_for(entered_terminal.wait(), timeout=1)
+
+        assert await service.stop(session.id, operation_id=operation_id) is False
+        release_terminal.set()
+        assert (await _drain(replacement))[-1] == "turn.completed"
+
+        after = await store.get_transcript(session.id)
+        assert discarded == 0
+        assert after.turns[-1].generation.status is GenerationStatus.COMPLETED
+        assert service.availability()[0] is True
+    finally:
+        release_terminal.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_waits_for_terminal_settlement_before_removing_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service, _runtime, store = await _service(tmp_path, FakeChatProvider())
+    release_commit = asyncio.Event()
+    try:
+        entered_commit = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_commit.set()
+            await release_commit.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="77a5fc8a-6043-49f9-a291-b0545bd47ed8",
+            text="finish before deletion",
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+        running = await service.get_session(session.id)
+
+        delete_task = asyncio.create_task(
+            service.delete_session(session.id, expected_revision=running.revision)
+        )
+        await asyncio.sleep(0.05)
+        assert not delete_task.done()
+        release_commit.set()
+        await asyncio.wait_for(delete_task, timeout=1)
+
+        with pytest.raises(ChatNotFoundError):
+            await service.get_session(session.id)
+        await stream.aclose()
+    finally:
+        release_commit.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_delete_request_still_finishes_accepted_deletion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_settlement = asyncio.Event()
+    subscription: ChatEventSubscriptionPort | None = None
+    try:
+        entered_settlement = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_settlement.set()
+            await release_settlement.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        subscription, _active = await service.subscribe()
+        operation_id = "cd352568-fefd-4324-8062-9dadc4efbba6"
+        await service.send(
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="delete this chat",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        running = await service.get_session(session.id)
+
+        request_task = asyncio.create_task(
+            service.delete_session(session.id, expected_revision=running.revision)
+        )
+        await asyncio.wait_for(entered_settlement.wait(), timeout=1)
+        request_task.cancel()
+        await asyncio.sleep(0.05)
+        assert not request_task.done()
+
+        release_settlement.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(request_task, timeout=1)
+        with pytest.raises(ChatNotFoundError):
+            await service.get_session(session.id)
+
+        events = subscription.__aiter__()
+        while True:
+            event = await asyncio.wait_for(anext(events), timeout=1)
+            if event.event == "session.deleted":
+                break
+        fresh_subscription, active = await service.subscribe()
+        try:
+            assert active == ()
+        finally:
+            await fresh_subscription.aclose()
+    finally:
+        release_settlement.set()
+        if subscription is not None:
+            await subscription.aclose()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_close_waits_for_terminal_settlement(tmp_path: Path, monkeypatch):
+    service, _runtime, store = await _service(tmp_path, FakeChatProvider())
+    release_commit = asyncio.Event()
+    service_closed = False
+    reopened: SQLiteChatStore | None = None
+    try:
+        entered_commit = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_commit.set()
+            await release_commit.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="aa6d0128-de80-43ff-ab8c-aa1f7c4bf5ba",
+            text="finish before shutdown",
+        )
+        await asyncio.wait_for(entered_commit.wait(), timeout=1)
+
+        close_task = asyncio.create_task(service.close())
+        await asyncio.sleep(0.05)
+        assert not close_task.done()
+        release_commit.set()
+        await asyncio.wait_for(close_task, timeout=1)
+        service_closed = True
+        await stream.aclose()
+
+        reopened = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+        await reopened.start()
+        transcript = await reopened.get_transcript(session.id)
+        assert transcript.turns[-1].generation.status is GenerationStatus.COMPLETED
+    finally:
+        release_commit.set()
+        if reopened is not None:
+            await reopened.close()
+        if not service_closed:
+            await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stop_waiter_does_not_cancel_supervisor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    provider = FakeChatProvider(block_after_delta=True)
+    service, _runtime, store = await _service(tmp_path, provider)
+    release_settlement = asyncio.Event()
+    try:
+        entered_settlement = asyncio.Event()
+        original_finish_generation = store.finish_generation
+
+        async def observed_finish_generation(*args, **kwargs):
+            entered_settlement.set()
+            await release_settlement.wait()
+            return await original_finish_generation(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
+        session = await service.create_session()
+        operation_id = "13d97a77-aef0-4f2c-8415-1525ab70c427"
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id=operation_id,
+            text="stop independently of this request",
+        )
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+
+        stop_task = asyncio.create_task(
+            service.stop(session.id, operation_id=operation_id)
+        )
+        await asyncio.wait_for(entered_settlement.wait(), timeout=1)
+        stop_task.cancel()
+        await asyncio.sleep(0.05)
+        assert not stop_task.done()
+
+        release_settlement.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(stop_task, timeout=1)
+        assert (await _drain(stream))[-1] == "turn.stopped"
+        transcript = await store.get_transcript(session.id)
+        assert transcript.turns[-1].generation.status is GenerationStatus.STOPPED
+    finally:
+        release_settlement.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_precedes_best_effort_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service, _runtime, store = await _service(tmp_path, FakeChatProvider())
+    release_summary = asyncio.Event()
+    fresh_subscription: ChatEventSubscriptionPort | None = None
+    try:
+        entered_summary = asyncio.Event()
+        blocked_summary = False
+        original_get_session_summary = store.get_session_summary
+
+        async def observed_get_session_summary(session_id: str):
+            nonlocal blocked_summary
+            transcript = await store.get_transcript(session_id)
+            completed = bool(
+                transcript.turns
+                and transcript.turns[-1].generation.status is GenerationStatus.COMPLETED
+            )
+            if completed and not blocked_summary:
+                blocked_summary = True
+                entered_summary.set()
+                await release_summary.wait()
+                raise ChatUnavailableError("Summary read failed.")
+            return await original_get_session_summary(session_id)
+
+        monkeypatch.setattr(
+            store,
+            "get_session_summary",
+            observed_get_session_summary,
+        )
+        session = await service.create_session()
+        stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="526be960-a16f-4d83-8f02-d51568003b60",
+            text="publish before the summary",
+        )
+
+        assert (await _drain(stream))[-1] == "turn.completed"
+        await asyncio.wait_for(entered_summary.wait(), timeout=1)
+        fresh_subscription, active = await service.subscribe()
+        assert active == ()
+
+        current = await service.get_session(session.id)
+        next_stream = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=current.revision,
+            operation_id="ee7985a6-adf8-454f-9785-53d13c4eef8d",
+            text="start while the old summary waits",
+        )
+        release_summary.set()
+        assert (await _drain(next_stream))[-1] == "turn.completed"
+        assert service.availability()[0] is True
+    finally:
+        release_summary.set()
+        if fresh_subscription is not None:
+            await fresh_subscription.aclose()
         await service.close()
 
 
@@ -1135,7 +1703,9 @@ async def test_detail_snapshot_keeps_operation_owner_visible_through_completion(
 
         monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
         session = await service.create_session()
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="9e34cdcb-3d56-44f2-8921-a5d43cb0ed20",
@@ -1161,7 +1731,7 @@ async def test_detail_snapshot_keeps_operation_owner_visible_through_completion(
         detail = await asyncio.wait_for(detail_task, timeout=1)
         await _drain(stream)
 
-        assert detail.active_operation is True
+        assert not hasattr(detail, "active_operation")
         assert detail.session.revision > session.revision
     finally:
         release_commit.set()
@@ -1170,7 +1740,7 @@ async def test_detail_snapshot_keeps_operation_owner_visible_through_completion(
 
 
 @pytest.mark.asyncio
-async def test_cancellation_while_release_waits_cannot_strand_operation_owner(
+async def test_terminal_event_releases_owner_while_an_older_detail_read_waits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -1190,7 +1760,9 @@ async def test_cancellation_while_release_waits_cannot_strand_operation_owner(
         monkeypatch.setattr(store, "finish_generation", observed_finish_generation)
         session = await service.create_session()
         operation_id = "7f4dcfd1-bc69-4df1-9737-f434d357133a"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -1211,20 +1783,20 @@ async def test_cancellation_while_release_waits_cannot_strand_operation_owner(
         await asyncio.wait_for(entered_snapshot.wait(), timeout=1)
 
         release_commit.set()
-        events = stream.__aiter__()
-        while (
-            await asyncio.wait_for(anext(events), timeout=1)
-        ).event != "turn.completed":
-            pass
-
-        close_task = asyncio.create_task(stream.aclose())
-        await asyncio.sleep(0)
+        assert (await asyncio.wait_for(_drain(stream), timeout=1))[-1] == (
+            "turn.completed"
+        )
         release_snapshot.set()
-        await asyncio.wait_for(detail_task, timeout=1)
-        await asyncio.wait_for(close_task, timeout=1)
+        older_detail = await asyncio.wait_for(detail_task, timeout=1)
+        assert not hasattr(older_detail, "active_operation")
+
+        current_detail = await service.get_detail(session.id)
+        assert not hasattr(current_detail, "active_operation")
 
         current = await service.get_session(session.id)
-        next_stream = await service.send(
+        next_stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=current.revision,
             operation_id="87f5dd83-ee78-48d8-82f5-b65cd91034fc",
@@ -1245,7 +1817,9 @@ async def test_disconnect_after_durable_completion_cannot_downgrade_status(
     service, _runtime, store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="80354cee-d3b1-4760-963f-9cc7a1558ffc",
@@ -1289,7 +1863,9 @@ async def test_stop_during_compaction_commit_waits_and_reports_completion(
                 "35d15a22-88e4-476f-aec2-9c0cdfb5cb87",
             )
         ):
-            stream = await service.send(
+            stream = await _observe_call(
+                service,
+                service.send,
                 session.id,
                 expected_revision=session.revision,
                 operation_id=operation_id,
@@ -1311,7 +1887,9 @@ async def test_stop_during_compaction_commit_waits_and_reports_completion(
         blocker.execute("BEGIN IMMEDIATE")
 
         operation_id = "b15f0721-acd3-482f-812d-28d2d3cc568b"
-        compact = await service.compact(
+        compact = await _observe_call(
+            service,
+            service.compact,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
@@ -1320,13 +1898,11 @@ async def test_stop_during_compaction_commit_waits_and_reports_completion(
         stop_task = asyncio.create_task(
             service.stop(session.id, operation_id=operation_id)
         )
-        await asyncio.sleep(0.05)
-        assert not stop_task.done()
+        assert await asyncio.wait_for(stop_task, timeout=1) is False
 
         blocker.commit()
         blocker.close()
         blocker = None
-        assert await asyncio.wait_for(stop_task, timeout=1) is True
         events = await _drain(compact)
 
         transcript = await store.get_transcript(session.id)
@@ -1353,7 +1929,9 @@ async def test_compaction_retries_an_ambiguous_commit_once(
             ("110ce497-5d5f-4659-b2c7-7ae4bf362900", "first"),
             ("64de0c33-c956-4ac2-b172-9f9fc5caf13b", "second"),
         ):
-            stream = await service.send(
+            stream = await _observe_call(
+                service,
+                service.send,
                 session.id,
                 expected_revision=session.revision,
                 operation_id=operation_id,
@@ -1375,7 +1953,9 @@ async def test_compaction_retries_an_ambiguous_commit_once(
             return result
 
         monkeypatch.setattr(store, "upsert_compaction", ambiguous_upsert_compaction)
-        compact = await service.compact(
+        compact = await _observe_call(
+            service,
+            service.compact,
             session.id,
             expected_revision=session.revision,
             operation_id="861cba8a-fca4-47eb-84cb-de1a7059714c",
@@ -1399,7 +1979,9 @@ async def test_manual_compaction_keeps_full_transcript_and_adds_checkpoint(
     service, _runtime, store = await _service(tmp_path, provider)
     try:
         session = await service.create_session()
-        first = await service.send(
+        first = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="e90f819b-a835-4c1f-80d7-6e7c17c429a7",
@@ -1407,7 +1989,9 @@ async def test_manual_compaction_keeps_full_transcript_and_adds_checkpoint(
         )
         await _drain(first)
         session = await service.get_session(session.id)
-        second = await service.send(
+        second = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="8de64c2a-34c8-4b30-a880-37d3678c62de",
@@ -1415,7 +1999,9 @@ async def test_manual_compaction_keeps_full_transcript_and_adds_checkpoint(
         )
         await _drain(second)
         session = await service.get_session(session.id)
-        compact = await service.compact(
+        compact = await _observe_call(
+            service,
+            service.compact,
             session.id,
             expected_revision=session.revision,
             operation_id="b5c9bc6f-3b74-4218-bac5-17b6813f443a",
@@ -1442,7 +2028,9 @@ async def test_manual_compaction_rejects_incomplete_summary_stream(tmp_path: Pat
             ("560c7a0f-c074-489b-8b90-e7e031577716", "first"),
             ("d77427c1-8417-4ab5-a380-94860c778db8", "second"),
         ):
-            stream = await service.send(
+            stream = await _observe_call(
+                service,
+                service.send,
                 session.id,
                 expected_revision=session.revision,
                 operation_id=operation_id,
@@ -1451,7 +2039,9 @@ async def test_manual_compaction_rejects_incomplete_summary_stream(tmp_path: Pat
             await _drain(stream)
             session = await service.get_session(session.id)
 
-        compact = await service.compact(
+        compact = await _observe_call(
+            service,
+            service.compact,
             session.id,
             expected_revision=session.revision,
             operation_id="8895d9ae-c896-4af2-be44-d6328e1da736",
@@ -1481,7 +2071,9 @@ async def test_send_auto_compacts_without_removing_original_turns(tmp_path: Path
             "3a4f8108-2cf4-45c1-b412-56a8551e7f8b",
         )
         for operation_id in operation_ids:
-            stream = await service.send(
+            stream = await _observe_call(
+                service,
+                service.send,
                 session.id,
                 expected_revision=session.revision,
                 operation_id=operation_id,
@@ -1490,7 +2082,9 @@ async def test_send_auto_compacts_without_removing_original_turns(tmp_path: Path
             await _drain(stream)
             session = await service.get_session(session.id)
 
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id="195faf19-ea0a-4633-ad81-a09734f5e17c",
@@ -1527,7 +2121,9 @@ async def test_stop_during_auto_compaction_commit_keeps_checkpoint_without_new_t
             "79cd9bd9-df33-4ed4-8a5c-5e34770a30f7",
             "71ac3c34-7be1-4c26-b69e-f6f7193fa353",
         ):
-            stream = await service.send(
+            stream = await _observe_call(
+                service,
+                service.send,
                 session.id,
                 expected_revision=session.revision,
                 operation_id=operation_id,
@@ -1549,7 +2145,9 @@ async def test_stop_during_auto_compaction_commit_keeps_checkpoint_without_new_t
         blocker.execute("BEGIN IMMEDIATE")
 
         operation_id = "443b12d9-8989-4bb5-a609-c9c2c0e2ecf5"
-        stream = await service.send(
+        stream = await _observe_call(
+            service,
+            service.send,
             session.id,
             expected_revision=session.revision,
             operation_id=operation_id,
