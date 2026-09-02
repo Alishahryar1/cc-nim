@@ -86,7 +86,8 @@ def test_process_registry_kill_pid_tree_windows_uses_taskkill(monkeypatch):
     monkeypatch.setattr(os, "name", "nt", raising=False)
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: calls.append((a, kw)))
 
-    pr.kill_pid_tree_best_effort(12345)
+    pr.kill_pid_tree_best_effort(12345, timeout_seconds=1.25)
 
     assert calls
     assert calls[0][0][0] == ["taskkill", "/PID", "12345", "/T", "/F"]
+    assert calls[0][1]["timeout"] == 1.25
