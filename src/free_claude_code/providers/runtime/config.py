@@ -76,8 +76,10 @@ def build_provider_config(
             f"{env_name} is not set. Add it in the Admin UI."
         )
     proxy = string_setting(settings, descriptor.proxy_attr)
+    # Convert single credential to list for api_keys field (None if no credential)
+    api_keys = [credential] if credential is not None else None
     return ProviderConfig(
-        api_key=credential,
+        api_keys=api_keys,
         base_url=resolved_base_url,
         rate_limit=settings.provider_rate_limit,
         rate_window=settings.provider_rate_window,

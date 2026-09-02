@@ -149,7 +149,18 @@ def _settings_aliases() -> dict[str, str]:
         if name == "nim":
             continue
         alias = field.validation_alias
-        if not isinstance(alias, str):
-            raise AssertionError(f"Settings field {name!r} needs one string alias")
-        aliases[alias] = name
+        # Handle AliasChoices objects
+        if hasattr(alias, "choices"):
+            # For AliasChoices, map all choices to the field name
+            if alias.choices:
+                for choice in alias.choices:
+                    aliases[str(choice)] = name
+            else:
+                # Fallback to field name if no choices
+                aliases[name] = name
+        elif isinstance(alias, str):
+            aliases[alias] = name
+        else:
+            # For other types, convert to string
+            aliases[str(alias)] = name
     return aliases

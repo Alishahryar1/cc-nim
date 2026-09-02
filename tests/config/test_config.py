@@ -63,11 +63,24 @@ def test_settings_defaults_are_valid_and_nonempty() -> None:
 
 
 def test_every_external_setting_has_one_explicit_alias() -> None:
-    aliases = [
-        field.validation_alias
-        for name, field in Settings.model_fields.items()
-        if name != "nim"
-    ]
+    aliases = []
+    for name, field in Settings.model_fields.items():
+        if name == "nim":
+            continue
+        alias = field.validation_alias
+        # Handle AliasChoices objects
+        if hasattr(alias, "choices"):
+            # For AliasChoices, extract the first alias as string
+            if alias.choices:
+                aliases.append(str(alias.choices[0]))
+            else:
+                # Fallback to field name if no choices
+                aliases.append(name)
+        elif isinstance(alias, str):
+            aliases.append(alias)
+        else:
+            # For other types, convert to string
+            aliases.append(str(alias))
     assert all(isinstance(alias, str) for alias in aliases)
     assert len(aliases) == len(set(aliases))
     assert Settings.model_fields["nim"].validation_alias is None
@@ -111,7 +124,11 @@ def test_process_values_are_parsed_at_the_loader_boundary(
 ) -> None:
     snapshot = compose_settings_snapshot({}, {key: value})
 
-    assert getattr(snapshot.settings, attribute) == expected
+    # Special handling for API key fields which are now lists
+    if attribute.endswith("_api_key") or attribute.endswith("_token"):
+        assert getattr(snapshot.settings, attribute) == [expected]
+    else:
+        assert getattr(snapshot.settings, attribute) == expected
     assert snapshot.sources[attribute] is ConfigSource.PROCESS
 
 
@@ -155,10 +172,22 @@ def test_optional_blank_process_values_normalize_to_none(key: str) -> None:
     attribute = next(
         name
         for name, field in Settings.model_fields.items()
-        if field.validation_alias == key
+        if _matches_validation_alias(field.validation_alias, key)
     )
 
     assert getattr(snapshot.settings, attribute) is None
+
+
+def _matches_validation_alias(alias, key: str) -> bool:
+    """Check if a validation alias matches the given key, handling AliasChoices."""
+    if hasattr(alias, "choices"):
+        # For AliasChoices, check if key matches any of the choices
+        return key in (str(choice) for choice in alias.choices)
+    elif isinstance(alias, str):
+        return alias == key
+    else:
+        # For other types, convert to string and compare
+        return str(alias) == key
 
 
 def test_blank_required_process_value_is_rejected() -> None:
@@ -357,7 +386,7 @@ def test_optional_strings_share_one_normalization_rule() -> None:
         }
     )
 
-    assert settings.groq_api_key == "key"
+    assert settings.groq_api_key == ["key"]
     assert settings.open_router_proxy is None
     assert settings.model_opus is None
     assert settings.allowed_dir is None

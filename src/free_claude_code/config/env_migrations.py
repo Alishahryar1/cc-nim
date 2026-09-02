@@ -41,6 +41,22 @@ _DOTENV_ASSIGNMENT_RE = re.compile(
 )
 
 
+def _get_validation_alias_str(alias):
+    """Convert a validation alias to a string, handling AliasChoices."""
+    if hasattr(alias, "choices"):
+        # For AliasChoices, use the first alias
+        if alias.choices:
+            return str(alias.choices[0])
+        else:
+            # Fallback - this shouldn't happen in practice
+            return ""
+    elif isinstance(alias, str):
+        return alias
+    else:
+        # For other types, convert to string
+        return str(alias)
+
+
 @dataclass(frozen=True, slots=True)
 class EnvMigration:
     """A migration for one dotenv setting."""
@@ -133,9 +149,20 @@ def settings_env_keys() -> frozenset[str]:
         if name == "nim":
             continue
         alias = field.validation_alias
-        if not isinstance(alias, str):
-            raise AssertionError(f"Settings field {name!r} needs one string alias")
-        keys.add(alias)
+        # Handle AliasChoices objects
+        if hasattr(alias, "choices"):
+            # For AliasChoices, add all choices
+            if alias.choices:
+                for choice in alias.choices:
+                    keys.add(str(choice))
+            else:
+                # Fallback to field name if no choices
+                keys.add(name)
+        elif isinstance(alias, str):
+            keys.add(alias)
+        else:
+            # For other types, convert to string
+            keys.add(str(alias))
     return frozenset(keys)
 
 
@@ -171,7 +198,8 @@ def secret_env_keys() -> frozenset[str]:
     }
     secret_attrs.update({"telegram_proxy_url", "proxy_auth_token"})
     return frozenset(
-        str(Settings.model_fields[name].validation_alias) for name in secret_attrs
+        _get_validation_alias_str(Settings.model_fields[name].validation_alias)
+        for name in secret_attrs
     )
 
 

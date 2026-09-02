@@ -97,9 +97,10 @@ class GitHubModelsProvider(OpenAIChatProvider):
             await maybe_await_aclose(response)
 
     def _model_list_headers(self) -> dict[str, str]:
-        if self._api_key is None:
+        api_key = self._get_current_api_key()
+        if api_key is None:
             raise AssertionError("GitHub Models requires a static API key")
-        return _github_models_api_headers(self._api_key)
+        return _github_models_api_headers(api_key)
 
 
 def _github_models_default_headers() -> dict[str, str]:

@@ -494,11 +494,11 @@ class OpenAIChatProvider(BaseProvider):
         super().__init__(config)
         self._profile = profile
         self._provider_name = profile.provider_name
-        if config.api_key is None and api_key_provider is None:
+        if config.api_keys is None and api_key_provider is None:
             raise ValueError(
                 f"{profile.provider_name} requires an API key or credential provider"
             )
-        self._api_key = config.api_key
+        self._api_key_provider = api_key_provider
         self._base_url = profile.base_url(config.base_url).rstrip("/")
         # Learned per-model output-token caps from upstream 400 rejections, so
         # later requests clamp proactively instead of paying the 400 each time.
@@ -517,12 +517,43 @@ class OpenAIChatProvider(BaseProvider):
                 timeout=timeout,
             )
         self._client = AsyncOpenAI(
-            api_key=api_key_provider or self._api_key,
+            api_key=api_key_provider or self._get_current_api_key(),
             base_url=self._base_url,
             max_retries=0,
             default_headers=default_headers,
             timeout=timeout,
             http_client=http_client,
+        )
+        # Keep _api_key attribute for backward compatibility with providers that access it directly
+        self._api_key = self._get_current_api_key()
+
+    def _is_recoverable_error(self, error: Exception) -> bool:
+        """Check if an error is recoverable and should trigger API key rotation.
+
+        Returns:
+            True if the error is recoverable (401, 403, 429), False otherwise.
+        """
+        # Try to extract HTTP status code from the error
+        status_code = getattr(error, "status_code", None)
+        if status_code is None:
+            # Try to get status code from response attribute
+            response = getattr(error, "response", None)
+            if response is not None:
+                status_code = getattr(response, "status_code", None)
+
+        if status_code is not None:
+            return status_code in (401, 403, 429)
+
+        # Also check for specific error messages that indicate auth issues
+        error_str = str(error).lower()
+        return any(
+            msg in error_str
+            for msg in [
+                "unauthorized",
+                "authentication",
+                "invalid api key",
+                "rate limit",
+            ]
         )
 
     async def cleanup(self) -> None:
@@ -781,6 +812,20 @@ class OpenAIChatProvider(BaseProvider):
             used_retry_kinds = set()
 
         while execution.can_attempt:
+            # Attempt with key rotation if we have multiple keys
+            if self._config.api_keys and len(self._config.api_keys) > 1:
+                if not self._attempt_with_key_rotation():
+                    # All keys are exhausted, raise an error
+                    from free_claude_code.core.failures import ExecutionFailure
+
+                    raise ExecutionFailure(
+                        False,
+                        f"All API keys for {self._provider_name} are exhausted",
+                        retryable=False,
+                    )
+                # Update client with current API key
+                self._client.api_key = self._get_current_api_key()
+
             attempt = await execution.open_attempt(operation_kind)
             stream: Any | None = None
             retain_attempt = False
@@ -796,6 +841,17 @@ class OpenAIChatProvider(BaseProvider):
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                # Check if this is a recoverable error that should trigger key rotation
+                if self._is_recoverable_error(error):
+                    self._mark_key_failed()
+                    # Try to rotate to next key and retry
+                    if self._config.api_keys and len(self._config.api_keys) > 1:
+                        self._rotate_api_key()
+                        # Update client with new API key
+                        self._client.api_key = self._get_current_api_key()
+                        # Continue to retry with new key
+                        continue
+
                 retry_body = self._next_create_retry_body(error, body, used_retry_kinds)
                 if retry_body is not None:
                     correction = await attempt.correct(error)
