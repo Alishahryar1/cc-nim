@@ -72,6 +72,23 @@ class CodexThreadHandle:
 
 
 @dataclass(frozen=True, slots=True)
+class CodexThreadSnapshot:
+    """Native thread metadata returned without deprecated history hydration."""
+
+    thread_id: str
+    thread: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class CodexObjectPage:
+    """One opaque native page with Codex-owned continuation cursors."""
+
+    records: tuple[JsonObject, ...]
+    next_cursor: str | None
+    backwards_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class CodexTurnHandle:
     """Native turn identity plus the complete start response."""
 
@@ -171,6 +188,22 @@ class CodexAppServerPort(Protocol):
         self, thread_id: str, settings: CodexThreadSettings
     ) -> CodexThreadHandle: ...
 
+    async def read_thread(self, thread_id: str) -> CodexThreadSnapshot: ...
+
+    async def list_threads_page(
+        self, *, cursor: str | None, limit: int
+    ) -> CodexObjectPage: ...
+
+    async def list_turns_page(
+        self,
+        *,
+        thread_id: str,
+        cursor: str | None,
+        limit: int,
+    ) -> CodexObjectPage: ...
+
+    async def set_thread_name(self, *, thread_id: str, name: str) -> None: ...
+
     async def delete_thread(self, thread_id: str) -> None: ...
 
     async def start_turn(
@@ -179,6 +212,7 @@ class CodexAppServerPort(Protocol):
         thread_id: str,
         text: str,
         settings: CodexTurnSettings,
+        client_user_message_id: str | None = None,
     ) -> CodexTurnHandle: ...
 
     async def interrupt_turn(self, *, thread_id: str, turn_id: str) -> None: ...

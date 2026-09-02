@@ -19,6 +19,9 @@ AIDER_TEMP_DIRNAME = "aider"
 CHAT_STATE_DIRNAME = "chat"
 CHAT_DATABASE_FILENAME = "chat.db"
 CHAT_LOCK_FILENAME = "chat.lock"
+WORK_STATE_DIRNAME = "work"
+WORK_DATABASE_FILENAME = "work.db"
+WORK_LOCK_FILENAME = "work.lock"
 
 
 def config_dir_path() -> Path:
@@ -61,6 +64,24 @@ def chat_lock_path() -> Path:
     """Return the exclusive Chat Sessions process-lock path."""
 
     return chat_state_dir_path() / CHAT_LOCK_FILENAME
+
+
+def work_state_dir_path() -> Path:
+    """Return the managed Work Sessions state directory."""
+
+    return config_dir_path() / WORK_STATE_DIRNAME
+
+
+def work_database_path() -> Path:
+    """Return the managed Work Sessions database path."""
+
+    return work_state_dir_path() / WORK_DATABASE_FILENAME
+
+
+def work_lock_path() -> Path:
+    """Return the exclusive Work Sessions process-lock path."""
+
+    return work_state_dir_path() / WORK_LOCK_FILENAME
 
 
 def legacy_env_paths() -> tuple[Path, ...]:

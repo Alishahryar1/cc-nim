@@ -2,6 +2,7 @@
 
 import asyncio
 import gc
+import json
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -45,6 +46,8 @@ def _client(
     request_log: Path | None = None,
     launch_counter: Path | None = None,
     control_dir: Path | None = None,
+    message_log: Path | None = None,
+    thread_state: Path | None = None,
     missing_method: str | None = None,
     failing_method: str | None = None,
 ) -> CodexAppServerClient:
@@ -56,6 +59,10 @@ def _client(
         env["FAKE_CODEX_LAUNCH_COUNTER"] = str(launch_counter)
     if control_dir is not None:
         env["FAKE_CODEX_CONTROL_DIR"] = str(control_dir)
+    if message_log is not None:
+        env["FAKE_CODEX_MESSAGE_LOG"] = str(message_log)
+    if thread_state is not None:
+        env["FAKE_CODEX_THREAD_STATE"] = str(thread_state)
     if missing_method is not None:
         env["FAKE_CODEX_MISSING_METHOD"] = missing_method
     if failing_method is not None:
@@ -197,6 +204,186 @@ async def test_initializes_once_and_reads_concurrent_native_catalogs(
         assert methods.count("model/list") == 2
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_work_methods_use_paginated_app_server_contract_and_client_message_id(
+    tmp_path: Path,
+) -> None:
+    message_log = tmp_path / "messages.jsonl"
+    client = _client(tmp_path, message_log=message_log)
+    try:
+        started = await client.start_thread(
+            CodexThreadSettings(
+                cwd=str(tmp_path),
+                model="model-1",
+                permission_profile=":workspace",
+            )
+        )
+        resumed = await client.resume_thread(
+            started.thread_id,
+            CodexThreadSettings(cwd=str(tmp_path), model="model-1"),
+        )
+        snapshot = await client.read_thread(started.thread_id)
+        threads = await client.list_threads_page(cursor="next-page", limit=20)
+        turns = await client.list_turns_page(
+            thread_id=started.thread_id,
+            cursor="older-page",
+            limit=10,
+        )
+        await client.set_thread_name(thread_id=started.thread_id, name="Renamed")
+        turn = await client.start_turn(
+            thread_id=started.thread_id,
+            text="hello",
+            settings=CodexTurnSettings(
+                model="model-1",
+                effort="high",
+                collaboration_mode={"mode": "plan"},
+                permission_profile=":workspace",
+            ),
+            client_user_message_id="7cd43d62-c1aa-42f8-9963-6c0811c0dfaf",
+        )
+
+        assert resumed.thread_id == started.thread_id
+        assert snapshot.thread_id == started.thread_id
+        assert threads.records[0]["source"] == "appServer"
+        turn_items = turns.records[0].get("items")
+        assert isinstance(turn_items, list)
+        assert isinstance(turn_items[0], dict)
+        assert turn_items[0]["text"] == "Fixture answer"
+        assert turns.next_cursor == "older-turns"
+        assert turn.turn_id == "turn-1"
+
+        messages = [
+            json.loads(line)
+            for line in message_log.read_text(encoding="utf-8").splitlines()
+        ]
+        params = {
+            message["method"]: message.get("params")
+            for message in messages
+            if message.get("method")
+            in {
+                "thread/start",
+                "thread/section/move",
+                "thread/resume",
+                "thread/read",
+                "thread/list",
+                "thread/turns/list",
+                "thread/name/set",
+                "turn/start",
+            }
+        }
+        assert params["thread/start"]["historyMode"] == "paginated"
+        assert params["thread/section/move"] == {
+            "threadId": "thread-1",
+            "sectionId": None,
+            "beforeThreadId": None,
+        }
+        assert params["thread/resume"]["excludeTurns"] is True
+        assert params["thread/read"] == {
+            "threadId": "thread-1",
+            "includeTurns": False,
+        }
+        assert params["thread/list"] == {
+            "sourceKinds": ["appServer"],
+            "sortKey": "recency_at",
+            "sortDirection": "desc",
+            "limit": 20,
+            "cursor": "next-page",
+        }
+        assert params["thread/turns/list"] == {
+            "threadId": "thread-1",
+            "sortDirection": "desc",
+            "itemsView": "full",
+            "limit": 10,
+            "cursor": "older-page",
+        }
+        assert params["thread/name/set"] == {
+            "threadId": "thread-1",
+            "name": "Renamed",
+        }
+        assert params["turn/start"]["clientUserMessageId"] == (
+            "7cd43d62-c1aa-42f8-9963-6c0811c0dfaf"
+        )
+        methods = [
+            message.get("method")
+            for message in messages
+            if isinstance(message.get("method"), str)
+        ]
+        assert methods.index("thread/start") < methods.index("thread/section/move")
+        assert methods.index("thread/section/move") < methods.index("thread/resume")
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_fixture_models_empty_thread_materialization_across_connections(
+    tmp_path: Path,
+) -> None:
+    thread_state = tmp_path / "thread-state.json"
+    first = _client(
+        tmp_path,
+        scenario="materialization_contract",
+        thread_state=thread_state,
+    )
+    try:
+        connection = await first._ensure_connection()
+        await first._request_object(
+            connection,
+            "thread/start",
+            {"cwd": str(tmp_path), "historyMode": "paginated"},
+        )
+        await first.set_thread_name(thread_id="thread-1", name="Still transient")
+        with pytest.raises(CodexRequestError, match="not materialized"):
+            await first.list_turns_page(thread_id="thread-1", cursor=None, limit=10)
+    finally:
+        await first.close()
+
+    second = _client(
+        tmp_path,
+        scenario="materialization_contract",
+        thread_state=thread_state,
+    )
+    try:
+        with pytest.raises(CodexRequestError, match="not materialized"):
+            await second.resume_thread(
+                "thread-1",
+                CodexThreadSettings(cwd=str(tmp_path)),
+            )
+        connection = await second._ensure_connection()
+        await second._request_object(
+            connection,
+            "thread/section/move",
+            {
+                "threadId": "thread-1",
+                "sectionId": None,
+                "beforeThreadId": None,
+            },
+        )
+    finally:
+        await second.close()
+
+    third = _client(
+        tmp_path,
+        scenario="materialization_contract",
+        thread_state=thread_state,
+    )
+    try:
+        resumed = await third.resume_thread(
+            "thread-1",
+            CodexThreadSettings(cwd=str(tmp_path)),
+        )
+        turns = await third.list_turns_page(
+            thread_id="thread-1",
+            cursor=None,
+            limit=10,
+        )
+
+        assert resumed.thread_id == "thread-1"
+        assert turns.records == ()
+        assert turns.next_cursor is None
+    finally:
+        await third.close()
 
 
 @pytest.mark.asyncio
@@ -1016,6 +1203,100 @@ async def test_missing_required_method_is_actionable(tmp_path: Path) -> None:
         ):
             await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
     finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_error", "message"),
+    [
+        ("missing", CodexCompatibilityError, "update Codex"),
+        ("request", CodexRequestError, "Injected request failure"),
+    ],
+)
+async def test_materialization_failure_deletes_partial_thread_on_same_connection(
+    tmp_path: Path,
+    failure_kind: str,
+    expected_error: type[Exception],
+    message: str,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    launch_counter = tmp_path / "launch-count"
+    client = _client(
+        tmp_path,
+        request_log=request_log,
+        launch_counter=launch_counter,
+        missing_method="thread/section/move" if failure_kind == "missing" else None,
+        failing_method="thread/section/move" if failure_kind == "request" else None,
+    )
+    try:
+        with pytest.raises(expected_error, match=message):
+            await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+
+        methods = request_log.read_text(encoding="utf-8").splitlines()
+        assert methods.count("thread/start") == 1
+        assert methods.count("thread/section/move") == 1
+        assert methods.count("thread/delete") == 1
+        assert methods.index("thread/start") < methods.index("thread/section/move")
+        assert methods.index("thread/section/move") < methods.index("thread/delete")
+        assert launch_counter.read_text(encoding="utf-8") == "1"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_materialization_connection_loss_is_not_replayed(tmp_path: Path) -> None:
+    request_log = tmp_path / "requests.log"
+    launch_counter = tmp_path / "launch-count"
+    client = _client(
+        tmp_path,
+        scenario="exit_on_materialization",
+        request_log=request_log,
+        launch_counter=launch_counter,
+    )
+    try:
+        with pytest.raises(CodexConnectionError):
+            await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+
+        methods = request_log.read_text(encoding="utf-8").splitlines()
+        assert methods.count("thread/start") == 1
+        assert methods.count("thread/section/move") == 1
+        assert methods.count("thread/delete") == 0
+        assert launch_counter.read_text(encoding="utf-8") == "1"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_materialization_deletes_partial_thread(
+    tmp_path: Path,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    client = _client(
+        tmp_path,
+        scenario="delay_thread_materialization",
+        request_log=request_log,
+        control_dir=tmp_path,
+    )
+    start = asyncio.create_task(
+        client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+    )
+    try:
+        await _wait_for_file(tmp_path / "thread-materialization-seen")
+        start.cancel()
+        (tmp_path / "release-thread-materialization").touch()
+
+        with pytest.raises(asyncio.CancelledError):
+            await start
+
+        methods = request_log.read_text(encoding="utf-8").splitlines()
+        assert methods.count("thread/start") == 1
+        assert methods.count("thread/section/move") == 1
+        assert methods.count("thread/delete") == 1
+        assert methods.index("thread/section/move") < methods.index("thread/delete")
+    finally:
+        (tmp_path / "release-thread-materialization").touch()
+        await asyncio.gather(start, return_exceptions=True)
         await client.close()
 
 

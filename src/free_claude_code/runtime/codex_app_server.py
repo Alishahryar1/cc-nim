@@ -25,12 +25,14 @@ from free_claude_code.application.work import (
     CodexControlCatalog,
     CodexInitialization,
     CodexNotification,
+    CodexObjectPage,
     CodexProtocolError,
     CodexRequestError,
     CodexRequestId,
     CodexServerRequest,
     CodexThreadHandle,
     CodexThreadSettings,
+    CodexThreadSnapshot,
     CodexTurnHandle,
     CodexTurnSettings,
     CodexUnavailableError,
@@ -310,12 +312,28 @@ class CodexAppServerClient:
         """Create one durable native Codex thread."""
 
         connection = await self._ensure_connection()
+        params = _thread_params(settings)
+        params["historyMode"] = "paginated"
         response = await self._request_object(
             connection,
             "thread/start",
-            _thread_params(settings),
+            params,
         )
-        return _thread_handle(connection.id, response)
+        handle = _thread_handle(connection.id, response)
+        try:
+            await self._request_object(
+                connection,
+                "thread/section/move",
+                {
+                    "threadId": handle.thread_id,
+                    "sectionId": None,
+                    "beforeThreadId": None,
+                },
+            )
+        except BaseException:
+            await self._delete_started_thread(connection, handle.thread_id)
+            raise
+        return handle
 
     async def resume_thread(
         self, thread_id: str, settings: CodexThreadSettings
@@ -325,6 +343,7 @@ class CodexAppServerClient:
         connection = await self._ensure_connection()
         params = _thread_params(settings)
         params["threadId"] = thread_id
+        params["excludeTurns"] = True
         response = await self._request_object(
             connection,
             "thread/resume",
@@ -332,15 +351,96 @@ class CodexAppServerClient:
         )
         return _thread_handle(connection.id, response)
 
+    async def read_thread(self, thread_id: str) -> CodexThreadSnapshot:
+        """Read native thread metadata without deprecated history hydration."""
+
+        connection = await self._ensure_connection()
+        response = await self._request_object(
+            connection,
+            "thread/read",
+            {"threadId": thread_id, "includeTurns": False},
+        )
+        thread = _required_object(response, "thread", "thread/read")
+        returned_id = _required_string(thread, "id", "thread/read thread")
+        if returned_id != thread_id:
+            raise CodexProtocolError(
+                "Codex thread/read returned a different thread ID."
+            )
+        return CodexThreadSnapshot(thread_id=thread_id, thread=thread)
+
+    async def list_threads_page(
+        self, *, cursor: str | None, limit: int
+    ) -> CodexObjectPage:
+        """Read one page of app-server native thread metadata."""
+
+        connection = await self._ensure_connection()
+        params: JsonObject = {
+            "sourceKinds": ["appServer"],
+            "sortKey": "recency_at",
+            "sortDirection": "desc",
+            "limit": _page_limit(limit),
+        }
+        _add_optional(params, "cursor", cursor)
+        response = await self._request_object(connection, "thread/list", params)
+        return _object_page(response, "thread/list")
+
+    async def list_turns_page(
+        self,
+        *,
+        thread_id: str,
+        cursor: str | None,
+        limit: int,
+    ) -> CodexObjectPage:
+        """Read one newest-first page of persisted native turns and full items."""
+
+        connection = await self._ensure_connection()
+        params: JsonObject = {
+            "threadId": thread_id,
+            "sortDirection": "desc",
+            "itemsView": "full",
+            "limit": _page_limit(limit),
+        }
+        _add_optional(params, "cursor", cursor)
+        response = await self._request_object(connection, "thread/turns/list", params)
+        return _object_page(response, "thread/turns/list")
+
+    async def set_thread_name(self, *, thread_id: str, name: str) -> None:
+        """Set the Codex-native display name."""
+
+        connection = await self._ensure_connection()
+        await self._request_object(
+            connection,
+            "thread/name/set",
+            {"threadId": thread_id, "name": name},
+        )
+
     async def delete_thread(self, thread_id: str) -> None:
         """Hard-delete one native Codex thread and its descendants."""
 
         connection = await self._ensure_connection()
+        await self._delete_thread(connection, thread_id)
+
+    async def _delete_thread(self, connection: _Connection, thread_id: str) -> None:
         await self._request_object(
             connection,
             "thread/delete",
             {"threadId": thread_id},
         )
+
+    async def _delete_started_thread(
+        self,
+        connection: _Connection,
+        thread_id: str,
+    ) -> None:
+        """Best-effort compensation for a start that was not made durable."""
+
+        try:
+            await self._delete_thread(connection, thread_id)
+        except Exception as exc:
+            logger.warning(
+                "Could not delete unmaterialized Codex thread: exc_type={}",
+                type(exc).__name__,
+            )
 
     async def start_turn(
         self,
@@ -348,6 +448,7 @@ class CodexAppServerClient:
         thread_id: str,
         text: str,
         settings: CodexTurnSettings,
+        client_user_message_id: str | None = None,
     ) -> CodexTurnHandle:
         """Submit one native turn exactly once; failures are never replayed."""
 
@@ -361,6 +462,7 @@ class CodexAppServerClient:
         _add_optional(params, "collaborationMode", settings.collaboration_mode)
         _add_optional(params, "approvalPolicy", settings.approval_policy)
         _add_optional(params, "permissions", settings.permission_profile)
+        _add_optional(params, "clientUserMessageId", client_user_message_id)
         response = await self._request_object(
             connection,
             "turn/start",
@@ -1527,6 +1629,28 @@ def _thread_handle(connection_id: str, response: JsonObject) -> CodexThreadHandl
         thread_id=_required_string(thread, "id", "thread response"),
         response=response,
     )
+
+
+def _object_page(response: JsonObject, source: str) -> CodexObjectPage:
+    return CodexObjectPage(
+        records=_object_sequence(response.get("data"), source),
+        next_cursor=_optional_cursor(response.get("nextCursor"), source),
+        backwards_cursor=_optional_cursor(response.get("backwardsCursor"), source),
+    )
+
+
+def _optional_cursor(value: JsonValue, source: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise CodexProtocolError(f"Codex {source} returned an invalid cursor.")
+    return value
+
+
+def _page_limit(value: int) -> int:
+    if isinstance(value, bool) or value <= 0 or value > 100:
+        raise ValueError("Codex page limit must be between 1 and 100.")
+    return value
 
 
 def _required_object(value: JsonObject, key: str, source: str) -> JsonObject:

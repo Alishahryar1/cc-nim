@@ -1,7 +1,9 @@
 """Isolated browser-test composition for the local Admin UI."""
 
 import asyncio
+import os
 import socket
+import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -22,6 +24,7 @@ from free_claude_code.application.chat import (
     ChatSessionPage,
 )
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.work import WorkService
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
 from free_claude_code.config.loader import clear_settings_cache, get_settings
@@ -34,7 +37,19 @@ from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.asgi import RuntimeASGIApp
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
+from free_claude_code.runtime.codex_app_server import (
+    CodexAppServerClient,
+    CodexAppServerProcessPlan,
+)
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
+from free_claude_code.runtime.work_sqlite import SQLiteWorkStore
+
+_FAKE_CODEX_SERVER = (
+    Path(__file__).resolve().parents[1]
+    / "tests"
+    / "fixtures"
+    / "fake_codex_app_server.py"
+)
 
 
 class _ModelListingProvider(BaseProvider):
@@ -384,7 +399,29 @@ def admin_base_url(
         return result
 
     monkeypatch.setattr(chat_store, "begin_send", begin_send_with_delayed_ack)
-    runtime = ApplicationRuntime(manager, transcriber=None, chat_service=chat)
+    fake_codex_env = os.environ.copy()
+    fake_codex_env["FAKE_CODEX_SCENARIO"] = "work_flow"
+
+    async def fake_codex_plan() -> CodexAppServerProcessPlan:
+        return CodexAppServerProcessPlan(
+            command=(sys.executable, str(_FAKE_CODEX_SERVER)),
+            env=fake_codex_env,
+            binary_path=sys.executable,
+            version="codex-cli 0.152.0",
+        )
+
+    codex = CodexAppServerClient(fake_codex_plan, client_version="e2e")
+    work_store = SQLiteWorkStore(
+        config_dir / "work" / "work.db",
+        config_dir / "work" / "work.lock",
+    )
+    work = WorkService(codex, work_store)
+    runtime = ApplicationRuntime(
+        manager,
+        transcriber=None,
+        chat_service=chat,
+        work_service=work,
+    )
     app = RuntimeASGIApp(
         create_app(
             ApiServices(
@@ -392,6 +429,7 @@ def admin_base_url(
                 admin=runtime,
                 tasks=runtime,
                 chat=chat,
+                work=work,
             )
         ),
         runtime,

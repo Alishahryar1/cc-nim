@@ -14,6 +14,14 @@ from free_claude_code.application.chat import (
     ChatValidationError,
 )
 from free_claude_code.application.errors import ApplicationError
+from free_claude_code.application.work import (
+    WorkCompatibilityError,
+    WorkConflictError,
+    WorkError,
+    WorkNotFoundError,
+    WorkUnavailableError,
+    WorkValidationError,
+)
 from free_claude_code.core.anthropic import anthropic_error_payload
 from free_claude_code.core.diagnostics import (
     redacted_exception_traceback,
@@ -39,6 +47,7 @@ from .request_ids import (
 from .request_lifetime import InferenceRequestLifetimeMiddleware
 from .routes import router
 from .validation_log import summarize_request_validation_body
+from .work_routes import router as work_router
 
 
 def create_app(services: ApiServices) -> FastAPI:
@@ -51,6 +60,7 @@ def create_app(services: ApiServices) -> FastAPI:
 
     app.include_router(admin_router)
     app.include_router(chat_router)
+    app.include_router(work_router)
     app.include_router(router)
 
     @app.exception_handler(ChatError)
@@ -64,6 +74,29 @@ def create_app(services: ApiServices) -> FastAPI:
         elif isinstance(exc, ChatValidationError):
             status_code = 400
         elif isinstance(exc, ChatUnavailableError):
+            status_code = 503
+        else:
+            status_code = 500
+        response = JSONResponse(
+            status_code=status_code,
+            content={"detail": str(exc), "code": type(exc).__name__},
+        )
+        attach_admin_no_store(response, path=request.url.path)
+        return response
+
+    @app.exception_handler(WorkError)
+    async def work_error_handler(request: Request, exc: WorkError):
+        """Serialize Work failures only for the local Admin client."""
+
+        if isinstance(exc, WorkNotFoundError):
+            status_code = 404
+        elif isinstance(exc, WorkConflictError):
+            status_code = 409
+        elif isinstance(exc, WorkValidationError):
+            status_code = 400
+        elif isinstance(exc, WorkCompatibilityError):
+            status_code = 426
+        elif isinstance(exc, WorkUnavailableError):
             status_code = 503
         else:
             status_code = 500

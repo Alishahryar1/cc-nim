@@ -8,13 +8,11 @@ from free_claude_code.application.chat import (
     ChatActiveOperation,
     ChatCompaction,
     ChatContextEstimate,
-    ChatEventOverflowError,
     ChatModelOption,
     ChatOperationAcknowledgement,
     ChatOperationKind,
     ChatOperationPhase,
     ChatPreferences,
-    ChatPublishedEvent,
     ChatReasoning,
     ChatSegment,
     ChatSession,
@@ -27,6 +25,10 @@ from free_claude_code.application.chat import (
     SegmentKind,
 )
 from free_claude_code.application.chat.models import ChatGeneration
+from free_claude_code.application.event_feed import (
+    EventFeedOverflowError,
+    PublishedEvent,
+)
 from free_claude_code.core.model_capabilities import ModelInputModality
 from tests.api.support import create_test_app
 
@@ -44,7 +46,7 @@ class StubSubscription:
         return self._events()
 
     async def _events(self):
-        yield ChatPublishedEvent(
+        yield PublishedEvent(
             event="turn.completed",
             id=5,
             data={
@@ -65,7 +67,7 @@ class OverflowSubscription(StubSubscription):
     async def _events(self):
         if False:
             yield
-        raise ChatEventOverflowError(9)
+        raise EventFeedOverflowError(9)
 
 
 class StubChat:

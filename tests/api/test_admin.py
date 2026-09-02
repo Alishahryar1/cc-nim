@@ -113,12 +113,16 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
     assert 'src="/admin/assets/9.8.7/app-icon.svg"' in response.text
     assert 'href="/admin/assets/9.8.7/admin.css"' in response.text
     assert 'href="/admin/assets/9.8.7/chat_sessions.css"' in response.text
+    assert 'href="/admin/assets/9.8.7/work_sessions.css"' in response.text
     assert 'src="/admin/assets/9.8.7/model_combobox.js"' in response.text
     assert 'src="/admin/assets/9.8.7/chat_sessions.js"' in response.text
+    assert 'src="/admin/assets/9.8.7/work_sessions.js"' in response.text
     assert 'src="/admin/assets/9.8.7/admin.js"' in response.text
     assert 'href="/admin/assets/admin.css"' not in response.text
     assert 'href="/admin/assets/chat_sessions.css"' not in response.text
+    assert 'href="/admin/assets/work_sessions.css"' not in response.text
     assert 'src="/admin/assets/chat_sessions.js"' not in response.text
+    assert 'src="/admin/assets/work_sessions.js"' not in response.text
     assert 'src="/admin/assets/admin.js"' not in response.text
 
 
@@ -129,6 +133,8 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
         ("admin.js", "text/javascript"),
         ("chat_sessions.css", "text/css"),
         ("chat_sessions.js", "text/javascript"),
+        ("work_sessions.css", "text/css"),
+        ("work_sessions.js", "text/javascript"),
         ("model_combobox.js", "text/javascript"),
     ),
 )
@@ -183,6 +189,8 @@ def test_admin_versioned_logo_reuses_packaged_app_icon(monkeypatch, tmp_path):
         f"/admin/assets/{package_version()}/admin.js",
         f"/admin/assets/{package_version()}/chat_sessions.css",
         f"/admin/assets/{package_version()}/chat_sessions.js",
+        f"/admin/assets/{package_version()}/work_sessions.css",
+        f"/admin/assets/{package_version()}/work_sessions.js",
         f"/admin/assets/{package_version()}/model_combobox.js",
         "/admin/api/config",
     ),

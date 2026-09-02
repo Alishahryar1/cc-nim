@@ -11,6 +11,7 @@ from free_claude_code.application.connected_accounts import (
 )
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import RequestRuntimePort, TaskController
+from free_claude_code.application.work import WorkApplicationPort
 from free_claude_code.config.admin.state import ConfigInputValue
 from free_claude_code.core.json_types import JsonObject
 
@@ -57,3 +58,4 @@ class ApiServices:
     admin: AdminRuntimePort
     tasks: TaskController
     chat: ChatApplicationPort | None = None
+    work: WorkApplicationPort | None = None

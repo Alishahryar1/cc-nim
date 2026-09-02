@@ -10,6 +10,7 @@ from enum import StrEnum
 
 from loguru import logger
 
+from free_claude_code.application.event_feed import EventPublisher
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.ports import RequestRuntimeLease, RequestRuntimePort
 from free_claude_code.application.routing import ProviderModelTarget
@@ -29,7 +30,6 @@ from .context import (
     PreparedChatRequest,
     compaction_target_tokens,
 )
-from .events import ChatEventPublisher
 from .models import (
     DEFAULT_CHAT_SYSTEM_PROMPT,
     ChatActiveOperation,
@@ -114,7 +114,7 @@ class ChatService:
         self._runtime = runtime
         self._store = store
         self._context = ChatContextBuilder(runtime)
-        self._events = ChatEventPublisher()
+        self._events = EventPublisher()
         self._active: dict[str, _ActiveOperation] = {}
         self._deleting: set[str] = set()
         self._active_lock = asyncio.Lock()

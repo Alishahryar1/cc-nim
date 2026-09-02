@@ -7,12 +7,16 @@ from pathlib import Path
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.application.chat import ChatService
+from free_claude_code.application.work import WorkService
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import (
     chat_database_path,
     chat_lock_path,
     server_log_path,
+    work_database_path,
+    work_lock_path,
 )
+from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
@@ -29,8 +33,10 @@ from free_claude_code.providers.runtime.factory import create_provider
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
 from .chat_sqlite import SQLiteChatStore
+from .codex_app_server import create_codex_app_server_client
 from .codex_catalog import CodexModelCatalogPublisher
 from .provider_manager import ProviderRuntimeManager
+from .work_sqlite import SQLiteWorkStore
 
 
 def build_asgi_app(
@@ -64,9 +70,17 @@ def build_asgi_app(
         provider_manager,
         SQLiteChatStore(chat_database_path(), chat_lock_path()),
     )
+    work_service = WorkService(
+        create_codex_app_server_client(
+            settings=settings,
+            proxy_root_url=local_proxy_root_url(settings),
+        ),
+        SQLiteWorkStore(work_database_path(), work_lock_path()),
+    )
     runtime = ApplicationRuntime(
         provider_manager,
         chat_service=chat_service,
+        work_service=work_service,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth},
@@ -76,6 +90,7 @@ def build_asgi_app(
         admin=runtime,
         tasks=runtime,
         chat=chat_service,
+        work=work_service,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

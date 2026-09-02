@@ -1,4 +1,4 @@
-"""Safe Markdown rendering for locally stored model-authored Chat text."""
+"""Safe Markdown rendering for model-authored Admin UI text."""
 
 from collections.abc import Sequence
 from html import escape
@@ -20,7 +20,7 @@ def _safe_http_url(value: object) -> str | None:
     return value
 
 
-class _ChatRenderer(RendererHTML):
+class _AdminRenderer(RendererHTML):
     def link_open(
         self,
         tokens: Sequence[Token],
@@ -61,11 +61,11 @@ class _ChatRenderer(RendererHTML):
 _MARKDOWN = MarkdownIt(
     "commonmark",
     {"html": False, "linkify": False},
-    renderer_cls=_ChatRenderer,
+    renderer_cls=_AdminRenderer,
 )
 
 
-def render_chat_markdown(value: str) -> str:
+def render_admin_markdown(value: str) -> str:
     """Render model text without raw HTML or active remote images."""
 
     return _MARKDOWN.render(value)
