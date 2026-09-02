@@ -6,10 +6,12 @@ import os
 import sys
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 from free_claude_code.application.work import (
+    CodexAppServerEvent,
     CodexCompatibilityError,
     CodexConnectionError,
     CodexConnectionLost,
@@ -71,20 +73,44 @@ def _client(
 
 
 async def _next(
-    events: AsyncIterator[
-        CodexNotification
-        | CodexServerRequest
-        | CodexUnsupportedInteraction
-        | CodexConnectionLost
-    ],
-) -> (
-    CodexNotification
-    | CodexServerRequest
-    | CodexUnsupportedInteraction
-    | CodexConnectionLost
-):
+    events: AsyncIterator[CodexAppServerEvent],
+) -> CodexAppServerEvent:
     async with asyncio.timeout(2):
         return await anext(events)
+
+
+async def _next_server_request(
+    events: AsyncIterator[CodexAppServerEvent],
+) -> CodexServerRequest:
+    while True:
+        event = await _next(events)
+        if isinstance(event, CodexServerRequest):
+            return event
+        if isinstance(event, CodexConnectionLost):
+            pytest.fail(
+                f"Codex connection failed before server request: {event.message}"
+            )
+
+
+async def _next_notification(
+    events: AsyncIterator[CodexAppServerEvent], method: str
+) -> CodexNotification:
+    while True:
+        event = await _next(events)
+        if isinstance(event, CodexNotification) and event.method == method:
+            return event
+        if isinstance(event, CodexConnectionLost):
+            pytest.fail(f"Codex connection failed before {method}: {event.message}")
+
+
+class _ObservedLock(asyncio.Lock):
+    def __init__(self) -> None:
+        super().__init__()
+        self.acquire_started = asyncio.Event()
+
+    async def acquire(self) -> Literal[True]:
+        self.acquire_started.set()
+        return await super().acquire()
 
 
 async def _wait_for_file(path: Path) -> None:
@@ -469,6 +495,213 @@ async def test_remote_resolution_retires_server_request_before_local_response(
             not in request_log.read_text(encoding="utf-8").splitlines()
         )
     finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_server_request_is_replayed_when_thread_resumes(
+    tmp_path: Path,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    client = _client(
+        tmp_path,
+        scenario="replay_on_resume",
+        request_log=request_log,
+    )
+    events = client.events()
+    try:
+        thread = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+        await client.start_turn(
+            thread_id=thread.thread_id,
+            text="hello",
+            settings=CodexTurnSettings(),
+        )
+        approval = await _next_server_request(events)
+        assert approval.request_id == "approval-1"
+        assert isinstance(approval.params, dict)
+        approval.params["consumerMutation"] = True
+
+        resumed = await client.resume_thread(
+            thread.thread_id,
+            CodexThreadSettings(cwd=str(tmp_path)),
+        )
+        replay = await _next_server_request(events)
+
+        assert resumed.thread_id == thread.thread_id
+        assert replay.connection_id == approval.connection_id
+        assert replay.request_id == approval.request_id
+        assert replay.method == approval.method
+        assert replay.params == {"availableDecisions": ["accept", "decline"]}
+
+        await client.respond(
+            connection_id=replay.connection_id,
+            request_id=replay.request_id,
+            result={"decision": "decline"},
+        )
+        resolved = await _next_notification(events, "serverRequest/resolved")
+        assert resolved.params == {
+            "threadId": "thread-1",
+            "requestId": "approval-1",
+            "futureField": {"kept": True},
+        }
+
+        await client.delete_thread(thread.thread_id)
+        assert (
+            request_log.read_text(encoding="utf-8")
+            .splitlines()
+            .count("response:approval-1")
+            == 1
+        )
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_conflicting_server_request_replay_fails_connection(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path, scenario="conflicting_replay_on_resume")
+    events = client.events()
+    try:
+        thread = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+        await client.start_turn(
+            thread_id=thread.thread_id,
+            text="hello",
+            settings=CodexTurnSettings(),
+        )
+        approval = await _next_server_request(events)
+        assert approval.request_id == "approval-1"
+
+        await client.resume_thread(
+            thread.thread_id,
+            CodexThreadSettings(cwd=str(tmp_path)),
+        )
+        while True:
+            event = await _next(events)
+            if isinstance(event, CodexConnectionLost):
+                assert "different request content" in event.message
+                break
+            if isinstance(event, CodexServerRequest):
+                pytest.fail("A conflicting request replay was exposed as answerable.")
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_replay_after_response_commit_is_suppressed_until_resolution(
+    tmp_path: Path,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    client = _client(
+        tmp_path,
+        scenario="replay_after_response",
+        request_log=request_log,
+    )
+    events = client.events()
+    try:
+        thread = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+        await client.start_turn(
+            thread_id=thread.thread_id,
+            text="hello",
+            settings=CodexTurnSettings(),
+        )
+        approval = await _next_server_request(events)
+        await client.respond(
+            connection_id=approval.connection_id,
+            request_id=approval.request_id,
+            result={"decision": "decline"},
+        )
+
+        while True:
+            event = await _next(events)
+            if isinstance(event, CodexServerRequest):
+                pytest.fail("A committed server request was exposed as answerable.")
+            if (
+                isinstance(event, CodexNotification)
+                and event.method == "serverRequest/resolved"
+            ):
+                break
+            if isinstance(event, CodexConnectionLost):
+                pytest.fail(
+                    "Codex connection failed before request resolution: "
+                    f"{event.message}"
+                )
+
+        with pytest.raises(CodexConnectionError, match="no longer awaiting"):
+            await client.respond(
+                connection_id=approval.connection_id,
+                request_id=approval.request_id,
+                result={"decision": "decline"},
+            )
+        await client.delete_thread(thread.thread_id)
+        assert (
+            request_log.read_text(encoding="utf-8")
+            .splitlines()
+            .count("response:approval-1")
+            == 1
+        )
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_response_waiting_for_writer_remains_answerable(
+    tmp_path: Path,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    client = _client(tmp_path, request_log=request_log)
+    events = client.events()
+    response: asyncio.Task[None] | None = None
+    writer_lock = _ObservedLock()
+    try:
+        thread = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+        await client.start_turn(
+            thread_id=thread.thread_id,
+            text="hello",
+            settings=CodexTurnSettings(),
+        )
+        approval = await _next_server_request(events)
+
+        await writer_lock.acquire()
+        writer_lock.acquire_started.clear()
+        client._writer_lock = writer_lock
+        response = asyncio.create_task(
+            client.respond(
+                connection_id=approval.connection_id,
+                request_id=approval.request_id,
+                result={"decision": "decline"},
+            )
+        )
+        async with asyncio.timeout(1):
+            await writer_lock.acquire_started.wait()
+        response.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await response
+        assert (
+            "response:approval-1"
+            not in request_log.read_text(encoding="utf-8").splitlines()
+        )
+
+        writer_lock.release()
+        await client.respond(
+            connection_id=approval.connection_id,
+            request_id=approval.request_id,
+            result={"decision": "decline"},
+        )
+        await _next_notification(events, "serverRequest/resolved")
+        await client.delete_thread(thread.thread_id)
+        assert (
+            request_log.read_text(encoding="utf-8")
+            .splitlines()
+            .count("response:approval-1")
+            == 1
+        )
+    finally:
+        if response is not None and not response.done():
+            response.cancel()
+            await asyncio.gather(response, return_exceptions=True)
+        if writer_lock.locked():
+            writer_lock.release()
         await client.close()
 
 

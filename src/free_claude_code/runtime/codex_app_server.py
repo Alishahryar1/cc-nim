@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import cast
@@ -100,6 +101,25 @@ class _ConnectionState(StrEnum):
     CLOSED = "closed"
 
 
+class _ServerRequestState(StrEnum):
+    AWAITING_RESPONSE = "awaiting_response"
+    RESPONSE_COMMITTED = "response_committed"
+
+
+class _ServerRequestObservation(StrEnum):
+    NEW = "new"
+    PENDING_REPLAY = "pending_replay"
+    COMMITTED_DUPLICATE = "committed_duplicate"
+    CONFLICT = "conflict"
+
+
+@dataclass(slots=True)
+class _ServerRequestRecord:
+    method: str
+    params: JsonValue
+    state: _ServerRequestState = _ServerRequestState.AWAITING_RESPONSE
+
+
 @dataclass(frozen=True, slots=True)
 class _StartSucceeded:
     connection: _Connection
@@ -127,7 +147,9 @@ class _Connection:
     process: asyncio.subprocess.Process | None = None
     version: str | None = None
     pending: dict[CodexRequestId, _PendingCall] = field(default_factory=dict)
-    pending_server_requests: set[CodexRequestId] = field(default_factory=set)
+    interactive_server_requests: dict[CodexRequestId, _ServerRequestRecord] = field(
+        default_factory=dict
+    )
     initialization: CodexInitialization | None = None
     startup_task: asyncio.Task[_StartOutcome] | None = None
     reader_task: asyncio.Task[None] | None = None
@@ -136,31 +158,55 @@ class _Connection:
     cleanup_task: asyncio.Task[_CleanupOutcome] | None = None
     cleanup_outcome: _CleanupOutcome | None = None
 
-    def admit_server_request(self, request_id: CodexRequestId) -> bool:
-        """Record a request that this connection may answer exactly once."""
+    def observe_server_request(
+        self,
+        *,
+        request_id: CodexRequestId,
+        method: str,
+        params: JsonValue,
+    ) -> _ServerRequestObservation:
+        """Record a new request or classify a replay of an existing request."""
 
-        if request_id in self.pending_server_requests:
-            return False
-        self.pending_server_requests.add(request_id)
-        return True
+        record = self.interactive_server_requests.get(request_id)
+        if record is None:
+            self.interactive_server_requests[request_id] = _ServerRequestRecord(
+                method=method,
+                params=deepcopy(params),
+            )
+            return _ServerRequestObservation.NEW
+        if record.method != method or record.params != params:
+            return _ServerRequestObservation.CONFLICT
+        if record.state is _ServerRequestState.AWAITING_RESPONSE:
+            return _ServerRequestObservation.PENDING_REPLAY
+        return _ServerRequestObservation.COMMITTED_DUPLICATE
 
-    def claim_server_request(self, request_id: CodexRequestId) -> bool:
-        """Atomically claim the right to answer one pending request."""
+    def require_answerable_server_request(
+        self, request_id: CodexRequestId
+    ) -> _ServerRequestRecord:
+        """Return the request only while a response may still be written."""
 
-        if request_id not in self.pending_server_requests:
-            return False
-        self.pending_server_requests.remove(request_id)
-        return True
+        record = self.interactive_server_requests.get(request_id)
+        if record is None or record.state is not _ServerRequestState.AWAITING_RESPONSE:
+            raise CodexConnectionError(
+                "The Codex request is no longer awaiting a response."
+            )
+        return record
+
+    def commit_server_response(self, request_id: CodexRequestId) -> None:
+        """Mark a response committed immediately after its successful write."""
+
+        record = self.require_answerable_server_request(request_id)
+        record.state = _ServerRequestState.RESPONSE_COMMITTED
 
     def resolve_server_request(self, request_id: CodexRequestId) -> None:
         """Retire a request that Codex has already resolved or cleared."""
 
-        self.pending_server_requests.discard(request_id)
+        self.interactive_server_requests.pop(request_id, None)
 
     def clear_server_requests(self) -> None:
         """Retire every request owned by this connection generation."""
 
-        self.pending_server_requests.clear()
+        self.interactive_server_requests.clear()
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,13 +404,10 @@ class CodexAppServerClient:
             raise CodexConnectionError(
                 "The Codex request belongs to a closed app-server connection."
             )
-        if not connection.claim_server_request(request_id):
-            raise CodexConnectionError(
-                "The Codex request is no longer awaiting a response."
-            )
-        await self._write_message(
+        await self._write_server_response(
             connection,
-            {"id": request_id, "result": result},
+            request_id=request_id,
+            result=result,
         )
 
     async def events(self) -> AsyncIterator[CodexAppServerEvent]:
@@ -697,13 +740,50 @@ class CodexAppServerClient:
                 stdin.write(encoded)
                 await stdin.drain()
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
-            error = CodexConnectionError("Could not write to Codex app-server.")
-            self._begin_connection_shutdown(
-                connection,
-                error=error,
-                emit_event=True,
-            )
+            error = self._write_failure(connection)
             raise error from exc
+
+    async def _write_server_response(
+        self,
+        connection: _Connection,
+        *,
+        request_id: CodexRequestId,
+        result: JsonValue,
+    ) -> None:
+        """Write one interactive response and commit its admission atomically."""
+
+        _require_requestable_connection(self, connection, during_startup=False)
+        process = _connection_process(connection)
+        stdin = process.stdin
+        if stdin is None:
+            raise CodexConnectionError("Codex app-server stdin is unavailable.")
+        encoded = (
+            json.dumps(
+                {"id": request_id, "result": result},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        try:
+            async with self._writer_lock:
+                _require_requestable_connection(self, connection, during_startup=False)
+                connection.require_answerable_server_request(request_id)
+                stdin.write(encoded)
+                connection.commit_server_response(request_id)
+                await stdin.drain()
+        except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+            error = self._write_failure(connection)
+            raise error from exc
+
+    def _write_failure(self, connection: _Connection) -> CodexConnectionError:
+        error = CodexConnectionError("Could not write to Codex app-server.")
+        self._begin_connection_shutdown(
+            connection,
+            error=error,
+            emit_event=True,
+        )
+        return error
 
     async def _reader_loop(self, connection: _Connection) -> None:
         process = _connection_process(connection)
@@ -933,11 +1013,19 @@ class CodexAppServerClient:
             )
             return True
         if method in _INTERACTIVE_SERVER_METHODS:
-            if not connection.admit_server_request(request_id):
+            observation = connection.observe_server_request(
+                request_id=request_id,
+                method=method,
+                params=params,
+            )
+            if observation is _ServerRequestObservation.CONFLICT:
                 raise CodexProtocolError(
-                    "Codex app-server reused an outstanding server request ID."
+                    "Codex app-server reused a server request ID with different "
+                    "request content."
                 )
-            emitted = await self._emit(
+            if observation is _ServerRequestObservation.COMMITTED_DUPLICATE:
+                return True
+            return await self._emit(
                 connection,
                 CodexServerRequest(
                     connection_id=connection.id,
@@ -946,9 +1034,6 @@ class CodexAppServerClient:
                     params=params,
                 ),
             )
-            if not emitted:
-                connection.resolve_server_request(request_id)
-            return emitted
         await self._write_message(
             connection,
             {

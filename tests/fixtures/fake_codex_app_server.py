@@ -94,6 +94,25 @@ def _normal_response(method: str, params: object) -> object:
     return {}
 
 
+def _approval_request() -> object:
+    return {
+        "id": "approval-1",
+        "method": "item/commandExecution/requestApproval",
+        "params": {"availableDecisions": ["accept", "decline"]},
+    }
+
+
+def _approval_resolved() -> object:
+    return {
+        "method": "serverRequest/resolved",
+        "params": {
+            "threadId": "thread-1",
+            "requestId": "approval-1",
+            "futureField": {"kept": True},
+        },
+    }
+
+
 def main() -> None:
     scenario = os.environ.get("FAKE_CODEX_SCENARIO", "normal")
     missing_method = os.environ.get("FAKE_CODEX_MISSING_METHOD")
@@ -136,17 +155,11 @@ def main() -> None:
             elif request_id == "future-1":
                 _emit({"method": "fixture/methodNotFound", "params": message})
             elif request_id == "approval-1":
-                if scenario == "resolve_before_response":
-                    _append(log_path, "response:approval-1")
+                _append(log_path, "response:approval-1")
+                if scenario == "replay_after_response":
+                    _emit(_approval_request())
                 _emit_together(
-                    {
-                        "method": "serverRequest/resolved",
-                        "params": {
-                            "threadId": "thread-1",
-                            "requestId": "approval-1",
-                            "futureField": {"kept": True},
-                        },
-                    },
+                    _approval_resolved(),
                     {"method": "fixture/approvalAnswered", "params": message},
                 )
             continue
@@ -226,6 +239,18 @@ def main() -> None:
 
         _emit({"id": request_id, "result": _normal_response(method, params)})
 
+        if method == "thread/resume":
+            if scenario == "replay_on_resume":
+                _emit(_approval_request())
+            elif scenario == "conflicting_replay_on_resume":
+                _emit(
+                    {
+                        "id": "approval-1",
+                        "method": "item/commandExecution/requestApproval",
+                        "params": {"availableDecisions": ["decline"]},
+                    }
+                )
+
         if method == "config/read":
             release_delayed_model()
 
@@ -255,24 +280,9 @@ def main() -> None:
                     "params": {},
                 }
             )
-            _emit(
-                {
-                    "id": "approval-1",
-                    "method": "item/commandExecution/requestApproval",
-                    "params": {"availableDecisions": ["accept", "decline"]},
-                }
-            )
+            _emit(_approval_request())
             if scenario == "resolve_before_response":
-                _emit(
-                    {
-                        "method": "serverRequest/resolved",
-                        "params": {
-                            "threadId": "thread-1",
-                            "requestId": "approval-1",
-                            "futureField": {"kept": True},
-                        },
-                    }
-                )
+                _emit(_approval_resolved())
 
 
 if __name__ == "__main__":

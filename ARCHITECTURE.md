@@ -1388,10 +1388,12 @@ interface:
   the event loop.
 - A bounded single-consumer event stream carries native notifications and the
   supported interactive server requests without interpreting them as Work
-  state. Interactive responses are admitted once on the connection generation
-  that emitted them, until FCC answers or Codex clears the request through
-  `serverRequest/resolved`. That control notification retires wire-response
-  admission before remaining observable to the future Work application.
+  state. A connection-scoped ledger recognizes Codex's identical replay of an
+  unanswered request, and interactive responses commit exactly once at the
+  serialized subprocess write boundary. Codex clears either pending or
+  committed lifecycle state through `serverRequest/resolved`; that control
+  notification retires wire-response admission before remaining observable to
+  the future Work application.
   `currentTime/read` is answered locally; unnegotiated server methods receive
   method-not-found and emit a bounded unsupported-interaction event rather than
   hanging the child or guessing a response.
