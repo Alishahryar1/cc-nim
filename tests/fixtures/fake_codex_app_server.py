@@ -32,6 +32,25 @@ def _launch_number(path: str | None) -> int:
     return value
 
 
+def _control_path(name: str) -> Path | None:
+    root = os.environ.get("FAKE_CODEX_CONTROL_DIR")
+    return None if root is None else Path(root) / name
+
+
+def _signal(name: str) -> None:
+    path = _control_path(name)
+    if path is not None:
+        path.touch()
+
+
+def _wait_for(name: str) -> None:
+    path = _control_path(name)
+    if path is None:
+        return
+    while not path.exists():
+        time.sleep(0.01)
+
+
 def _normal_response(method: str, params: object) -> object:
     if method == "initialize":
         return {
@@ -68,9 +87,24 @@ def _normal_response(method: str, params: object) -> object:
 
 def main() -> None:
     scenario = os.environ.get("FAKE_CODEX_SCENARIO", "normal")
+    missing_method = os.environ.get("FAKE_CODEX_MISSING_METHOD")
+    failing_method = os.environ.get("FAKE_CODEX_FAILING_METHOD")
     log_path = os.environ.get("FAKE_CODEX_REQUEST_LOG")
     launch_number = _launch_number(os.environ.get("FAKE_CODEX_LAUNCH_COUNTER"))
     delayed_model: tuple[object, object] | None = None
+
+    def release_delayed_model() -> None:
+        nonlocal delayed_model
+        if delayed_model is None:
+            return
+        delayed_id, delayed_params = delayed_model
+        _emit(
+            {
+                "id": delayed_id,
+                "result": _normal_response("model/list", delayed_params),
+            }
+        )
+        delayed_model = None
 
     for raw_line in sys.stdin:
         message = json.loads(raw_line)
@@ -86,6 +120,13 @@ def main() -> None:
                     pass
                 while True:
                     time.sleep(60)
+            if scenario == "notification_after_initialized":
+                _emit(
+                    {
+                        "method": "fixture/ready",
+                        "params": {"initialized": True},
+                    }
+                )
             continue
         if not isinstance(method, str):
             if request_id == "clock-1":
@@ -97,9 +138,27 @@ def main() -> None:
             continue
         params = message.get("params", {})
 
+        if method == "initialize" and scenario == "delay_initialize":
+            _signal("initialize-seen")
+            _wait_for("release-initialize")
+        if method == "initialize" and scenario == "invalid_initialize":
+            _emit({"id": request_id, "result": []})
+            continue
+        if method == "thread/start" and scenario == "delay_thread_start":
+            _signal("thread-start-seen")
+            _wait_for("release-thread-start")
         if method == "thread/start" and scenario == "malformed":
             sys.stdout.write("{not-json}\n")
             sys.stdout.flush()
+            continue
+        if method == "thread/start" and scenario == "malformed_then_notification":
+            sys.stdout.write("{not-json}\n")
+            _emit(
+                {
+                    "method": "fixture/afterTerminal",
+                    "params": {"mustNotAppear": True},
+                }
+            )
             continue
         if method == "thread/start" and scenario == "oversized":
             sys.stdout.buffer.write(b'{"oversized":"' + b"x" * _LINE_LIMIT + b'"}\n')
@@ -110,13 +169,27 @@ def main() -> None:
             continue
         if method == "turn/start" and scenario == "fail_once" and launch_number == 1:
             sys.exit(7)
-        if scenario == "missing_method" and method == "permissionProfile/list":
+        if method == missing_method or (
+            scenario == "missing_method" and method == "permissionProfile/list"
+        ):
             _emit(
                 {
                     "id": request_id,
                     "error": {"code": -32601, "message": "Method not found"},
                 }
             )
+            if method == "config/read":
+                release_delayed_model()
+            continue
+        if method == failing_method:
+            _emit(
+                {
+                    "id": request_id,
+                    "error": {"code": -32000, "message": "Injected request failure"},
+                }
+            )
+            if method == "config/read":
+                release_delayed_model()
             continue
 
         if method == "model/list" and not (
@@ -127,15 +200,8 @@ def main() -> None:
 
         _emit({"id": request_id, "result": _normal_response(method, params)})
 
-        if method == "config/read" and delayed_model is not None:
-            delayed_id, delayed_params = delayed_model
-            _emit(
-                {
-                    "id": delayed_id,
-                    "result": _normal_response("model/list", delayed_params),
-                }
-            )
-            delayed_model = None
+        if method == "config/read":
+            release_delayed_model()
 
         if method == "turn/start":
             if scenario == "flood":

@@ -1,6 +1,7 @@
 """Contracts for the concrete Codex app-server stdio owner."""
 
 import asyncio
+import gc
 import os
 import sys
 from collections.abc import AsyncIterator
@@ -14,9 +15,12 @@ from free_claude_code.application.work import (
     CodexConnectionLost,
     CodexNotification,
     CodexProtocolError,
+    CodexRequestError,
     CodexServerRequest,
     CodexThreadSettings,
     CodexTurnSettings,
+    CodexUnavailableError,
+    CodexUnsupportedInteraction,
 )
 from free_claude_code.cli.launchers.codex import CodexModelCatalogPlan
 from free_claude_code.config.settings import Settings
@@ -38,6 +42,9 @@ def _client(
     scenario: str = "normal",
     request_log: Path | None = None,
     launch_counter: Path | None = None,
+    control_dir: Path | None = None,
+    missing_method: str | None = None,
+    failing_method: str | None = None,
 ) -> CodexAppServerClient:
     env = os.environ.copy()
     env["FAKE_CODEX_SCENARIO"] = scenario
@@ -45,6 +52,12 @@ def _client(
         env["FAKE_CODEX_REQUEST_LOG"] = str(request_log)
     if launch_counter is not None:
         env["FAKE_CODEX_LAUNCH_COUNTER"] = str(launch_counter)
+    if control_dir is not None:
+        env["FAKE_CODEX_CONTROL_DIR"] = str(control_dir)
+    if missing_method is not None:
+        env["FAKE_CODEX_MISSING_METHOD"] = missing_method
+    if failing_method is not None:
+        env["FAKE_CODEX_FAILING_METHOD"] = failing_method
 
     async def plan() -> CodexAppServerProcessPlan:
         return CodexAppServerProcessPlan(
@@ -58,10 +71,26 @@ def _client(
 
 
 async def _next(
-    events: AsyncIterator[CodexNotification | CodexServerRequest | CodexConnectionLost],
-) -> CodexNotification | CodexServerRequest | CodexConnectionLost:
+    events: AsyncIterator[
+        CodexNotification
+        | CodexServerRequest
+        | CodexUnsupportedInteraction
+        | CodexConnectionLost
+    ],
+) -> (
+    CodexNotification
+    | CodexServerRequest
+    | CodexUnsupportedInteraction
+    | CodexConnectionLost
+):
     async with asyncio.timeout(2):
         return await anext(events)
+
+
+async def _wait_for_file(path: Path) -> None:
+    async with asyncio.timeout(2):
+        while not path.exists():
+            await asyncio.sleep(0.01)
 
 
 @pytest.mark.asyncio
@@ -128,6 +157,10 @@ async def test_initializes_once_and_reads_concurrent_native_catalogs(
         assert availability.version == "codex-cli 1.2.3"
         assert initialization.user_agent == "fake-codex/1.2.3"
         assert initialization.connection_id
+        assert controls.models is not None
+        assert controls.permission_profiles is not None
+        assert controls.collaboration_modes is not None
+        assert controls.config is not None
         assert [model["id"] for model in controls.models] == ["model-1", "model-2"]
         assert controls.permission_profiles[0]["id"] == ":workspace"
         assert controls.collaboration_modes[0]["mode"] == "plan"
@@ -138,6 +171,147 @@ async def test_initializes_once_and_reads_concurrent_native_catalogs(
         assert methods.count("model/list") == 2
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_callers_wait_for_initialized_before_sending_methods(
+    tmp_path: Path,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    launch_counter = tmp_path / "launch-count"
+    client = _client(
+        tmp_path,
+        scenario="delay_initialize",
+        request_log=request_log,
+        launch_counter=launch_counter,
+        control_dir=tmp_path,
+    )
+    initialize = asyncio.create_task(client.initialize())
+    await _wait_for_file(tmp_path / "initialize-seen")
+    start_thread = asyncio.create_task(
+        client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+    )
+    try:
+        await asyncio.sleep(0)
+        assert request_log.read_text(encoding="utf-8").splitlines() == ["initialize"]
+
+        (tmp_path / "release-initialize").touch()
+        initialization, thread = await asyncio.gather(initialize, start_thread)
+
+        assert initialization.connection_id == thread.connection_id
+        assert launch_counter.read_text(encoding="utf-8") == "1"
+        methods = request_log.read_text(encoding="utf-8").splitlines()
+        assert methods.index("initialized") < methods.index("thread/start")
+    finally:
+        (tmp_path / "release-initialize").touch()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_notification_after_initialized_is_not_lost_to_readiness_transition(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path, scenario="notification_after_initialized")
+    events = client.events()
+    try:
+        initialization = await client.initialize()
+        event = await _next(events)
+
+        assert isinstance(event, CodexNotification)
+        assert event.connection_id == initialization.connection_id
+        assert event.method == "fixture/ready"
+        assert event.params == {"initialized": True}
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_one_startup_waiter_preserves_shared_start(
+    tmp_path: Path,
+) -> None:
+    launch_counter = tmp_path / "launch-count"
+    client = _client(
+        tmp_path,
+        scenario="delay_initialize",
+        launch_counter=launch_counter,
+        control_dir=tmp_path,
+    )
+    cancelled_waiter = asyncio.create_task(client.initialize())
+    await _wait_for_file(tmp_path / "initialize-seen")
+    surviving_waiter = asyncio.create_task(client.initialize())
+    try:
+        cancelled_waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled_waiter
+        (tmp_path / "release-initialize").touch()
+
+        initialization = await surviving_waiter
+        assert initialization.connection_id
+        assert launch_counter.read_text(encoding="utf-8") == "1"
+    finally:
+        (tmp_path / "release-initialize").touch()
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_close_during_startup_never_publishes_connection(
+    tmp_path: Path,
+) -> None:
+    client = _client(
+        tmp_path,
+        scenario="delay_initialize",
+        control_dir=tmp_path,
+    )
+    events = client.events()
+    initialize = asyncio.create_task(client.initialize())
+    await _wait_for_file(tmp_path / "initialize-seen")
+    connection = client._connection
+    assert connection is not None
+    process = connection.process
+    assert process is not None
+    close = asyncio.create_task(client.close())
+    try:
+        async with asyncio.timeout(1):
+            while not client._closed:
+                await asyncio.sleep(0.01)
+        (tmp_path / "release-initialize").touch()
+
+        await close
+        with pytest.raises(CodexConnectionError, match="closed during initialization"):
+            await initialize
+        assert process.returncode is not None
+        with pytest.raises(StopAsyncIteration):
+            await anext(events)
+    finally:
+        (tmp_path / "release-initialize").touch()
+        await asyncio.gather(close, return_exceptions=True)
+        await asyncio.gather(initialize, return_exceptions=True)
+        if process.returncode is None:
+            await codex_app_server._stop_process(process)
+
+
+@pytest.mark.asyncio
+async def test_invalid_initialize_result_stays_private_to_startup(
+    tmp_path: Path,
+) -> None:
+    launch_counter = tmp_path / "launch-count"
+    client = _client(
+        tmp_path,
+        scenario="invalid_initialize",
+        launch_counter=launch_counter,
+    )
+    events = client.events()
+
+    with pytest.raises(
+        CodexConnectionError,
+        match="Codex app-server initialization failed: CodexProtocolError",
+    ):
+        await client.initialize()
+
+    assert launch_counter.read_text(encoding="utf-8") == "1"
+    await client.close()
+    with pytest.raises(StopAsyncIteration):
+        await anext(events)
 
 
 @pytest.mark.asyncio
@@ -180,10 +354,14 @@ async def test_thread_turn_events_and_bidirectional_server_requests(
 
         observed: dict[str, object] = {}
         approval: CodexServerRequest | None = None
-        while len(observed) < 2 or approval is None:
+        unsupported: CodexUnsupportedInteraction | None = None
+        while len(observed) < 2 or approval is None or unsupported is None:
             event = await _next(events)
             if isinstance(event, CodexServerRequest):
                 approval = event
+                continue
+            if isinstance(event, CodexUnsupportedInteraction):
+                unsupported = event
                 continue
             assert isinstance(event, CodexNotification)
             observed[event.method] = event.params
@@ -196,12 +374,20 @@ async def test_thread_turn_events_and_bidirectional_server_requests(
         assert isinstance(method_not_found, dict)
         assert isinstance(method_not_found["error"], dict)
         assert method_not_found["error"]["code"] == -32601
+        assert unsupported.method == "future/serverRequest"
+        assert unsupported.connection_id == turn.connection_id
         assert approval.method == "item/commandExecution/requestApproval"
         await client.respond(
             connection_id=approval.connection_id,
             request_id=approval.request_id,
             result={"decision": "decline"},
         )
+        with pytest.raises(CodexConnectionError, match="no longer awaiting"):
+            await client.respond(
+                connection_id=approval.connection_id,
+                request_id=approval.request_id,
+                result={"decision": "decline"},
+            )
         answered = await _next(events)
         assert isinstance(answered, CodexNotification)
         assert answered.method == "fixture/approvalAnswered"
@@ -230,6 +416,84 @@ async def test_invalid_protocol_disconnects_without_hanging_pending_calls(
         assert isinstance(lost, CodexConnectionLost)
         assert lost.connection_id
     finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_connection_loss_is_final_for_its_generation(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path, scenario="malformed_then_notification")
+    events = client.events()
+    try:
+        with pytest.raises(CodexProtocolError):
+            await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+
+        lost = await _next(events)
+        assert isinstance(lost, CodexConnectionLost)
+        connection_id = lost.connection_id
+
+        await client.close()
+        with pytest.raises(StopAsyncIteration):
+            await anext(events)
+        assert lost.connection_id == connection_id
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_stdout_eof_fails_request_before_process_cleanup_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client = _client(
+        tmp_path,
+        scenario="delay_thread_start",
+        control_dir=tmp_path,
+    )
+    await client.initialize()
+    connection = client._connection
+    assert connection is not None
+    process = connection.process
+    assert process is not None
+    reader_task = connection.reader_task
+    assert reader_task is not None
+    reader_task.cancel()
+    await asyncio.gather(reader_task, return_exceptions=True)
+    eof_reader = asyncio.StreamReader()
+    process.stdout = eof_reader
+    connection.reader_task = asyncio.create_task(client._reader_loop(connection))
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    original_stop = codex_app_server._stop_process
+
+    async def held_stop(
+        target: asyncio.subprocess.Process,
+    ) -> CodexConnectionError | None:
+        cleanup_started.set()
+        await release_cleanup.wait()
+        return await original_stop(target)
+
+    monkeypatch.setattr(codex_app_server, "_stop_process", held_stop)
+    request = asyncio.create_task(
+        client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+    )
+    try:
+        await _wait_for_file(tmp_path / "thread-start-seen")
+        eof_reader.feed_eof()
+        async with asyncio.timeout(1):
+            await cleanup_started.wait()
+
+        with pytest.raises(CodexConnectionError, match="before process exit"):
+            async with asyncio.timeout(1):
+                await request
+        assert process.returncode is None
+    finally:
+        (tmp_path / "release-thread-start").touch()
+        release_cleanup.set()
+        if not request.done():
+            request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
         await client.close()
 
 
@@ -276,15 +540,94 @@ async def test_process_failure_is_not_replayed_and_next_call_starts_cleanly(
 
 
 @pytest.mark.asyncio
-async def test_missing_required_catalog_method_is_actionable(
+async def test_cancelled_request_ignores_late_response_on_same_connection(
     tmp_path: Path,
 ) -> None:
-    client = _client(tmp_path, scenario="missing_method")
+    request_log = tmp_path / "requests.log"
+    launch_counter = tmp_path / "launch-count"
+    client = _client(
+        tmp_path,
+        scenario="delay_thread_start",
+        request_log=request_log,
+        launch_counter=launch_counter,
+        control_dir=tmp_path,
+    )
+    initialization = await client.initialize()
+    start_thread = asyncio.create_task(
+        client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+    )
+    await _wait_for_file(tmp_path / "thread-start-seen")
+    try:
+        start_thread.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await start_thread
+
+        (tmp_path / "release-thread-start").touch()
+        await client.delete_thread("thread-after-cancel")
+
+        connection = client._connection
+        assert connection is not None
+        assert connection.id == initialization.connection_id
+        assert launch_counter.read_text(encoding="utf-8") == "1"
+        methods = request_log.read_text(encoding="utf-8").splitlines()
+        assert methods.count("thread/start") == 1
+        assert methods.count("thread/delete") == 1
+    finally:
+        (tmp_path / "release-thread-start").touch()
+        await asyncio.gather(start_thread, return_exceptions=True)
+        await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("missing_method", "missing_field"),
+    [
+        ("model/list", "models"),
+        ("permissionProfile/list", "permission_profiles"),
+        ("collaborationMode/list", "collaboration_modes"),
+        ("config/read", "config"),
+    ],
+)
+async def test_missing_optional_catalog_method_degrades_independently(
+    tmp_path: Path,
+    missing_method: str,
+    missing_field: str,
+) -> None:
+    client = _client(tmp_path, missing_method=missing_method)
+    try:
+        controls = await client.controls(cwd=str(tmp_path))
+
+        assert getattr(controls, missing_field) is None
+        for field in (
+            "models",
+            "permission_profiles",
+            "collaboration_modes",
+            "config",
+        ):
+            if field != missing_field:
+                assert getattr(controls, field) is not None
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_required_method_is_actionable(tmp_path: Path) -> None:
+    client = _client(tmp_path, missing_method="thread/start")
     try:
         with pytest.raises(
             CodexCompatibilityError,
-            match=r"codex-cli 1\.2\.3.*permissionProfile/list.*update Codex",
+            match=r"codex-cli 1\.2\.3.*thread/start.*update Codex",
         ):
+            await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_optional_catalog_request_failure_is_not_hidden(tmp_path: Path) -> None:
+    client = _client(tmp_path, failing_method="permissionProfile/list")
+    try:
+        with pytest.raises(CodexRequestError, match="Injected request failure"):
             await client.controls(cwd=str(tmp_path))
     finally:
         await client.close()
@@ -305,10 +648,60 @@ async def test_event_overflow_fails_the_connection_instead_of_dropping_silently(
             text="flood",
             settings=CodexTurnSettings(),
         )
+        connection = client._connection
+        assert connection is not None
+        async with asyncio.timeout(1):
+            while connection.cleanup_task is None:
+                await asyncio.sleep(0)
         lost = await _next(events)
         assert isinstance(lost, CodexConnectionLost)
         assert "overflowed" in lost.message
+        assert lost.connection_id == connection.id
+        await client.close()
+        with pytest.raises(StopAsyncIteration):
+            await anext(events)
     finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_write_failure_observes_pending_future_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    await client.initialize()
+    connection = client._connection
+    assert connection is not None
+    process = connection.process
+    assert process is not None
+    writer = process.stdin
+    assert writer is not None
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop_messages: list[str] = []
+
+    def capture_loop_error(
+        _loop: asyncio.AbstractEventLoop,
+        context: dict[str, object],
+    ) -> None:
+        message = context.get("message")
+        loop_messages.append(message if isinstance(message, str) else repr(context))
+
+    async def broken_drain() -> None:
+        raise BrokenPipeError
+
+    loop.set_exception_handler(capture_loop_error)
+    try:
+        monkeypatch.setattr(writer, "drain", broken_drain)
+        with pytest.raises(CodexConnectionError, match="Could not write"):
+            await client.delete_thread("thread-write-failure")
+        await client.close()
+        gc.collect()
+        await asyncio.sleep(0)
+        assert not any("never retrieved" in message for message in loop_messages)
+    finally:
+        loop.set_exception_handler(previous_handler)
         await client.close()
 
 
@@ -341,18 +734,21 @@ async def test_cancelled_close_waiter_does_not_cancel_owned_shutdown(
     connection = client._connection
     assert connection is not None
     process = connection.process
+    assert process is not None
     events = client.events()
     stop_started = asyncio.Event()
     release_stop = asyncio.Event()
     stop_calls = 0
     original_stop = codex_app_server._stop_process
 
-    async def blocking_stop(target: asyncio.subprocess.Process) -> None:
+    async def blocking_stop(
+        target: asyncio.subprocess.Process,
+    ) -> CodexConnectionError | None:
         nonlocal stop_calls
         stop_calls += 1
         stop_started.set()
         await release_stop.wait()
-        await original_stop(target)
+        return await original_stop(target)
 
     monkeypatch.setattr(codex_app_server, "_stop_process", blocking_stop)
     first_close = asyncio.create_task(client.close())
@@ -389,6 +785,101 @@ async def test_cancelled_close_waiter_does_not_cancel_owned_shutdown(
 
 
 @pytest.mark.asyncio
+async def test_failed_cleanup_remains_owned_and_blocks_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registered_pids: set[int] = set()
+    monkeypatch.setattr(codex_app_server, "register_pid", registered_pids.add)
+    monkeypatch.setattr(codex_app_server, "unregister_pid", registered_pids.discard)
+    launch_counter = tmp_path / "launch-count"
+    client = _client(
+        tmp_path,
+        scenario="malformed",
+        launch_counter=launch_counter,
+    )
+    await client.initialize()
+    connection = client._connection
+    assert connection is not None
+    process = connection.process
+    assert process is not None
+    assert process.pid in registered_pids
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    original_stop = codex_app_server._stop_process
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop_messages: list[str] = []
+
+    def capture_loop_error(
+        _loop: asyncio.AbstractEventLoop,
+        context: dict[str, object],
+    ) -> None:
+        message = context.get("message")
+        loop_messages.append(message if isinstance(message, str) else repr(context))
+
+    async def failed_stop(
+        _target: asyncio.subprocess.Process,
+    ) -> CodexConnectionError:
+        cleanup_started.set()
+        await release_cleanup.wait()
+        return CodexConnectionError("injected unreaped process")
+
+    loop.set_exception_handler(capture_loop_error)
+    monkeypatch.setattr(codex_app_server, "_stop_process", failed_stop)
+    failed_request = asyncio.create_task(
+        client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+    )
+    blocked_replacement: asyncio.Task[object] | None = None
+    first_close: asyncio.Task[None] | None = None
+    try:
+        async with asyncio.timeout(1):
+            await cleanup_started.wait()
+        blocked_replacement = asyncio.create_task(client.initialize())
+        await asyncio.sleep(0)
+        assert not blocked_replacement.done()
+
+        first_close = asyncio.create_task(client.close())
+        async with asyncio.timeout(1):
+            while not client._closed:
+                await asyncio.sleep(0)
+        first_close.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first_close
+
+        release_cleanup.set()
+        with pytest.raises(CodexProtocolError):
+            await failed_request
+        with pytest.raises(CodexUnavailableError, match="injected unreaped process"):
+            await blocked_replacement
+        cleanup = connection.cleanup_task
+        assert cleanup is not None
+        outcome = await asyncio.shield(cleanup)
+        assert outcome.error is not None
+
+        with pytest.raises(CodexConnectionError, match="injected unreaped process"):
+            await client.close()
+        assert client._connection is connection
+        assert launch_counter.read_text(encoding="utf-8") == "1"
+        assert process.pid in registered_pids
+        gc.collect()
+        await asyncio.sleep(0)
+        assert not any("never retrieved" in message for message in loop_messages)
+    finally:
+        release_cleanup.set()
+        loop.set_exception_handler(previous_handler)
+        await asyncio.gather(failed_request, return_exceptions=True)
+        if blocked_replacement is not None:
+            await asyncio.gather(blocked_replacement, return_exceptions=True)
+        if first_close is not None:
+            await asyncio.gather(first_close, return_exceptions=True)
+        if process.returncode is None:
+            await original_stop(process)
+        if process.pid is not None:
+            registered_pids.discard(process.pid)
+
+
+@pytest.mark.asyncio
 async def test_stalled_stdin_close_reaches_bounded_process_escalation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -400,6 +891,7 @@ async def test_stalled_stdin_close_reaches_bounded_process_escalation(
     connection = client._connection
     assert connection is not None
     process = connection.process
+    assert process is not None
     never_closed = asyncio.Event()
     original_stop = codex_app_server._stop_process
 

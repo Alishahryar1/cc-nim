@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import cast
 
 from loguru import logger
@@ -32,6 +33,7 @@ from free_claude_code.application.work import (
     CodexTurnHandle,
     CodexTurnSettings,
     CodexUnavailableError,
+    CodexUnsupportedInteraction,
 )
 from free_claude_code.cli.launchers.codex import (
     build_codex_launcher_plan,
@@ -90,17 +92,46 @@ class _PendingCall:
     future: asyncio.Future[JsonValue]
 
 
+class _ConnectionState(StrEnum):
+    STARTING = "starting"
+    READY = "ready"
+    CLOSING = "closing"
+    CLOSED = "closed"
+
+
+@dataclass(frozen=True, slots=True)
+class _StartSucceeded:
+    connection: _Connection
+
+
+@dataclass(frozen=True, slots=True)
+class _StartFailed:
+    error: Exception
+
+
+type _StartOutcome = _StartSucceeded | _StartFailed
+
+
+@dataclass(frozen=True, slots=True)
+class _CleanupOutcome:
+    error: CodexConnectionError | None
+
+
 @dataclass(slots=True)
 class _Connection:
     id: str
-    process: asyncio.subprocess.Process
-    version: str | None
+    state: _ConnectionState = _ConnectionState.STARTING
+    process: asyncio.subprocess.Process | None = None
+    version: str | None = None
     pending: dict[CodexRequestId, _PendingCall] = field(default_factory=dict)
+    pending_server_requests: set[CodexRequestId] = field(default_factory=set)
     initialization: CodexInitialization | None = None
+    startup_task: asyncio.Task[_StartOutcome] | None = None
     reader_task: asyncio.Task[None] | None = None
     stderr_task: asyncio.Task[None] | None = None
-    closed: bool = False
-    shutdown_task: asyncio.Task[None] | None = None
+    terminal_error: Exception | None = None
+    cleanup_task: asyncio.Task[_CleanupOutcome] | None = None
+    cleanup_outcome: _CleanupOutcome | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,27 +208,27 @@ class CodexAppServerClient:
 
         connection = await self._ensure_connection()
         models, permission_profiles, collaboration_modes, config = await asyncio.gather(
-            self._paged_objects(connection, "model/list", {}),
-            self._paged_objects(
+            self._optional_paged_objects(connection, "model/list", {}),
+            self._optional_paged_objects(
                 connection,
                 "permissionProfile/list",
                 {"cwd": cwd},
             ),
-            self._catalog_objects(connection, "collaborationMode/list", {}),
-            self._request_object(
+            self._optional_catalog_objects(
                 connection,
-                "config/read",
-                {"cwd": cwd, "includeLayers": False},
+                "collaborationMode/list",
+                {},
+            ),
+            self._optional_config(
+                connection,
+                cwd=cwd,
             ),
         )
-        config_value = config.get("config")
-        if not isinstance(config_value, dict):
-            raise CodexProtocolError("Codex config/read omitted its config object.")
         return CodexControlCatalog(
             models=models,
             collaboration_modes=collaboration_modes,
             permission_profiles=permission_profiles,
-            config=config_value,
+            config=config,
         )
 
     async def start_thread(self, settings: CodexThreadSettings) -> CodexThreadHandle:
@@ -290,10 +321,19 @@ class CodexAppServerClient:
         """Answer one server request only on the generation that emitted it."""
 
         connection = self._connection
-        if connection is None or connection.closed or connection.id != connection_id:
+        if (
+            connection is None
+            or connection.state is not _ConnectionState.READY
+            or connection.id != connection_id
+        ):
             raise CodexConnectionError(
                 "The Codex request belongs to a closed app-server connection."
             )
+        if request_id not in connection.pending_server_requests:
+            raise CodexConnectionError(
+                "The Codex request is no longer awaiting a response."
+            )
+        connection.pending_server_requests.remove(request_id)
         await self._write_message(
             connection,
             {"id": request_id, "result": result},
@@ -311,22 +351,35 @@ class CodexAppServerClient:
     async def close(self) -> None:
         """Close the owned child once, escalating only when it does not exit."""
 
-        shutdown_task: asyncio.Task[None] | None = None
+        connection: _Connection | None = None
+        startup_task: asyncio.Task[_StartOutcome] | None = None
+        cleanup_task: asyncio.Task[_CleanupOutcome] | None = None
         async with self._connection_lock:
             first_close = not self._closed
             if first_close:
                 self._closed = True
             connection = self._connection
             if connection is not None:
-                shutdown_task = self._begin_connection_shutdown(
-                    connection,
-                    error=CodexConnectionError("Codex Direct mode closed."),
-                    emit_event=False,
-                )
+                if connection.state is _ConnectionState.STARTING:
+                    startup_task = connection.startup_task
+                elif connection.state is _ConnectionState.READY:
+                    cleanup_task = self._begin_connection_shutdown(
+                        connection,
+                        error=CodexConnectionError("Codex Direct mode closed."),
+                        emit_event=False,
+                    )
+                else:
+                    cleanup_task = connection.cleanup_task
             if first_close:
                 self._finish_event_stream()
-        if shutdown_task is not None:
-            await asyncio.shield(shutdown_task)
+        if startup_task is not None:
+            await asyncio.shield(startup_task)
+            if connection is not None:
+                cleanup_task = connection.cleanup_task
+        if cleanup_task is not None:
+            outcome = await asyncio.shield(cleanup_task)
+            if outcome.error is not None:
+                raise outcome.error
 
     async def _get_plan(self) -> CodexAppServerProcessPlan:
         plan = self._plan
@@ -338,20 +391,58 @@ class CodexAppServerClient:
             return self._plan
 
     async def _ensure_connection(self) -> _Connection:
-        connection = self._connection
-        if connection is not None and not connection.closed:
-            return connection
-        async with self._connection_lock:
-            if self._closed:
-                raise CodexUnavailableError("Codex Direct mode is closed.")
-            connection = self._connection
-            if connection is not None and not connection.closed:
-                return connection
-            if connection is not None:
-                shutdown_task = connection.shutdown_task
-                if shutdown_task is not None:
-                    await asyncio.shield(shutdown_task)
+        while True:
+            startup_task: asyncio.Task[_StartOutcome] | None = None
+            cleanup_task: asyncio.Task[_CleanupOutcome] | None = None
+            async with self._connection_lock:
+                if self._closed:
+                    raise CodexUnavailableError("Codex Direct mode is closed.")
+                connection = self._connection
+                if connection is None:
+                    connection = _Connection(id=str(uuid.uuid4()))
+                    startup_task = asyncio.create_task(
+                        self._run_connection_start(connection),
+                        name=f"fcc-codex-app-server-start-{connection.id}",
+                    )
+                    connection.startup_task = startup_task
+                    self._connection = connection
+                elif connection.state is _ConnectionState.READY:
+                    startup_task = connection.startup_task
+                    if startup_task is None or startup_task.done():
+                        return connection
+                elif connection.state is _ConnectionState.STARTING:
+                    startup_task = connection.startup_task
+                elif connection.state is _ConnectionState.CLOSING:
+                    cleanup_task = connection.cleanup_task
+                else:
+                    outcome = connection.cleanup_outcome
+                    if outcome is not None and outcome.error is not None:
+                        raise CodexUnavailableError(
+                            str(outcome.error)
+                        ) from outcome.error
+                    if self._connection is connection:
+                        self._connection = None
+                    continue
+
+            if startup_task is not None:
+                outcome = await asyncio.shield(startup_task)
+                if isinstance(outcome, _StartSucceeded):
+                    return outcome.connection
+                raise outcome.error
+            if cleanup_task is None:
+                raise RuntimeError("Codex connection lifecycle lost its owner task.")
+            outcome = await asyncio.shield(cleanup_task)
+            if outcome.error is not None:
+                raise CodexUnavailableError(str(outcome.error)) from outcome.error
+
+    async def _run_connection_start(self, connection: _Connection) -> _StartOutcome:
+        try:
             plan = await self._get_plan()
+            connection.version = plan.version
+            if self._closed or self._connection is not connection:
+                raise CodexConnectionError(
+                    "Codex Direct mode closed during initialization."
+                )
             try:
                 process = await asyncio.create_subprocess_exec(
                     *plan.command,
@@ -365,68 +456,81 @@ class CodexAppServerClient:
                 raise CodexUnavailableError(
                     f"Could not start Codex app-server: {exc}"
                 ) from exc
+            connection.process = process
+            if process.pid is not None:
+                register_pid(process.pid)
             if (
                 process.stdin is None
                 or process.stdout is None
                 or process.stderr is None
             ):
-                process.kill()
-                await process.wait()
                 raise CodexUnavailableError(
                     "Codex app-server did not expose its stdio pipes."
                 )
-            if process.pid is not None:
-                register_pid(process.pid)
-            connection = _Connection(
-                id=str(uuid.uuid4()),
-                process=process,
-                version=plan.version,
-            )
-            self._connection = connection
             connection.reader_task = asyncio.create_task(
                 self._reader_loop(connection),
-                name="fcc-codex-app-server-reader",
+                name=f"fcc-codex-app-server-reader-{connection.id}",
             )
             connection.stderr_task = asyncio.create_task(
                 self._stderr_loop(connection),
-                name="fcc-codex-app-server-stderr",
+                name=f"fcc-codex-app-server-stderr-{connection.id}",
             )
-            try:
-                response = await self._request_object(
-                    connection,
-                    "initialize",
-                    {
-                        "clientInfo": {
-                            "name": "free_claude_code",
-                            "title": "Free Claude Code",
-                            "version": self._client_version,
-                        },
-                        "capabilities": {"experimentalApi": True},
+            response = await self._request_object(
+                connection,
+                "initialize",
+                {
+                    "clientInfo": {
+                        "name": "free_claude_code",
+                        "title": "Free Claude Code",
+                        "version": self._client_version,
                     },
-                )
-                connection.initialization = CodexInitialization(
-                    connection_id=connection.id,
-                    user_agent=_required_string(response, "userAgent", "initialize"),
-                    codex_home=_required_string(response, "codexHome", "initialize"),
-                    platform_family=_required_string(
-                        response, "platformFamily", "initialize"
-                    ),
-                    platform_os=_required_string(response, "platformOs", "initialize"),
-                )
-                await self._write_message(connection, {"method": "initialized"})
-            except BaseException as exc:
-                await self._shutdown_connection(
-                    connection,
-                    error=_connection_error(exc),
-                    emit_event=False,
-                )
-                raise
-            logger.info(
-                "Codex app-server initialized: connection_id={} version={}",
-                connection.id,
-                connection.version or "unknown",
+                    "capabilities": {"experimentalApi": True},
+                },
+                during_startup=True,
             )
-            return connection
+            connection.initialization = CodexInitialization(
+                connection_id=connection.id,
+                user_agent=_required_string(response, "userAgent", "initialize"),
+                codex_home=_required_string(response, "codexHome", "initialize"),
+                platform_family=_required_string(
+                    response, "platformFamily", "initialize"
+                ),
+                platform_os=_required_string(response, "platformOs", "initialize"),
+            )
+            await self._write_initialized(connection)
+            async with self._connection_lock:
+                if (
+                    not self._closed
+                    and self._connection is connection
+                    and connection.state is _ConnectionState.READY
+                ):
+                    logger.info(
+                        "Codex app-server initialized: connection_id={} version={}",
+                        connection.id,
+                        connection.version or "unknown",
+                    )
+                    return _StartSucceeded(connection)
+            error = connection.terminal_error or CodexConnectionError(
+                "Codex Direct mode closed during initialization."
+            )
+        except asyncio.CancelledError:
+            self._begin_connection_shutdown(
+                connection,
+                error=CodexConnectionError(
+                    "Codex app-server initialization was cancelled."
+                ),
+                emit_event=False,
+            )
+            raise
+        except Exception as exc:
+            error = _connection_error(exc)
+
+        cleanup = await self._shutdown_connection(
+            connection,
+            error=error,
+            emit_event=False,
+        )
+        return _StartFailed(cleanup.error or error)
 
     async def _request_object(
         self,
@@ -435,12 +539,14 @@ class CodexAppServerClient:
         params: JsonObject,
         *,
         timeout: float | None = _REQUEST_TIMEOUT_SECONDS,
+        during_startup: bool = False,
     ) -> JsonObject:
         result = await self._request(
             connection,
             method,
             params,
             timeout=timeout,
+            during_startup=during_startup,
         )
         if not isinstance(result, dict):
             raise CodexProtocolError(f"Codex {method} returned a non-object result.")
@@ -453,40 +559,92 @@ class CodexAppServerClient:
         params: JsonObject,
         *,
         timeout: float | None,
+        during_startup: bool = False,
     ) -> JsonValue:
-        if connection.closed:
-            raise CodexConnectionError("Codex app-server connection is closed.")
+        _require_requestable_connection(
+            self,
+            connection,
+            during_startup=during_startup,
+        )
         request_id = self._next_request_id
         self._next_request_id += 1
-        future = asyncio.get_running_loop().create_future()
+        future: asyncio.Future[JsonValue] = asyncio.get_running_loop().create_future()
         connection.pending[request_id] = _PendingCall(method=method, future=future)
         try:
             await self._write_message(
                 connection,
                 {"id": request_id, "method": method, "params": params},
+                during_startup=during_startup,
             )
             if timeout is None:
-                return await asyncio.shield(future)
+                return await future
             async with asyncio.timeout(timeout):
-                return await asyncio.shield(future)
+                return await future
         except TimeoutError as exc:
-            connection.pending.pop(request_id, None)
             raise CodexConnectionError(
                 f"Codex {method} did not respond within {timeout:g} seconds."
             ) from exc
-        except asyncio.CancelledError:
-            connection.pending.pop(request_id, None)
-            raise
-        except BaseException:
-            connection.pending.pop(request_id, None)
-            raise
+        finally:
+            pending = connection.pending.get(request_id)
+            if pending is not None and pending.future is future:
+                connection.pending.pop(request_id, None)
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                with suppress(Exception):
+                    future.exception()
+
+    async def _write_initialized(self, connection: _Connection) -> None:
+        """Write the handshake barrier before admitting normal requests."""
+
+        process = _connection_process(connection)
+        stdin = process.stdin
+        if stdin is None:
+            raise CodexConnectionError("Codex app-server stdin is unavailable.")
+        encoded = b'{"method":"initialized"}\n'
+        try:
+            async with self._writer_lock:
+                _require_requestable_connection(
+                    self,
+                    connection,
+                    during_startup=True,
+                )
+                if self._closed:
+                    raise CodexConnectionError(
+                        "Codex Direct mode closed during initialization."
+                    )
+                stdin.write(encoded)
+                _transition_connection(
+                    connection,
+                    expected=_ConnectionState.STARTING,
+                    target=_ConnectionState.READY,
+                )
+                await stdin.drain()
+        except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+            error = CodexConnectionError(
+                "Could not finish Codex app-server initialization."
+            )
+            self._begin_connection_shutdown(
+                connection,
+                error=error,
+                emit_event=False,
+            )
+            raise error from exc
 
     async def _write_message(
-        self, connection: _Connection, message: JsonObject
+        self,
+        connection: _Connection,
+        message: JsonObject,
+        *,
+        during_startup: bool = False,
     ) -> None:
-        if connection.closed:
-            raise CodexConnectionError("Codex app-server connection is closed.")
-        stdin = connection.process.stdin
+        _require_requestable_connection(
+            self,
+            connection,
+            during_startup=during_startup,
+        )
+        process = _connection_process(connection)
+        stdin = process.stdin
         if stdin is None:
             raise CodexConnectionError("Codex app-server stdin is unavailable.")
         encoded = (
@@ -494,11 +652,16 @@ class CodexAppServerClient:
         ).encode("utf-8")
         try:
             async with self._writer_lock:
+                _require_requestable_connection(
+                    self,
+                    connection,
+                    during_startup=during_startup,
+                )
                 stdin.write(encoded)
                 await stdin.drain()
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
             error = CodexConnectionError("Could not write to Codex app-server.")
-            await self._shutdown_connection(
+            self._begin_connection_shutdown(
                 connection,
                 error=error,
                 emit_event=True,
@@ -506,7 +669,8 @@ class CodexAppServerClient:
             raise error from exc
 
     async def _reader_loop(self, connection: _Connection) -> None:
-        stdout = connection.process.stdout
+        process = _connection_process(connection)
+        stdout = process.stdout
         if stdout is None:
             return
         try:
@@ -518,7 +682,25 @@ class CodexAppServerClient:
                         "Codex app-server emitted a protocol line larger than 16 MiB."
                     ) from exc
                 if not line:
-                    break
+                    return_code = process.returncode
+                    suffix = (
+                        f"exit code {return_code}"
+                        if return_code is not None
+                        else "before process exit"
+                    )
+                    self._begin_connection_shutdown(
+                        connection,
+                        error=CodexConnectionError(
+                            f"Codex app-server closed its connection ({suffix})."
+                        ),
+                        emit_event=True,
+                    )
+                    return
+                if connection.state in {
+                    _ConnectionState.CLOSING,
+                    _ConnectionState.CLOSED,
+                }:
+                    return
                 if len(line) > _PROTOCOL_LINE_LIMIT:
                     raise CodexProtocolError(
                         "Codex app-server emitted a protocol line larger than 16 MiB."
@@ -529,14 +711,14 @@ class CodexAppServerClient:
         except asyncio.CancelledError:
             raise
         except CodexProtocolError as exc:
-            await self._shutdown_connection(
+            self._begin_connection_shutdown(
                 connection,
                 error=exc,
                 emit_event=True,
             )
             return
         except Exception as exc:
-            await self._shutdown_connection(
+            self._begin_connection_shutdown(
                 connection,
                 error=CodexConnectionError(
                     f"Codex app-server reader failed: {type(exc).__name__}."
@@ -544,18 +726,9 @@ class CodexAppServerClient:
                 emit_event=True,
             )
             return
-        if not connection.closed:
-            return_code = await connection.process.wait()
-            await self._shutdown_connection(
-                connection,
-                error=CodexConnectionError(
-                    f"Codex app-server closed its connection (exit code {return_code})."
-                ),
-                emit_event=True,
-            )
 
     async def _stderr_loop(self, connection: _Connection) -> None:
-        stderr = connection.process.stderr
+        stderr = _connection_process(connection).stderr
         if stderr is None:
             return
         chunks = 0
@@ -585,10 +758,20 @@ class CodexAppServerClient:
     async def _handle_message(
         self, connection: _Connection, message: JsonObject
     ) -> bool:
+        if connection.state in {
+            _ConnectionState.CLOSING,
+            _ConnectionState.CLOSED,
+        }:
+            return False
         method = message.get("method")
         request_id_value = message.get("id")
         has_id = "id" in message
         if isinstance(method, str):
+            if connection.state is not _ConnectionState.READY:
+                raise CodexProtocolError(
+                    "Codex app-server emitted a request or notification "
+                    "before initialization completed."
+                )
             params = message.get("params", {})
             if has_id:
                 request_id = _request_id(request_id_value)
@@ -611,8 +794,14 @@ class CodexAppServerClient:
             pending = connection.pending.get(request_id)
             if pending is None:
                 return True
+            if (
+                connection.state is _ConnectionState.STARTING
+                and pending.method != "initialize"
+            ):
+                raise RuntimeError(
+                    "Codex connection admitted a non-initialize startup request."
+                )
             if "result" in message and "error" not in message:
-                connection.pending.pop(request_id, None)
                 if not pending.future.done():
                     pending.future.set_result(message["result"])
                 return True
@@ -635,7 +824,7 @@ class CodexAppServerClient:
             if code_value == _METHOD_NOT_FOUND:
                 version = connection.version or "unknown"
                 failure: Exception = CodexCompatibilityError(
-                    f"Codex {version} does not support required method "
+                    f"Codex {version} does not support method "
                     f"{pending.method}; update Codex and try again."
                 )
             else:
@@ -644,7 +833,6 @@ class CodexAppServerClient:
                     code=code_value,
                     message=text,
                 )
-            connection.pending.pop(request_id, None)
             if not pending.future.done():
                 pending.future.set_exception(failure)
             return True
@@ -670,7 +858,12 @@ class CodexAppServerClient:
             )
             return True
         if method in _INTERACTIVE_SERVER_METHODS:
-            return await self._emit(
+            if request_id in connection.pending_server_requests:
+                raise CodexProtocolError(
+                    "Codex app-server reused an outstanding server request ID."
+                )
+            connection.pending_server_requests.add(request_id)
+            emitted = await self._emit(
                 connection,
                 CodexServerRequest(
                     connection_id=connection.id,
@@ -679,6 +872,9 @@ class CodexAppServerClient:
                     params=params,
                 ),
             )
+            if not emitted:
+                connection.pending_server_requests.discard(request_id)
+            return emitted
         await self._write_message(
             connection,
             {
@@ -689,13 +885,24 @@ class CodexAppServerClient:
                 },
             },
         )
-        return True
+        return await self._emit(
+            connection,
+            CodexUnsupportedInteraction(
+                connection_id=connection.id,
+                method=_bounded_text(method, limit=200),
+            ),
+        )
 
     async def _emit(self, connection: _Connection, event: CodexAppServerEvent) -> bool:
+        if (
+            connection.state is not _ConnectionState.READY
+            or self._connection is not connection
+        ):
+            return False
         try:
             self._events.put_nowait(event)
         except asyncio.QueueFull:
-            await self._shutdown_connection(
+            self._begin_connection_shutdown(
                 connection,
                 error=CodexConnectionError("Codex app-server event queue overflowed."),
                 emit_event=True,
@@ -733,6 +940,17 @@ class CodexAppServerClient:
             seen_cursors.add(next_cursor)
             cursor = next_cursor
 
+    async def _optional_paged_objects(
+        self,
+        connection: _Connection,
+        method: str,
+        base_params: JsonObject,
+    ) -> tuple[JsonObject, ...] | None:
+        try:
+            return await self._paged_objects(connection, method, base_params)
+        except CodexCompatibilityError:
+            return None
+
     async def _catalog_objects(
         self,
         connection: _Connection,
@@ -742,19 +960,49 @@ class CodexAppServerClient:
         response = await self._request_object(connection, method, params)
         return _object_sequence(response.get("data"), method)
 
+    async def _optional_catalog_objects(
+        self,
+        connection: _Connection,
+        method: str,
+        params: JsonObject,
+    ) -> tuple[JsonObject, ...] | None:
+        try:
+            return await self._catalog_objects(connection, method, params)
+        except CodexCompatibilityError:
+            return None
+
+    async def _optional_config(
+        self,
+        connection: _Connection,
+        *,
+        cwd: str,
+    ) -> JsonObject | None:
+        try:
+            response = await self._request_object(
+                connection,
+                "config/read",
+                {"cwd": cwd, "includeLayers": False},
+            )
+        except CodexCompatibilityError:
+            return None
+        config = response.get("config")
+        if not isinstance(config, dict):
+            raise CodexProtocolError("Codex config/read omitted its config object.")
+        return config
+
     async def _shutdown_connection(
         self,
         connection: _Connection,
         *,
         error: Exception,
         emit_event: bool,
-    ) -> None:
+    ) -> _CleanupOutcome:
         task = self._begin_connection_shutdown(
             connection,
             error=error,
             emit_event=emit_event,
         )
-        await asyncio.shield(task)
+        return await asyncio.shield(task)
 
     def _begin_connection_shutdown(
         self,
@@ -762,67 +1010,100 @@ class CodexAppServerClient:
         *,
         error: Exception,
         emit_event: bool,
-    ) -> asyncio.Task[None]:
-        task = connection.shutdown_task
+    ) -> asyncio.Task[_CleanupOutcome]:
+        task = connection.cleanup_task
         if task is not None:
             return task
-        connection.closed = True
+        if connection.state not in {
+            _ConnectionState.STARTING,
+            _ConnectionState.READY,
+        }:
+            raise RuntimeError(
+                "Codex connection entered a terminal state without a cleanup task."
+            )
+        was_ready = connection.state is _ConnectionState.READY
+        _transition_connection(
+            connection,
+            expected=connection.state,
+            target=_ConnectionState.CLOSING,
+        )
+        connection.terminal_error = error
         for pending in tuple(connection.pending.values()):
             if not pending.future.done():
                 pending.future.set_exception(error)
-        connection.pending.clear()
-        if emit_event:
+        connection.pending_server_requests.clear()
+        if emit_event and was_ready:
             self._emit_connection_lost(connection.id, str(error))
         task = asyncio.create_task(
-            self._run_connection_shutdown(
-                connection,
-                error=error,
-            ),
-            name=f"fcc-codex-app-server-shutdown-{connection.id}",
+            self._run_connection_cleanup(connection),
+            name=f"fcc-codex-app-server-cleanup-{connection.id}",
         )
-        connection.shutdown_task = task
+        connection.cleanup_task = task
         return task
 
-    async def _run_connection_shutdown(
-        self,
-        connection: _Connection,
-        *,
-        error: Exception,
-    ) -> None:
+    async def _run_connection_cleanup(self, connection: _Connection) -> _CleanupOutcome:
+        cleanup_error: CodexConnectionError | None = None
+        process = connection.process
         try:
+            if process is not None:
+                cleanup_error = await _stop_process(process)
+        except Exception as exc:
+            cleanup_error = CodexConnectionError(
+                "Codex app-server cleanup failed while stopping its process: "
+                f"{type(exc).__name__}."
+            )
+
+        tasks = tuple(
+            task
+            for task in (connection.reader_task, connection.stderr_task)
+            if task is not None
+        )
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
             try:
-                await _stop_process(connection.process)
-            finally:
-                tasks = tuple(
-                    task
-                    for task in (connection.reader_task, connection.stderr_task)
-                    if task is not None and not task.done()
+                async with asyncio.timeout(_TERMINATE_SECONDS):
+                    await asyncio.gather(*tasks, return_exceptions=True)
+            except TimeoutError:
+                cleanup_error = cleanup_error or CodexConnectionError(
+                    "Codex app-server I/O tasks did not stop within the deadline."
                 )
-                if tasks:
-                    for task in tasks:
-                        task.cancel()
-                    try:
-                        async with asyncio.timeout(_TERMINATE_SECONDS):
-                            await asyncio.gather(*tasks, return_exceptions=True)
-                    except TimeoutError:
-                        logger.warning(
-                            "Codex app-server I/O tasks did not stop within the "
-                            "deadline: connection_id={}",
-                            connection.id,
-                        )
-                if (
-                    connection.process.pid is not None
-                    and connection.process.returncode is not None
-                ):
-                    unregister_pid(connection.process.pid)
+
+        if process is not None and process.pid is not None:
+            if process.returncode is None:
+                cleanup_error = cleanup_error or CodexConnectionError(
+                    "Codex app-server could not be reaped after forced termination."
+                )
+            else:
+                unregister_pid(process.pid)
+
+        _transition_connection(
+            connection,
+            expected=_ConnectionState.CLOSING,
+            target=_ConnectionState.CLOSED,
+        )
+        outcome = _CleanupOutcome(error=cleanup_error)
+        connection.cleanup_outcome = outcome
+        terminal_error = connection.terminal_error
+        if cleanup_error is None:
             logger.info(
                 "Codex app-server closed: connection_id={} reason={}",
                 connection.id,
-                type(error).__name__,
+                type(terminal_error).__name__,
             )
-        finally:
-            if self._connection is connection:
-                self._connection = None
+            async with self._connection_lock:
+                if self._connection is connection:
+                    self._connection = None
+        else:
+            logger.warning(
+                "Codex app-server cleanup incomplete: "
+                "connection_id={} reason={} cleanup_error={}",
+                connection.id,
+                type(terminal_error).__name__,
+                cleanup_error,
+            )
+        return outcome
 
     def _emit_connection_lost(self, connection_id: str, message: str) -> None:
         event = CodexConnectionLost(
@@ -840,6 +1121,42 @@ class CodexAppServerClient:
             with suppress(asyncio.QueueEmpty):
                 self._events.get_nowait()
         self._events.put_nowait(_EventStreamClosed())
+
+
+def _transition_connection(
+    connection: _Connection,
+    *,
+    expected: _ConnectionState,
+    target: _ConnectionState,
+) -> None:
+    if connection.state is not expected:
+        raise RuntimeError(
+            "Invalid Codex connection transition: "
+            f"{connection.state.value} -> {target.value}."
+        )
+    connection.state = target
+
+
+def _connection_process(connection: _Connection) -> asyncio.subprocess.Process:
+    process = connection.process
+    if process is None:
+        raise CodexConnectionError("Codex app-server process is unavailable.")
+    return process
+
+
+def _require_requestable_connection(
+    client: CodexAppServerClient,
+    connection: _Connection,
+    *,
+    during_startup: bool,
+) -> None:
+    expected = _ConnectionState.STARTING if during_startup else _ConnectionState.READY
+    if (
+        client._connection is not connection
+        or connection.state is not expected
+        or (client._closed and not during_startup)
+    ):
+        raise CodexConnectionError("Codex app-server connection is closed.")
 
 
 def create_codex_app_server_client(
@@ -986,7 +1303,9 @@ def _environment_path(environment: Mapping[str, str]) -> str | None:
     )
 
 
-async def _stop_process(process: asyncio.subprocess.Process) -> None:
+async def _stop_process(
+    process: asyncio.subprocess.Process,
+) -> CodexConnectionError | None:
     stdin = process.stdin
     if stdin is not None:
         stdin.close()
@@ -997,11 +1316,11 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
             pass
     if process.returncode is not None:
         await process.wait()
-        return
+        return None
     try:
         async with asyncio.timeout(_GRACEFUL_CLOSE_SECONDS):
             await process.wait()
-            return
+            return None
     except TimeoutError:
         if _IS_WINDOWS and process.pid is not None:
             await asyncio.to_thread(
@@ -1015,17 +1334,18 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
     try:
         async with asyncio.timeout(_TERMINATE_SECONDS):
             await process.wait()
-            return
+            return None
     except TimeoutError:
         with suppress(ProcessLookupError):
             process.kill()
         try:
             async with asyncio.timeout(_TERMINATE_SECONDS):
                 await process.wait()
-        except TimeoutError as exc:
-            raise CodexConnectionError(
+        except TimeoutError:
+            return CodexConnectionError(
                 "Codex app-server did not exit after forced termination."
-            ) from exc
+            )
+    return None
 
 
 def _thread_params(settings: CodexThreadSettings) -> JsonObject:

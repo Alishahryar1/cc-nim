@@ -20,6 +20,7 @@ from .codex import (
     CodexTurnHandle,
     CodexTurnSettings,
     CodexUnavailableError,
+    CodexUnsupportedInteraction,
 )
 
 __all__ = [
@@ -42,4 +43,5 @@ __all__ = [
     "CodexTurnHandle",
     "CodexTurnSettings",
     "CodexUnavailableError",
+    "CodexUnsupportedInteraction",
 ]

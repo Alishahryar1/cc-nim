@@ -35,10 +35,10 @@ class CodexInitialization:
 class CodexControlCatalog:
     """Native controls exposed by the installed Codex version."""
 
-    models: tuple[JsonObject, ...]
-    collaboration_modes: tuple[JsonObject, ...]
-    permission_profiles: tuple[JsonObject, ...]
-    config: JsonObject
+    models: tuple[JsonObject, ...] | None
+    collaboration_modes: tuple[JsonObject, ...] | None
+    permission_profiles: tuple[JsonObject, ...] | None
+    config: JsonObject | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +108,20 @@ class CodexConnectionLost:
     message: str
 
 
-type CodexAppServerEvent = CodexNotification | CodexServerRequest | CodexConnectionLost
+@dataclass(frozen=True, slots=True)
+class CodexUnsupportedInteraction:
+    """A server request whose response contract FCC does not implement."""
+
+    connection_id: str
+    method: str
+
+
+type CodexAppServerEvent = (
+    CodexNotification
+    | CodexServerRequest
+    | CodexUnsupportedInteraction
+    | CodexConnectionLost
+)
 
 
 class CodexDirectError(Exception):

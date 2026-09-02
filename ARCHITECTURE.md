@@ -1376,22 +1376,31 @@ interface:
 
 - One application-owned child starts lazily, performs the required
   `initialize`/`initialized` handshake, and supports concurrent native threads
-  through serialized writes and correlated out-of-order responses.
+  through serialized writes and correlated out-of-order responses. Concurrent
+  first callers share one shielded startup task, so cancelling one waiter does
+  not cancel the application-owned child.
 - The child reuses the exact ephemeral FCC provider, command-backed proxy auth,
   generated model catalog, credential scrubbing, `CODEX_HOME`, and loopback
   bypass assembled by `fcc-codex`; synchronous catalog discovery runs outside
   the event loop.
 - A bounded single-consumer event stream carries native notifications and the
   supported interactive server requests without interpreting them as Work
-  state. `currentTime/read` is answered locally and unnegotiated server methods
-  receive method-not-found rather than hanging the child.
+  state. Interactive responses are admitted once on the connection generation
+  that emitted them. `currentTime/read` is answered locally; unnegotiated server
+  methods receive method-not-found and emit a bounded unsupported-interaction
+  event rather than hanging the child or guessing a response.
+- Model, permission-profile, collaboration-mode, and config catalogs degrade
+  independently when an installed Codex version lacks one discovery method.
+  Required thread and turn methods remain actionable compatibility failures.
 - Added fields and notification methods are preserved, malformed or oversized
   protocol data and event overflow fail one connection generation visibly, and
   a later operation may start a clean child. Submitted turns are never replayed
   after an uncertain failure because that could duplicate commands or edits.
-- Shutdown closes stdin first, then terminates and kills only if the child does
+- One explicit starting/ready/closing/closed lifecycle owns startup and cleanup.
+  Shutdown closes stdin first, then terminates and kills only if the child does
   not exit. All response futures and stdio readers remain owned until cleanup is
-  complete, including on Windows.
+  complete, including on Windows; an unreaped generation blocks an unsafe
+  replacement child.
 
 This boundary has no HTTP route, persistence, or visible Work UI yet. Those
 belong to later Work application and adapter changes; the existing Chat product
