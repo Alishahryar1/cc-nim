@@ -16,10 +16,11 @@ from free_claude_code.application.work import (
     CodexCompatibilityError,
     CodexConnectionError,
     CodexConnectionLost,
+    CodexInteractionRequest,
+    CodexInteractionResponse,
     CodexNotification,
     CodexProtocolError,
     CodexRequestError,
-    CodexServerRequest,
     CodexThreadSettings,
     CodexTurnSettings,
     CodexUnavailableError,
@@ -88,10 +89,10 @@ async def _next(
 
 async def _next_server_request(
     events: AsyncIterator[CodexAppServerEvent],
-) -> CodexServerRequest:
+) -> CodexInteractionRequest:
     while True:
         event = await _next(events)
-        if isinstance(event, CodexServerRequest):
+        if isinstance(event, CodexInteractionRequest):
             return event
         if isinstance(event, CodexConnectionLost):
             pytest.fail(
@@ -108,6 +109,10 @@ async def _next_notification(
             return event
         if isinstance(event, CodexConnectionLost):
             pytest.fail(f"Codex connection failed before {method}: {event.message}")
+
+
+def _decline(request: CodexInteractionRequest) -> CodexInteractionResponse:
+    return CodexInteractionResponse(request.kind, {"decision": "decline"})
 
 
 class _ObservedLock(asyncio.Lock):
@@ -191,12 +196,8 @@ async def test_initializes_once_and_reads_concurrent_native_catalogs(
         assert initialization.user_agent == "fake-codex/1.2.3"
         assert initialization.connection_id
         assert controls.models is not None
-        assert controls.permission_profiles is not None
-        assert controls.collaboration_modes is not None
         assert controls.config is not None
         assert [model["id"] for model in controls.models] == ["model-1", "model-2"]
-        assert controls.permission_profiles[0]["id"] == ":workspace"
-        assert controls.collaboration_modes[0]["mode"] == "plan"
         assert controls.config["approval_policy"] == "on-request"
         methods = request_log.read_text(encoding="utf-8").splitlines()
         assert methods.count("initialize") == 1
@@ -214,12 +215,9 @@ async def test_work_methods_use_paginated_app_server_contract_and_client_message
     client = _client(tmp_path, message_log=message_log)
     try:
         started = await client.start_thread(
-            CodexThreadSettings(
-                cwd=str(tmp_path),
-                model="model-1",
-                permission_profile=":workspace",
-            )
+            CodexThreadSettings(cwd=str(tmp_path), model="model-1")
         )
+        await client.materialize_thread(started.thread_id)
         resumed = await client.resume_thread(
             started.thread_id,
             CodexThreadSettings(cwd=str(tmp_path), model="model-1"),
@@ -231,15 +229,12 @@ async def test_work_methods_use_paginated_app_server_contract_and_client_message
             cursor="older-page",
             limit=10,
         )
-        await client.set_thread_name(thread_id=started.thread_id, name="Renamed")
         turn = await client.start_turn(
             thread_id=started.thread_id,
             text="hello",
             settings=CodexTurnSettings(
                 model="model-1",
                 effort="high",
-                collaboration_mode={"mode": "plan"},
-                permission_profile=":workspace",
             ),
             client_user_message_id="7cd43d62-c1aa-42f8-9963-6c0811c0dfaf",
         )
@@ -269,7 +264,6 @@ async def test_work_methods_use_paginated_app_server_contract_and_client_message
                 "thread/read",
                 "thread/list",
                 "thread/turns/list",
-                "thread/name/set",
                 "turn/start",
             }
         }
@@ -297,10 +291,6 @@ async def test_work_methods_use_paginated_app_server_contract_and_client_message
             "itemsView": "full",
             "limit": 10,
             "cursor": "older-page",
-        }
-        assert params["thread/name/set"] == {
-            "threadId": "thread-1",
-            "name": "Renamed",
         }
         assert params["turn/start"]["clientUserMessageId"] == (
             "7cd43d62-c1aa-42f8-9963-6c0811c0dfaf"
@@ -333,7 +323,6 @@ async def test_fixture_models_empty_thread_materialization_across_connections(
             "thread/start",
             {"cwd": str(tmp_path), "historyMode": "paginated"},
         )
-        await first.set_thread_name(thread_id="thread-1", name="Still transient")
         with pytest.raises(CodexRequestError, match="not materialized"):
             await first.list_turns_page(thread_id="thread-1", cursor=None, limit=10)
     finally:
@@ -544,12 +533,7 @@ async def test_thread_turn_events_and_bidirectional_server_requests(
     events = client.events()
     try:
         thread = await client.start_thread(
-            CodexThreadSettings(
-                cwd=str(tmp_path),
-                model="provider/model",
-                approval_policy="on-request",
-                permission_profile=":workspace",
-            )
+            CodexThreadSettings(cwd=str(tmp_path), model="provider/model")
         )
         assert thread.thread_id == "thread-1"
         assert thread.response["futureField"] == {"kept": True}
@@ -563,10 +547,7 @@ async def test_thread_turn_events_and_bidirectional_server_requests(
         turn = await client.start_turn(
             thread_id=thread.thread_id,
             text="hello",
-            settings=CodexTurnSettings(
-                effort="high",
-                collaboration_mode={"mode": "plan"},
-            ),
+            settings=CodexTurnSettings(model="provider/model", effort="high"),
         )
         assert turn.turn_id == "turn-1"
 
@@ -575,11 +556,11 @@ async def test_thread_turn_events_and_bidirectional_server_requests(
         assert notification.method == "future/notification"
 
         observed: dict[str, object] = {}
-        approval: CodexServerRequest | None = None
+        approval: CodexInteractionRequest | None = None
         unsupported: CodexUnsupportedInteraction | None = None
         while len(observed) < 2 or approval is None or unsupported is None:
             event = await _next(events)
-            if isinstance(event, CodexServerRequest):
+            if isinstance(event, CodexInteractionRequest):
                 approval = event
                 continue
             if isinstance(event, CodexUnsupportedInteraction):
@@ -602,13 +583,13 @@ async def test_thread_turn_events_and_bidirectional_server_requests(
         await client.respond(
             connection_id=approval.connection_id,
             request_id=approval.request_id,
-            result={"decision": "decline"},
+            response=_decline(approval),
         )
         with pytest.raises(CodexConnectionError, match="no longer awaiting"):
             await client.respond(
                 connection_id=approval.connection_id,
                 request_id=approval.request_id,
-                result={"decision": "decline"},
+                response=_decline(approval),
             )
         resolved = await _next(events)
         assert isinstance(resolved, CodexNotification)
@@ -647,14 +628,14 @@ async def test_remote_resolution_retires_server_request_before_local_response(
         await client.start_turn(
             thread_id=thread.thread_id,
             text="hello",
-            settings=CodexTurnSettings(),
+            settings=CodexTurnSettings(model="model-1"),
         )
 
-        approval: CodexServerRequest | None = None
+        approval: CodexInteractionRequest | None = None
         resolved: CodexNotification | None = None
         while approval is None or resolved is None:
             event = await _next(events)
-            if isinstance(event, CodexServerRequest):
+            if isinstance(event, CodexInteractionRequest):
                 if event.request_id == "approval-1":
                     approval = event
                 continue
@@ -673,7 +654,7 @@ async def test_remote_resolution_retires_server_request_before_local_response(
             await client.respond(
                 connection_id=approval.connection_id,
                 request_id=approval.request_id,
-                result={"decision": "decline"},
+                response=_decline(approval),
             )
 
         await client.delete_thread(thread.thread_id)
@@ -701,7 +682,7 @@ async def test_pending_server_request_is_replayed_when_thread_resumes(
         await client.start_turn(
             thread_id=thread.thread_id,
             text="hello",
-            settings=CodexTurnSettings(),
+            settings=CodexTurnSettings(model="model-1"),
         )
         approval = await _next_server_request(events)
         assert approval.request_id == "approval-1"
@@ -718,12 +699,16 @@ async def test_pending_server_request_is_replayed_when_thread_resumes(
         assert replay.connection_id == approval.connection_id
         assert replay.request_id == approval.request_id
         assert replay.method == approval.method
-        assert replay.params == {"availableDecisions": ["accept", "decline"]}
+        assert replay.params == {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "availableDecisions": ["accept", "decline"],
+        }
 
         await client.respond(
             connection_id=replay.connection_id,
             request_id=replay.request_id,
-            result={"decision": "decline"},
+            response=_decline(replay),
         )
         resolved = await _next_notification(events, "serverRequest/resolved")
         assert resolved.params == {
@@ -754,7 +739,7 @@ async def test_conflicting_server_request_replay_fails_connection(
         await client.start_turn(
             thread_id=thread.thread_id,
             text="hello",
-            settings=CodexTurnSettings(),
+            settings=CodexTurnSettings(model="model-1"),
         )
         approval = await _next_server_request(events)
         assert approval.request_id == "approval-1"
@@ -768,7 +753,7 @@ async def test_conflicting_server_request_replay_fails_connection(
             if isinstance(event, CodexConnectionLost):
                 assert "different request content" in event.message
                 break
-            if isinstance(event, CodexServerRequest):
+            if isinstance(event, CodexInteractionRequest):
                 pytest.fail("A conflicting request replay was exposed as answerable.")
     finally:
         await client.close()
@@ -790,18 +775,18 @@ async def test_replay_after_response_commit_is_suppressed_until_resolution(
         await client.start_turn(
             thread_id=thread.thread_id,
             text="hello",
-            settings=CodexTurnSettings(),
+            settings=CodexTurnSettings(model="model-1"),
         )
         approval = await _next_server_request(events)
         await client.respond(
             connection_id=approval.connection_id,
             request_id=approval.request_id,
-            result={"decision": "decline"},
+            response=_decline(approval),
         )
 
         while True:
             event = await _next(events)
-            if isinstance(event, CodexServerRequest):
+            if isinstance(event, CodexInteractionRequest):
                 pytest.fail("A committed server request was exposed as answerable.")
             if (
                 isinstance(event, CodexNotification)
@@ -818,7 +803,7 @@ async def test_replay_after_response_commit_is_suppressed_until_resolution(
             await client.respond(
                 connection_id=approval.connection_id,
                 request_id=approval.request_id,
-                result={"decision": "decline"},
+                response=_decline(approval),
             )
         await client.delete_thread(thread.thread_id)
         assert (
@@ -845,7 +830,7 @@ async def test_cancelled_response_waiting_for_writer_remains_answerable(
         await client.start_turn(
             thread_id=thread.thread_id,
             text="hello",
-            settings=CodexTurnSettings(),
+            settings=CodexTurnSettings(model="model-1"),
         )
         approval = await _next_server_request(events)
 
@@ -856,7 +841,7 @@ async def test_cancelled_response_waiting_for_writer_remains_answerable(
             client.respond(
                 connection_id=approval.connection_id,
                 request_id=approval.request_id,
-                result={"decision": "decline"},
+                response=_decline(approval),
             )
         )
         async with asyncio.timeout(1):
@@ -873,7 +858,7 @@ async def test_cancelled_response_waiting_for_writer_remains_answerable(
         await client.respond(
             connection_id=approval.connection_id,
             request_id=approval.request_id,
-            result={"decision": "decline"},
+            response=_decline(approval),
         )
         await _next_notification(events, "serverRequest/resolved")
         await client.delete_thread(thread.thread_id)
@@ -913,7 +898,7 @@ async def test_cancelled_response_during_drain_remains_committed(
         await client.start_turn(
             thread_id=thread.thread_id,
             text="hello",
-            settings=CodexTurnSettings(),
+            settings=CodexTurnSettings(model="model-1"),
         )
         approval = await _next_server_request(events)
         connection = client._connection
@@ -935,7 +920,7 @@ async def test_cancelled_response_during_drain_remains_committed(
             client.respond(
                 connection_id=approval.connection_id,
                 request_id=approval.request_id,
-                result={"decision": "decline"},
+                response=_decline(approval),
             )
         )
         async with asyncio.timeout(1):
@@ -943,7 +928,7 @@ async def test_cancelled_response_during_drain_remains_committed(
 
         while True:
             event = await _next(events)
-            if isinstance(event, CodexServerRequest):
+            if isinstance(event, CodexInteractionRequest):
                 pytest.fail("A post-write replay was exposed as answerable.")
             if (
                 isinstance(event, CodexNotification)
@@ -963,7 +948,7 @@ async def test_cancelled_response_during_drain_remains_committed(
             await client.respond(
                 connection_id=approval.connection_id,
                 request_id=approval.request_id,
-                result={"decision": "decline"},
+                response=_decline(approval),
             )
         assert (
             request_log.read_text(encoding="utf-8")
@@ -1098,7 +1083,7 @@ async def test_process_failure_is_not_replayed_and_next_call_starts_cleanly(
             await client.start_turn(
                 thread_id=thread.thread_id,
                 text="first",
-                settings=CodexTurnSettings(),
+                settings=CodexTurnSettings(model="model-1"),
             )
         await asyncio.sleep(0.05)
         assert launch_counter.read_text(encoding="utf-8") == "1"
@@ -1110,7 +1095,7 @@ async def test_process_failure_is_not_replayed_and_next_call_starts_cleanly(
         restarted = await client.start_turn(
             thread_id=thread.thread_id,
             text="second",
-            settings=CodexTurnSettings(),
+            settings=CodexTurnSettings(model="model-1"),
         )
         assert restarted.turn_id == "turn-1"
         assert launch_counter.read_text(encoding="utf-8") == "2"
@@ -1166,8 +1151,6 @@ async def test_cancelled_request_ignores_late_response_on_same_connection(
     ("missing_method", "missing_field"),
     [
         ("model/list", "models"),
-        ("permissionProfile/list", "permission_profiles"),
-        ("collaborationMode/list", "collaboration_modes"),
         ("config/read", "config"),
     ],
 )
@@ -1181,12 +1164,7 @@ async def test_missing_optional_catalog_method_degrades_independently(
         controls = await client.controls(cwd=str(tmp_path))
 
         assert getattr(controls, missing_field) is None
-        for field in (
-            "models",
-            "permission_profiles",
-            "collaboration_modes",
-            "config",
-        ):
+        for field in ("models", "config"):
             if field != missing_field:
                 assert getattr(controls, field) is not None
     finally:
@@ -1214,7 +1192,7 @@ async def test_missing_required_method_is_actionable(tmp_path: Path) -> None:
         ("request", CodexRequestError, "Injected request failure"),
     ],
 )
-async def test_materialization_failure_deletes_partial_thread_on_same_connection(
+async def test_materialization_failure_is_exposed_to_the_workflow_owner(
     tmp_path: Path,
     failure_kind: str,
     expected_error: type[Exception],
@@ -1230,15 +1208,15 @@ async def test_materialization_failure_deletes_partial_thread_on_same_connection
         failing_method="thread/section/move" if failure_kind == "request" else None,
     )
     try:
+        handle = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
         with pytest.raises(expected_error, match=message):
-            await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+            await client.materialize_thread(handle.thread_id)
 
         methods = request_log.read_text(encoding="utf-8").splitlines()
         assert methods.count("thread/start") == 1
         assert methods.count("thread/section/move") == 1
-        assert methods.count("thread/delete") == 1
+        assert methods.count("thread/delete") == 0
         assert methods.index("thread/start") < methods.index("thread/section/move")
-        assert methods.index("thread/section/move") < methods.index("thread/delete")
         assert launch_counter.read_text(encoding="utf-8") == "1"
     finally:
         await client.close()
@@ -1255,8 +1233,9 @@ async def test_materialization_connection_loss_is_not_replayed(tmp_path: Path) -
         launch_counter=launch_counter,
     )
     try:
+        handle = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
         with pytest.raises(CodexConnectionError):
-            await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+            await client.materialize_thread(handle.thread_id)
 
         methods = request_log.read_text(encoding="utf-8").splitlines()
         assert methods.count("thread/start") == 1
@@ -1268,7 +1247,7 @@ async def test_materialization_connection_loss_is_not_replayed(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_cancelled_materialization_deletes_partial_thread(
+async def test_cancelled_materialization_is_exposed_to_the_workflow_owner(
     tmp_path: Path,
 ) -> None:
     request_log = tmp_path / "requests.log"
@@ -1278,31 +1257,29 @@ async def test_cancelled_materialization_deletes_partial_thread(
         request_log=request_log,
         control_dir=tmp_path,
     )
-    start = asyncio.create_task(
-        client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
-    )
+    handle = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+    materialize = asyncio.create_task(client.materialize_thread(handle.thread_id))
     try:
         await _wait_for_file(tmp_path / "thread-materialization-seen")
-        start.cancel()
+        materialize.cancel()
         (tmp_path / "release-thread-materialization").touch()
 
         with pytest.raises(asyncio.CancelledError):
-            await start
+            await materialize
 
         methods = request_log.read_text(encoding="utf-8").splitlines()
         assert methods.count("thread/start") == 1
         assert methods.count("thread/section/move") == 1
-        assert methods.count("thread/delete") == 1
-        assert methods.index("thread/section/move") < methods.index("thread/delete")
+        assert methods.count("thread/delete") == 0
     finally:
         (tmp_path / "release-thread-materialization").touch()
-        await asyncio.gather(start, return_exceptions=True)
+        await asyncio.gather(materialize, return_exceptions=True)
         await client.close()
 
 
 @pytest.mark.asyncio
 async def test_optional_catalog_request_failure_is_not_hidden(tmp_path: Path) -> None:
-    client = _client(tmp_path, failing_method="permissionProfile/list")
+    client = _client(tmp_path, failing_method="model/list")
     try:
         with pytest.raises(CodexRequestError, match="Injected request failure"):
             await client.controls(cwd=str(tmp_path))
@@ -1323,7 +1300,7 @@ async def test_event_overflow_fails_the_connection_instead_of_dropping_silently(
         await client.start_turn(
             thread_id=thread.thread_id,
             text="flood",
-            settings=CodexTurnSettings(),
+            settings=CodexTurnSettings(model="model-1"),
         )
         connection = client._connection
         assert connection is not None

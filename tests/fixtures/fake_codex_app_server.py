@@ -203,7 +203,11 @@ def _approval_request() -> object:
     return {
         "id": "approval-1",
         "method": "item/commandExecution/requestApproval",
-        "params": {"availableDecisions": ["accept", "decline"]},
+        "params": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "availableDecisions": ["accept", "decline"],
+        },
     }
 
 
@@ -470,7 +474,11 @@ def main() -> None:
                     {
                         "id": "approval-1",
                         "method": "item/commandExecution/requestApproval",
-                        "params": {"availableDecisions": ["decline"]},
+                        "params": {
+                            "threadId": "thread-1",
+                            "turnId": "turn-1",
+                            "availableDecisions": ["decline"],
+                        },
                     }
                 )
 

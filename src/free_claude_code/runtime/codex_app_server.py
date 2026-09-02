@@ -23,13 +23,16 @@ from free_claude_code.application.work import (
     CodexConnectionError,
     CodexConnectionLost,
     CodexControlCatalog,
+    CodexDelivery,
     CodexInitialization,
+    CodexInteractionKind,
+    CodexInteractionRequest,
+    CodexInteractionResponse,
     CodexNotification,
     CodexObjectPage,
     CodexProtocolError,
     CodexRequestError,
     CodexRequestId,
-    CodexServerRequest,
     CodexThreadHandle,
     CodexThreadSettings,
     CodexThreadSnapshot,
@@ -63,17 +66,13 @@ _METHOD_NOT_FOUND = -32601
 _SERVER_REQUEST_RESOLVED = "serverRequest/resolved"
 _IS_WINDOWS = os.name == "nt"
 
-_INTERACTIVE_SERVER_METHODS = frozenset(
-    {
-        "item/commandExecution/requestApproval",
-        "item/fileChange/requestApproval",
-        "item/permissions/requestApproval",
-        "item/tool/requestUserInput",
-        "mcpServer/elicitation/request",
-        "applyPatchApproval",
-        "execCommandApproval",
-    }
-)
+_INTERACTION_KINDS = {
+    "item/commandExecution/requestApproval": CodexInteractionKind.COMMAND_APPROVAL,
+    "item/fileChange/requestApproval": CodexInteractionKind.FILE_CHANGE_APPROVAL,
+    "item/permissions/requestApproval": CodexInteractionKind.PERMISSION_APPROVAL,
+    "item/tool/requestUserInput": CodexInteractionKind.USER_INPUT,
+}
+_INTERACTIVE_SERVER_METHODS = frozenset(_INTERACTION_KINDS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,18 +283,8 @@ class CodexAppServerClient:
         """Read native Codex controls, following every paginated catalog."""
 
         connection = await self._ensure_connection()
-        models, permission_profiles, collaboration_modes, config = await asyncio.gather(
+        models, config = await asyncio.gather(
             self._optional_paged_objects(connection, "model/list", {}),
-            self._optional_paged_objects(
-                connection,
-                "permissionProfile/list",
-                {"cwd": cwd},
-            ),
-            self._optional_catalog_objects(
-                connection,
-                "collaborationMode/list",
-                {},
-            ),
             self._optional_config(
                 connection,
                 cwd=cwd,
@@ -303,13 +292,11 @@ class CodexAppServerClient:
         )
         return CodexControlCatalog(
             models=models,
-            collaboration_modes=collaboration_modes,
-            permission_profiles=permission_profiles,
             config=config,
         )
 
     async def start_thread(self, settings: CodexThreadSettings) -> CodexThreadHandle:
-        """Create one durable native Codex thread."""
+        """Create a provisional native thread and expose its identity."""
 
         connection = await self._ensure_connection()
         params = _thread_params(settings)
@@ -319,21 +306,21 @@ class CodexAppServerClient:
             "thread/start",
             params,
         )
-        handle = _thread_handle(connection.id, response)
-        try:
-            await self._request_object(
-                connection,
-                "thread/section/move",
-                {
-                    "threadId": handle.thread_id,
-                    "sectionId": None,
-                    "beforeThreadId": None,
-                },
-            )
-        except BaseException:
-            await self._delete_started_thread(connection, handle.thread_id)
-            raise
-        return handle
+        return _thread_handle(connection.id, response)
+
+    async def materialize_thread(self, thread_id: str) -> None:
+        """Make one provisional app-server thread durable and discoverable."""
+
+        connection = await self._ensure_connection()
+        await self._request_object(
+            connection,
+            "thread/section/move",
+            {
+                "threadId": thread_id,
+                "sectionId": None,
+                "beforeThreadId": None,
+            },
+        )
 
     async def resume_thread(
         self, thread_id: str, settings: CodexThreadSettings
@@ -404,16 +391,6 @@ class CodexAppServerClient:
         response = await self._request_object(connection, "thread/turns/list", params)
         return _object_page(response, "thread/turns/list")
 
-    async def set_thread_name(self, *, thread_id: str, name: str) -> None:
-        """Set the Codex-native display name."""
-
-        connection = await self._ensure_connection()
-        await self._request_object(
-            connection,
-            "thread/name/set",
-            {"threadId": thread_id, "name": name},
-        )
-
     async def delete_thread(self, thread_id: str) -> None:
         """Hard-delete one native Codex thread and its descendants."""
 
@@ -426,21 +403,6 @@ class CodexAppServerClient:
             "thread/delete",
             {"threadId": thread_id},
         )
-
-    async def _delete_started_thread(
-        self,
-        connection: _Connection,
-        thread_id: str,
-    ) -> None:
-        """Best-effort compensation for a start that was not made durable."""
-
-        try:
-            await self._delete_thread(connection, thread_id)
-        except Exception as exc:
-            logger.warning(
-                "Could not delete unmaterialized Codex thread: exc_type={}",
-                type(exc).__name__,
-            )
 
     async def start_turn(
         self,
@@ -457,11 +419,8 @@ class CodexAppServerClient:
             "threadId": thread_id,
             "input": [{"type": "text", "text": text}],
         }
-        _add_optional(params, "model", settings.model)
+        params["model"] = settings.model
         _add_optional(params, "effort", settings.effort)
-        _add_optional(params, "collaborationMode", settings.collaboration_mode)
-        _add_optional(params, "approvalPolicy", settings.approval_policy)
-        _add_optional(params, "permissions", settings.permission_profile)
         _add_optional(params, "clientUserMessageId", client_user_message_id)
         response = await self._request_object(
             connection,
@@ -493,7 +452,7 @@ class CodexAppServerClient:
         *,
         connection_id: str,
         request_id: CodexRequestId,
-        result: JsonValue,
+        response: CodexInteractionResponse,
     ) -> None:
         """Answer one server request only on the generation that emitted it."""
 
@@ -504,12 +463,19 @@ class CodexAppServerClient:
             or connection.id != connection_id
         ):
             raise CodexConnectionError(
-                "The Codex request belongs to a closed app-server connection."
+                "The Codex request belongs to a closed app-server connection.",
+                delivery=CodexDelivery.DEFINITELY_NOT_WRITTEN,
+            )
+        record = connection.require_answerable_server_request(request_id)
+        expected_kind = _INTERACTION_KINDS.get(record.method)
+        if expected_kind is not response.kind:
+            raise CodexProtocolError(
+                "Codex interaction response does not match the native request."
             )
         await self._write_server_response(
             connection,
             request_id=request_id,
-            result=result,
+            result=response.result,
         )
 
     async def events(self) -> AsyncIterator[CodexAppServerEvent]:
@@ -743,19 +709,29 @@ class CodexAppServerClient:
         self._next_request_id += 1
         future: asyncio.Future[JsonValue] = asyncio.get_running_loop().create_future()
         connection.pending[request_id] = _PendingCall(method=method, future=future)
+        written = False
         try:
             await self._write_message(
                 connection,
                 {"id": request_id, "method": method, "params": params},
                 during_startup=during_startup,
             )
+            written = True
             if timeout is None:
                 return await future
             async with asyncio.timeout(timeout):
                 return await future
         except TimeoutError as exc:
             raise CodexConnectionError(
-                f"Codex {method} did not respond within {timeout:g} seconds."
+                f"Codex {method} did not respond within {timeout:g} seconds.",
+                delivery=CodexDelivery.POSSIBLY_WRITTEN,
+            ) from exc
+        except CodexConnectionError as exc:
+            if not written or exc.delivery is CodexDelivery.POSSIBLY_WRITTEN:
+                raise
+            raise CodexConnectionError(
+                str(exc),
+                delivery=CodexDelivery.POSSIBLY_WRITTEN,
             ) from exc
         finally:
             pending = connection.pending.get(request_id)
@@ -879,7 +855,10 @@ class CodexAppServerClient:
             raise error from exc
 
     def _write_failure(self, connection: _Connection) -> CodexConnectionError:
-        error = CodexConnectionError("Could not write to Codex app-server.")
+        error = CodexConnectionError(
+            "Could not write to Codex app-server.",
+            delivery=CodexDelivery.POSSIBLY_WRITTEN,
+        )
         self._begin_connection_shutdown(
             connection,
             error=error,
@@ -1115,6 +1094,14 @@ class CodexAppServerClient:
             )
             return True
         if method in _INTERACTIVE_SERVER_METHODS:
+            if not isinstance(params, dict):
+                raise CodexProtocolError(f"Codex {method} omitted its params object.")
+            thread_id = _required_string(params, "threadId", method)
+            turn_id_value = params.get("turnId")
+            if turn_id_value is not None and (
+                not isinstance(turn_id_value, str) or not turn_id_value
+            ):
+                raise CodexProtocolError(f"Codex {method} returned an invalid turnId.")
             observation = connection.observe_server_request(
                 request_id=request_id,
                 method=method,
@@ -1129,11 +1116,14 @@ class CodexAppServerClient:
                 return True
             return await self._emit(
                 connection,
-                CodexServerRequest(
+                CodexInteractionRequest(
                     connection_id=connection.id,
                     request_id=request_id,
                     method=method,
-                    params=params,
+                    thread_id=thread_id,
+                    turn_id=turn_id_value,
+                    kind=_INTERACTION_KINDS[method],
+                    params=dict(params),
                 ),
             )
         await self._write_message(
@@ -1612,8 +1602,6 @@ async def _stop_process(
 def _thread_params(settings: CodexThreadSettings) -> JsonObject:
     params: JsonObject = {"cwd": settings.cwd}
     _add_optional(params, "model", settings.model)
-    _add_optional(params, "approvalPolicy", settings.approval_policy)
-    _add_optional(params, "permissions", settings.permission_profile)
     return params
 
 

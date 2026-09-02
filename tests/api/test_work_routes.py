@@ -57,8 +57,6 @@ class StubWork:
         self.settings = WorkSessionSettings(
             model="model-1",
             reasoning_effort="medium",
-            collaboration_mode="Plan",
-            permission_profile=":workspace",
         )
         self.record = WorkSessionRecord(
             thread_id=THREAD_ID,
@@ -104,6 +102,7 @@ class StubWork:
             reason=None,
             codex_version="codex-cli 0.152.0",
             recent_projects=(self.record.cwd,),
+            unresolved_creates=(),
             event_generation="generation-1",
             event_cursor=4,
         )
@@ -152,13 +151,6 @@ class StubWork:
             event_cursor=4,
         )
 
-    async def get_turn_page(
-        self, thread_id: str, *, cursor: str | None, limit: int
-    ) -> WorkTurnPage:
-        self._raise()
-        self.last_call = ("turns", (thread_id, cursor, limit))
-        return WorkTurnPage((self.timeline,), None)
-
     async def update_settings(
         self,
         thread_id: str,
@@ -168,14 +160,6 @@ class StubWork:
     ) -> WorkSessionRecord:
         self._raise()
         self.last_call = ("settings", (thread_id, expected_revision, updates))
-        self.record = replace(self.record, revision=2)
-        return self.record
-
-    async def rename(
-        self, thread_id: str, *, expected_revision: int, name: str
-    ) -> WorkSessionRecord:
-        self._raise()
-        self.last_call = ("rename", (thread_id, expected_revision, name))
         self.record = replace(self.record, revision=2)
         return self.record
 
@@ -217,16 +201,36 @@ class StubWork:
         thread_id: str,
         interaction_id: str,
         *,
+        operation_id: str,
         value: JsonValue,
-    ) -> None:
+    ) -> WorkOperationAcknowledgement:
         self._raise()
-        self.last_call = ("respond", (thread_id, interaction_id, value))
+        self.last_call = (
+            "respond",
+            (thread_id, interaction_id, operation_id, value),
+        )
+        return self._operation(WorkOperationKind.RESPOND)
+
+    async def get_operation(self, operation_id: str) -> WorkOperationAcknowledgement:
+        self._raise()
+        self.last_call = ("operation", operation_id)
+        return self._operation(WorkOperationKind.SEND)
+
+    async def abandon_operation(
+        self, operation_id: str
+    ) -> WorkOperationAcknowledgement:
+        self._raise()
+        self.last_call = ("abandon", operation_id)
+        return replace(
+            self._operation(WorkOperationKind.SEND),
+            state=WorkOperationState.ABANDONED,
+        )
 
     def _operation(self, kind: WorkOperationKind) -> WorkOperationAcknowledgement:
         return WorkOperationAcknowledgement(
             operation_id=OPERATION_ID,
             kind=kind,
-            state=WorkOperationState.RESERVED,
+            state=WorkOperationState.ACCEPTED,
             thread_id=THREAD_ID,
             turn_id=None,
         )
@@ -262,22 +266,17 @@ def test_work_reads_serialize_native_state_without_exposing_private_ids() -> Non
     bootstrap = client.get("/admin/api/work/bootstrap")
     listed = client.get("/admin/api/work/sessions", params={"query": "repo"})
     detail = client.get(f"/admin/api/work/sessions/{THREAD_ID}")
-    turns = client.get(
-        f"/admin/api/work/sessions/{THREAD_ID}/turns",
-        params={"cursor": "native-cursor"},
-    )
-
     assert bootstrap.status_code == listed.status_code == detail.status_code == 200
     assert bootstrap.json()["recent_projects"] == ["C:\\example"]
+    assert bootstrap.json()["unresolved_creates"] == []
     assert listed.json()["sessions"][0]["thread_id"] == THREAD_ID
     assert listed.json()["next_cursor"]
-    assert work.last_call == ("turns", (THREAD_ID, "native-cursor", 50))
     item = detail.json()["turns"]["items"][0]
     assert "<strong>safe</strong>" in item["html"]
     assert "<script>" not in item["html"]
     assert "connection_id" not in detail.text
     assert "request_id" not in detail.text
-    for response in (bootstrap, listed, detail, turns):
+    for response in (bootstrap, listed, detail):
         assert response.headers["cache-control"] == "no-store"
 
 
@@ -298,13 +297,6 @@ def test_work_mutations_forward_explicit_revision_operation_and_answer_shapes() 
             f"/admin/api/work/sessions/{THREAD_ID}/settings",
             {"expected_revision": 1, "updates": {"model": "model-1"}},
             ("settings", (THREAD_ID, 1, {"model": "model-1"})),
-            200,
-        ),
-        (
-            "put",
-            f"/admin/api/work/sessions/{THREAD_ID}/name",
-            {"expected_revision": 1, "name": "Renamed"},
-            ("rename", (THREAD_ID, 1, "Renamed")),
             200,
         ),
         (
@@ -341,12 +333,31 @@ def test_work_mutations_forward_explicit_revision_operation_and_answer_shapes() 
         ),
         (
             "post",
-            f"/admin/api/work/sessions/{THREAD_ID}/interactions/interaction-1",
-            {"value": {"decision": "accept"}},
+            f"/admin/api/work/sessions/{THREAD_ID}/interactions/interaction-1/responses",
+            {"operation_id": OPERATION_ID, "value": {"decision": "accept"}},
             (
                 "respond",
-                (THREAD_ID, "interaction-1", {"decision": "accept"}),
+                (
+                    THREAD_ID,
+                    "interaction-1",
+                    OPERATION_ID,
+                    {"decision": "accept"},
+                ),
             ),
+            202,
+        ),
+        (
+            "get",
+            f"/admin/api/work/operations/{OPERATION_ID}",
+            None,
+            ("operation", OPERATION_ID),
+            200,
+        ),
+        (
+            "post",
+            f"/admin/api/work/operations/{OPERATION_ID}/abandon",
+            {"confirm": True},
+            ("abandon", OPERATION_ID),
             200,
         ),
     )
@@ -355,6 +366,10 @@ def test_work_mutations_forward_explicit_revision_operation_and_answer_shapes() 
         assert response.status_code == status
         assert response.headers["cache-control"] == "no-store"
         assert work.last_call == expected
+        if status == 202:
+            assert response.headers["location"] == (
+                f"/admin/api/work/operations/{OPERATION_ID}"
+            )
 
 
 @pytest.mark.parametrize(

@@ -3,7 +3,7 @@
 import base64
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
 
@@ -45,11 +45,6 @@ class WorkSettingsPayload(BaseModel):
     updates: JsonObject
 
 
-class WorkRenamePayload(BaseModel):
-    expected_revision: int = Field(gt=0)
-    name: str = Field(max_length=200)
-
-
 class WorkSendPayload(BaseModel):
     expected_revision: int = Field(gt=0)
     operation_id: str
@@ -61,7 +56,12 @@ class WorkOperationPayload(BaseModel):
 
 
 class WorkInteractionPayload(BaseModel):
+    operation_id: str
     value: JsonValue
+
+
+class WorkAbandonPayload(BaseModel):
+    confirm: bool
 
 
 @router.get("/admin/work", include_in_schema=False)
@@ -137,15 +137,16 @@ async def list_work_sessions(
 async def create_work_session(
     payload: WorkCreatePayload,
     request: Request,
+    response: Response,
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    return _operation_payload(
-        await _work(services).create_session(
-            cwd=payload.cwd,
-            operation_id=payload.operation_id,
-        )
+    acknowledgement = await _work(services).create_session(
+        cwd=payload.cwd,
+        operation_id=payload.operation_id,
     )
+    _set_operation_location(response, acknowledgement)
+    return _operation_payload(acknowledgement)
 
 
 @router.get("/admin/api/work/sessions/{thread_id}")
@@ -156,24 +157,6 @@ async def get_work_session(
 ) -> JsonObject:
     require_loopback_admin(request)
     return _detail_payload(await _work(services).get_detail(thread_id))
-
-
-@router.get("/admin/api/work/sessions/{thread_id}/turns")
-async def get_work_turns(
-    thread_id: str,
-    request: Request,
-    cursor: str | None = None,
-    limit: int = Query(default=50, ge=1, le=50),
-    services: ApiServices = Depends(get_services),
-) -> JsonObject:
-    require_loopback_admin(request)
-    return _turn_page_payload(
-        await _work(services).get_turn_page(
-            thread_id,
-            cursor=cursor,
-            limit=limit,
-        )
-    )
 
 
 @router.patch("/admin/api/work/sessions/{thread_id}/settings")
@@ -193,39 +176,23 @@ async def update_work_settings(
     )
 
 
-@router.put("/admin/api/work/sessions/{thread_id}/name")
-async def rename_work_session(
-    thread_id: str,
-    payload: WorkRenamePayload,
-    request: Request,
-    services: ApiServices = Depends(get_services),
-) -> JsonObject:
-    require_loopback_admin(request)
-    return _record_payload(
-        await _work(services).rename(
-            thread_id,
-            expected_revision=payload.expected_revision,
-            name=payload.name,
-        )
-    )
-
-
 @router.post("/admin/api/work/sessions/{thread_id}/turns", status_code=202)
 async def send_work_turn(
     thread_id: str,
     payload: WorkSendPayload,
     request: Request,
+    response: Response,
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    return _operation_payload(
-        await _work(services).send(
-            thread_id,
-            expected_revision=payload.expected_revision,
-            operation_id=payload.operation_id,
-            text=payload.text,
-        )
+    acknowledgement = await _work(services).send(
+        thread_id,
+        expected_revision=payload.expected_revision,
+        operation_id=payload.operation_id,
+        text=payload.text,
     )
+    _set_operation_location(response, acknowledgement)
+    return _operation_payload(acknowledgement)
 
 
 @router.post("/admin/api/work/sessions/{thread_id}/stop", status_code=202)
@@ -233,12 +200,15 @@ async def stop_work_turn(
     thread_id: str,
     payload: WorkOperationPayload,
     request: Request,
+    response: Response,
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    return _operation_payload(
-        await _work(services).stop(thread_id, operation_id=payload.operation_id)
+    acknowledgement = await _work(services).stop(
+        thread_id, operation_id=payload.operation_id
     )
+    _set_operation_location(response, acknowledgement)
+    return _operation_payload(acknowledgement)
 
 
 @router.post("/admin/api/work/sessions/{thread_id}/delete", status_code=202)
@@ -246,12 +216,15 @@ async def delete_work_session(
     thread_id: str,
     payload: WorkOperationPayload,
     request: Request,
+    response: Response,
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    return _operation_payload(
-        await _work(services).delete(thread_id, operation_id=payload.operation_id)
+    acknowledgement = await _work(services).delete(
+        thread_id, operation_id=payload.operation_id
     )
+    _set_operation_location(response, acknowledgement)
+    return _operation_payload(acknowledgement)
 
 
 @router.post("/admin/api/work/sessions/{thread_id}/remove")
@@ -265,21 +238,50 @@ async def remove_missing_work_session(
     return {"removed": True}
 
 
-@router.post("/admin/api/work/sessions/{thread_id}/interactions/{interaction_id}")
+@router.post(
+    "/admin/api/work/sessions/{thread_id}/interactions/{interaction_id}/responses",
+    status_code=202,
+)
 async def respond_to_work_interaction(
     thread_id: str,
     interaction_id: str,
     payload: WorkInteractionPayload,
     request: Request,
+    response: Response,
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    await _work(services).respond(
+    acknowledgement = await _work(services).respond(
         thread_id,
         interaction_id,
+        operation_id=payload.operation_id,
         value=payload.value,
     )
-    return {"answered": True}
+    _set_operation_location(response, acknowledgement)
+    return _operation_payload(acknowledgement)
+
+
+@router.get("/admin/api/work/operations/{operation_id}")
+async def get_work_operation(
+    operation_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+) -> JsonObject:
+    require_loopback_admin(request)
+    return _operation_payload(await _work(services).get_operation(operation_id))
+
+
+@router.post("/admin/api/work/operations/{operation_id}/abandon")
+async def abandon_work_operation(
+    operation_id: str,
+    payload: WorkAbandonPayload,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+) -> JsonObject:
+    require_loopback_admin(request)
+    if not payload.confirm:
+        raise WorkValidationError("Confirm before continuing past uncertainty.")
+    return _operation_payload(await _work(services).abandon_operation(operation_id))
 
 
 def _work(services: ApiServices) -> WorkApplicationPort:
@@ -294,6 +296,9 @@ def _bootstrap_payload(bootstrap: WorkBootstrap) -> JsonObject:
         "reason": bootstrap.reason,
         "codex_version": bootstrap.codex_version,
         "recent_projects": list(bootstrap.recent_projects),
+        "unresolved_creates": [
+            _operation_payload(operation) for operation in bootstrap.unresolved_creates
+        ],
         "event_generation": bootstrap.event_generation,
         "event_cursor": bootstrap.event_cursor,
     }
@@ -322,8 +327,6 @@ def _record_payload(record: WorkSessionRecord) -> JsonObject:
         "settings": {
             "model": record.settings.model,
             "reasoning_effort": record.settings.reasoning_effort,
-            "collaboration_mode": record.settings.collaboration_mode,
-            "permission_profile": record.settings.permission_profile,
         },
     }
 
@@ -334,8 +337,6 @@ def _detail_payload(detail: WorkSessionDetail) -> JsonObject:
         "settings": {
             "model": detail.settings.model,
             "reasoning_effort": detail.settings.reasoning_effort,
-            "collaboration_mode": detail.settings.collaboration_mode,
-            "permission_profile": detail.settings.permission_profile,
         },
         "controls": detail.controls,
         "turns": _turn_page_payload(detail.turns),
@@ -389,7 +390,18 @@ def _operation_payload(
         "state": acknowledgement.state.value,
         "thread_id": acknowledgement.thread_id,
         "turn_id": acknowledgement.turn_id,
+        "error_code": acknowledgement.error_code,
+        "error_message": acknowledgement.error_message,
     }
+
+
+def _set_operation_location(
+    response: Response,
+    acknowledgement: WorkOperationAcknowledgement,
+) -> None:
+    response.headers["Location"] = (
+        f"/admin/api/work/operations/{acknowledgement.operation_id}"
+    )
 
 
 def _sse_event(event: PublishedEvent) -> ServerSentEvent:

@@ -138,6 +138,8 @@
 }
 
 .work-status.failed,
+.work-status.unknown,
+.work-status.needs_attention,
 .work-status.disconnected,
 .work-status.interrupted {
   color: var(--error);
@@ -172,19 +174,11 @@
 .work-title {
   flex: 1;
   min-width: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  margin: 0;
   padding: 7px 10px;
   color: var(--text-strong);
   font-size: 19px;
   font-weight: 700;
-}
-
-.work-title:hover,
-.work-title:focus {
-  border-color: var(--line-strong);
-  background: var(--input);
 }
 
 .work-back-button {

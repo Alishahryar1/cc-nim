@@ -16,7 +16,6 @@ from .models import (
     WorkSessionPage,
     WorkSessionRecord,
     WorkSessionSettings,
-    WorkTurnPage,
 )
 
 
@@ -29,7 +28,9 @@ class WorkStorePort(Protocol):
 
     async def get_session(self, thread_id: str) -> WorkSessionRecord: ...
 
-    async def create_session(self, record: WorkSessionRecord) -> WorkSessionRecord: ...
+    async def create_session_from_operation(
+        self, operation_id: str, record: WorkSessionRecord
+    ) -> tuple[WorkOperation, WorkSessionRecord]: ...
 
     async def update_settings(
         self,
@@ -39,35 +40,55 @@ class WorkStorePort(Protocol):
         settings: WorkSessionSettings,
     ) -> WorkSessionRecord: ...
 
-    async def bump_revision(
-        self, thread_id: str, *, expected_revision: int
-    ) -> WorkSessionRecord: ...
-
     async def delete_session(self, thread_id: str) -> None: ...
 
-    async def reserve_operation(
+    async def complete_delete(
+        self, operation_id: str, thread_id: str
+    ) -> WorkOperation: ...
+
+    async def admit_operation(
         self,
         *,
         operation_id: str,
         kind: WorkOperationKind,
         session_id: str | None,
+        interaction_id: str | None,
         intent_digest: str,
+        payload: JsonObject,
+        expected_revision: int | None = None,
     ) -> tuple[WorkOperation, bool]: ...
 
-    async def update_operation(
+    async def get_operation(self, operation_id: str) -> WorkOperation: ...
+
+    async def list_operations(
+        self, *, states: tuple[WorkOperationState, ...]
+    ) -> tuple[WorkOperation, ...]: ...
+
+    async def claim_operation(self, operation_id: str) -> WorkOperation | None: ...
+
+    async def record_operation_evidence(
         self,
         operation_id: str,
         *,
+        native_thread_id: str | None = None,
+        native_turn_id: str | None = None,
+        native_connection_id: str | None = None,
+        captured_model: str | None = None,
+        captured_reasoning_effort: str | None = None,
+    ) -> WorkOperation: ...
+
+    async def transition_operation(
+        self,
+        operation_id: str,
+        *,
+        expected_states: tuple[WorkOperationState, ...],
         state: WorkOperationState,
-        result_thread_id: str | None = None,
-        result_turn_id: str | None = None,
+        native_thread_id: str | None = None,
+        native_turn_id: str | None = None,
+        native_connection_id: str | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> WorkOperation: ...
-
-    async def prune_deleted_session_operations(
-        self, thread_id: str, *, keep_operation_id: str
-    ) -> None: ...
 
     async def recent_projects(self, *, limit: int) -> tuple[str, ...]: ...
 
@@ -99,20 +120,12 @@ class WorkApplicationPort(Protocol):
 
     async def get_detail(self, thread_id: str) -> WorkSessionDetail: ...
 
-    async def get_turn_page(
-        self, thread_id: str, *, cursor: str | None, limit: int
-    ) -> WorkTurnPage: ...
-
     async def update_settings(
         self,
         thread_id: str,
         *,
         expected_revision: int,
         updates: JsonObject,
-    ) -> WorkSessionRecord: ...
-
-    async def rename(
-        self, thread_id: str, *, expected_revision: int, name: str
     ) -> WorkSessionRecord: ...
 
     async def send(
@@ -139,5 +152,14 @@ class WorkApplicationPort(Protocol):
         thread_id: str,
         interaction_id: str,
         *,
+        operation_id: str,
         value: JsonValue,
-    ) -> None: ...
+    ) -> WorkOperationAcknowledgement: ...
+
+    async def get_operation(
+        self, operation_id: str
+    ) -> WorkOperationAcknowledgement: ...
+
+    async def abandon_operation(
+        self, operation_id: str
+    ) -> WorkOperationAcknowledgement: ...

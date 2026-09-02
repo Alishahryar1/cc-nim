@@ -1,0 +1,34 @@
+name: Codex App-Server Contract
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 11 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  latest-codex:
+    name: Latest Codex contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.11.16"
+          enable-cache: false
+
+      - name: Install Python
+        run: uv python install 3.14.0
+
+      - name: Install latest Codex
+        run: npm install --global @openai/codex@latest
+
+      - name: Exercise app-server contract
+        run: uv run smoke/codex_app_server_contract.py

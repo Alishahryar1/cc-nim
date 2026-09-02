@@ -1,5 +1,6 @@
 """SQLite persistence owned exclusively by local Work Sessions."""
 
+import json
 import os
 import sqlite3
 import time
@@ -21,12 +22,34 @@ from free_claude_code.application.work.models import (
     WorkUnavailableError,
 )
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
+from free_claude_code.core.json_types import JsonObject
 
 from .work_migrations import MIGRATIONS
 
 T = TypeVar("T")
 
 _BUSY_TIMEOUT_MS = 5_000
+_ACTIVE_STATES = (
+    WorkOperationState.ACCEPTED.value,
+    WorkOperationState.EXECUTING.value,
+    WorkOperationState.UNKNOWN.value,
+)
+_LEGAL_TRANSITIONS = {
+    WorkOperationState.ACCEPTED: {
+        WorkOperationState.EXECUTING,
+        WorkOperationState.FAILED,
+    },
+    WorkOperationState.EXECUTING: {
+        WorkOperationState.UNKNOWN,
+        WorkOperationState.SUCCEEDED,
+        WorkOperationState.FAILED,
+    },
+    WorkOperationState.UNKNOWN: {
+        WorkOperationState.SUCCEEDED,
+        WorkOperationState.FAILED,
+        WorkOperationState.ABANDONED,
+    },
+}
 
 
 class SQLiteWorkStore:
@@ -51,7 +74,7 @@ class SQLiteWorkStore:
                 "Work Sessions is already open in another FCC server process."
             )
         try:
-            await anyio.to_thread.run_sync(self._run_sync, self._migrate_and_repair)
+            await anyio.to_thread.run_sync(self._run_sync, self._migrate)
             _owner_only(self._database_path, 0o600)
             for suffix in ("-wal", "-shm"):
                 sidecar = Path(f"{self._database_path}{suffix}")
@@ -81,35 +104,57 @@ class SQLiteWorkStore:
     async def get_session(self, thread_id: str) -> WorkSessionRecord:
         return await self._run(lambda connection: _get_session(connection, thread_id))
 
-    async def create_session(self, record: WorkSessionRecord) -> WorkSessionRecord:
-        def operation(connection: sqlite3.Connection) -> WorkSessionRecord:
+    async def create_session_from_operation(
+        self, operation_id: str, record: WorkSessionRecord
+    ) -> tuple[WorkOperation, WorkSessionRecord]:
+        def operation(
+            connection: sqlite3.Connection,
+        ) -> tuple[WorkOperation, WorkSessionRecord]:
             connection.execute("BEGIN IMMEDIATE")
-            try:
-                connection.execute(
-                    """
-                    INSERT INTO work_sessions (
-                        thread_id, cwd, cwd_key, model, reasoning_effort,
-                        collaboration_mode, permission_profile, revision,
-                        registered_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        record.thread_id,
-                        record.cwd,
-                        record.cwd_key,
-                        record.settings.model,
-                        record.settings.reasoning_effort,
-                        record.settings.collaboration_mode,
-                        record.settings.permission_profile,
-                        record.revision,
-                        record.registered_at_ms,
-                    ),
+            current = _get_operation(connection, operation_id)
+            if current.kind is not WorkOperationKind.CREATE:
+                connection.rollback()
+                raise WorkConflictError(
+                    "Only a create operation can register a session."
                 )
+            if current.state is WorkOperationState.SUCCEEDED:
+                result_id = current.native_thread_id
+                if result_id is None:
+                    connection.rollback()
+                    raise WorkUnavailableError(
+                        "Completed create has no native thread ID."
+                    )
+                existing = _get_session(connection, result_id)
+                connection.commit()
+                return current, existing
+            if current.state is not WorkOperationState.EXECUTING:
+                connection.rollback()
+                raise WorkConflictError("Create operation is not executing.")
+            if current.native_thread_id not in {None, record.thread_id}:
+                connection.rollback()
+                raise WorkConflictError("Create operation changed native thread ID.")
+            try:
+                _insert_session(connection, record)
             except sqlite3.IntegrityError as exc:
                 connection.rollback()
                 raise WorkConflictError("Work session already exists.") from exc
+            _update_operation_row(
+                connection,
+                current,
+                state=WorkOperationState.SUCCEEDED,
+                native_thread_id=record.thread_id,
+                native_turn_id=None,
+                native_connection_id=current.native_connection_id,
+                error_code=None,
+                error_message=None,
+                captured_model=record.settings.model,
+                captured_reasoning_effort=record.settings.reasoning_effort,
+            )
             connection.commit()
-            return _get_session(connection, record.thread_id)
+            return (
+                _get_operation(connection, operation_id),
+                _get_session(connection, record.thread_id),
+            )
 
         return await self._run(operation)
 
@@ -124,36 +169,31 @@ class SQLiteWorkStore:
             connection.execute("BEGIN IMMEDIATE")
             current = _get_session(connection, thread_id)
             _expect_revision(current, expected_revision)
+            active_blocker = connection.execute(
+                """
+                SELECT 1 FROM work_operations
+                WHERE session_id = ?
+                    AND (
+                        kind IN ('stop', 'delete')
+                        OR state = 'unknown'
+                    )
+                    AND state IN ('accepted', 'executing', 'unknown')
+                LIMIT 1
+                """,
+                (thread_id,),
+            ).fetchone()
+            if active_blocker is not None:
+                connection.rollback()
+                raise WorkConflictError(
+                    "Wait for the current Work operation before changing settings."
+                )
             connection.execute(
                 """
                 UPDATE work_sessions
-                SET model = ?, reasoning_effort = ?, collaboration_mode = ?,
-                    permission_profile = ?, revision = revision + 1
+                SET model = ?, reasoning_effort = ?, revision = revision + 1
                 WHERE thread_id = ?
                 """,
-                (
-                    settings.model,
-                    settings.reasoning_effort,
-                    settings.collaboration_mode,
-                    settings.permission_profile,
-                    thread_id,
-                ),
-            )
-            connection.commit()
-            return _get_session(connection, thread_id)
-
-        return await self._run(operation)
-
-    async def bump_revision(
-        self, thread_id: str, *, expected_revision: int
-    ) -> WorkSessionRecord:
-        def operation(connection: sqlite3.Connection) -> WorkSessionRecord:
-            connection.execute("BEGIN IMMEDIATE")
-            current = _get_session(connection, thread_id)
-            _expect_revision(current, expected_revision)
-            connection.execute(
-                "UPDATE work_sessions SET revision = revision + 1 WHERE thread_id = ?",
-                (thread_id,),
+                (settings.model, settings.reasoning_effort, thread_id),
             )
             connection.commit()
             return _get_session(connection, thread_id)
@@ -173,14 +213,58 @@ class SQLiteWorkStore:
 
         await self._run(operation)
 
-    async def reserve_operation(
+    async def complete_delete(self, operation_id: str, thread_id: str) -> WorkOperation:
+        def operation(connection: sqlite3.Connection) -> WorkOperation:
+            connection.execute("BEGIN IMMEDIATE")
+            current = _get_operation(connection, operation_id)
+            if current.kind is not WorkOperationKind.DELETE:
+                connection.rollback()
+                raise WorkConflictError("Only a delete operation can remove a session.")
+            if current.state is WorkOperationState.SUCCEEDED:
+                connection.commit()
+                return current
+            if current.state not in {
+                WorkOperationState.EXECUTING,
+                WorkOperationState.UNKNOWN,
+            }:
+                connection.rollback()
+                raise WorkConflictError("Delete operation cannot be completed now.")
+            connection.execute(
+                "DELETE FROM work_sessions WHERE thread_id = ?", (thread_id,)
+            )
+            _update_operation_row(
+                connection,
+                current,
+                state=WorkOperationState.SUCCEEDED,
+                native_thread_id=thread_id,
+                native_turn_id=current.native_turn_id,
+                native_connection_id=current.native_connection_id,
+                error_code=None,
+                error_message=None,
+            )
+            connection.commit()
+            return _get_operation(connection, operation_id)
+
+        return await self._run(operation)
+
+    async def admit_operation(
         self,
         *,
         operation_id: str,
         kind: WorkOperationKind,
         session_id: str | None,
+        interaction_id: str | None,
         intent_digest: str,
+        payload: JsonObject,
+        expected_revision: int | None = None,
     ) -> tuple[WorkOperation, bool]:
+        payload_json = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
         def operation(
             connection: sqlite3.Connection,
         ) -> tuple[WorkOperation, bool]:
@@ -194,6 +278,7 @@ class SQLiteWorkStore:
                 if (
                     existing.kind is not kind
                     or existing.session_id != session_id
+                    or existing.interaction_id != interaction_id
                     or existing.intent_digest != intent_digest
                 ):
                     connection.rollback()
@@ -202,99 +287,237 @@ class SQLiteWorkStore:
                     )
                 connection.commit()
                 return existing, False
+
+            record: WorkSessionRecord | None = None
+            if kind is not WorkOperationKind.CREATE:
+                if session_id is None:
+                    connection.rollback()
+                    raise WorkConflictError("Work operation requires a session.")
+                record = _get_session(connection, session_id)
+                if expected_revision is not None:
+                    _expect_revision(record, expected_revision)
+
+            if session_id is not None and kind not in {
+                WorkOperationKind.DELETE,
+            }:
+                deleting = connection.execute(
+                    """
+                    SELECT 1 FROM work_operations
+                    WHERE session_id = ? AND kind = 'delete'
+                        AND state IN ('accepted', 'executing', 'unknown')
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                ).fetchone()
+                if deleting is not None:
+                    connection.rollback()
+                    raise WorkConflictError("This Work session is being deleted.")
+
+            if kind in {WorkOperationKind.STOP, WorkOperationKind.DELETE}:
+                existing_row = connection.execute(
+                    """
+                    SELECT * FROM work_operations
+                    WHERE session_id = ? AND kind = ?
+                        AND state IN ('accepted', 'executing', 'unknown')
+                    ORDER BY created_at_ms, operation_id
+                    LIMIT 1
+                    """,
+                    (session_id, kind.value),
+                ).fetchone()
+                if existing_row is not None:
+                    connection.commit()
+                    return _operation_from_row(existing_row), False
+
+            if kind is WorkOperationKind.SEND:
+                active_send = connection.execute(
+                    """
+                    SELECT 1 FROM work_operations
+                    WHERE session_id = ?
+                        AND (
+                            kind IN ('send', 'stop')
+                            OR state = 'unknown'
+                        )
+                        AND state IN ('accepted', 'executing', 'unknown')
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                ).fetchone()
+                if active_send is not None:
+                    connection.rollback()
+                    raise WorkConflictError(
+                        "This Work session already has an active or uncertain turn or Stop operation."
+                    )
+
+            if kind is WorkOperationKind.RESPOND:
+                claimed = connection.execute(
+                    """
+                    SELECT 1 FROM work_operations
+                    WHERE kind = 'respond' AND interaction_id = ?
+                    LIMIT 1
+                    """,
+                    (interaction_id,),
+                ).fetchone()
+                if claimed is not None:
+                    connection.rollback()
+                    raise WorkConflictError("This Codex request was already answered.")
+
+            captured_model = record.settings.model if record is not None else None
+            captured_effort = (
+                record.settings.reasoning_effort if record is not None else None
+            )
             now = _now_ms()
             connection.execute(
                 """
                 INSERT INTO work_operations (
-                    operation_id, kind, session_id, intent_digest, state,
-                    result_thread_id, result_turn_id, error_code, error_message,
-                    created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, 'reserved', NULL, NULL, NULL, NULL, ?, ?)
+                    operation_id, kind, session_id, interaction_id,
+                    intent_digest, payload_json, state, expected_revision,
+                    captured_model, captured_reasoning_effort,
+                    native_thread_id, native_turn_id, native_connection_id,
+                    error_code, error_message, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, NULL, NULL,
+                          NULL, NULL, NULL, ?, ?)
                 """,
-                (operation_id, kind.value, session_id, intent_digest, now, now),
+                (
+                    operation_id,
+                    kind.value,
+                    session_id,
+                    interaction_id,
+                    intent_digest,
+                    payload_json,
+                    expected_revision,
+                    captured_model,
+                    captured_effort,
+                    now,
+                    now,
+                ),
             )
             connection.commit()
-            created = connection.execute(
-                "SELECT * FROM work_operations WHERE operation_id = ?",
-                (operation_id,),
-            ).fetchone()
-            if created is None:
-                raise WorkUnavailableError("Could not reserve Work operation.")
-            return _operation_from_row(created), True
+            return _get_operation(connection, operation_id), True
 
         return await self._run(operation)
 
-    async def update_operation(
+    async def get_operation(self, operation_id: str) -> WorkOperation:
+        return await self._run(
+            lambda connection: _get_operation(connection, operation_id)
+        )
+
+    async def list_operations(
+        self, *, states: tuple[WorkOperationState, ...]
+    ) -> tuple[WorkOperation, ...]:
+        if not states:
+            return ()
+        placeholders = ",".join("?" for _ in states)
+
+        def operation(connection: sqlite3.Connection) -> tuple[WorkOperation, ...]:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM work_operations
+                WHERE state IN ({placeholders})
+                ORDER BY created_at_ms, operation_id
+                """,
+                tuple(state.value for state in states),
+            ).fetchall()
+            return tuple(_operation_from_row(row) for row in rows)
+
+        return await self._run(operation)
+
+    async def claim_operation(self, operation_id: str) -> WorkOperation | None:
+        def operation(connection: sqlite3.Connection) -> WorkOperation | None:
+            connection.execute("BEGIN IMMEDIATE")
+            current = _get_operation(connection, operation_id)
+            if current.state is not WorkOperationState.ACCEPTED:
+                connection.commit()
+                return None
+            _update_operation_row(
+                connection,
+                current,
+                state=WorkOperationState.EXECUTING,
+                native_thread_id=current.native_thread_id,
+                native_turn_id=current.native_turn_id,
+                native_connection_id=current.native_connection_id,
+                error_code=None,
+                error_message=None,
+            )
+            connection.commit()
+            return _get_operation(connection, operation_id)
+
+        return await self._run(operation)
+
+    async def record_operation_evidence(
         self,
         operation_id: str,
         *,
+        native_thread_id: str | None = None,
+        native_turn_id: str | None = None,
+        native_connection_id: str | None = None,
+        captured_model: str | None = None,
+        captured_reasoning_effort: str | None = None,
+    ) -> WorkOperation:
+        def operation(connection: sqlite3.Connection) -> WorkOperation:
+            connection.execute("BEGIN IMMEDIATE")
+            current = _get_operation(connection, operation_id)
+            if current.state is not WorkOperationState.EXECUTING:
+                connection.commit()
+                return current
+            _update_operation_row(
+                connection,
+                current,
+                state=current.state,
+                native_thread_id=native_thread_id or current.native_thread_id,
+                native_turn_id=native_turn_id or current.native_turn_id,
+                native_connection_id=(
+                    native_connection_id or current.native_connection_id
+                ),
+                error_code=current.error_code,
+                error_message=current.error_message,
+                captured_model=captured_model,
+                captured_reasoning_effort=captured_reasoning_effort,
+            )
+            connection.commit()
+            return _get_operation(connection, operation_id)
+
+        return await self._run(operation)
+
+    async def transition_operation(
+        self,
+        operation_id: str,
+        *,
+        expected_states: tuple[WorkOperationState, ...],
         state: WorkOperationState,
-        result_thread_id: str | None = None,
-        result_turn_id: str | None = None,
+        native_thread_id: str | None = None,
+        native_turn_id: str | None = None,
+        native_connection_id: str | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> WorkOperation:
         def operation(connection: sqlite3.Connection) -> WorkOperation:
             connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT * FROM work_operations WHERE operation_id = ?",
-                (operation_id,),
-            ).fetchone()
-            if row is None:
-                connection.rollback()
-                raise WorkNotFoundError("Work operation was not found.")
-            existing = _operation_from_row(row)
-            if existing.state in {
-                WorkOperationState.COMPLETED,
-                WorkOperationState.INTERRUPTED,
-                WorkOperationState.FAILED,
-            }:
+            current = _get_operation(connection, operation_id)
+            if current.state is state or current.state.terminal:
                 connection.commit()
-                return existing
-            updated = connection.execute(
-                """
-                UPDATE work_operations
-                SET state = ?, result_thread_id = ?, result_turn_id = ?,
-                    error_code = ?, error_message = ?, updated_at_ms = ?
-                WHERE operation_id = ?
-                """,
-                (
-                    state.value,
-                    result_thread_id,
-                    result_turn_id,
-                    error_code,
-                    error_message,
-                    _now_ms(),
-                    operation_id,
-                ),
-            ).rowcount
-            if updated != 1:
+                return current
+            if current.state not in expected_states:
                 connection.rollback()
-                raise WorkUnavailableError("Could not update Work operation.")
+                raise WorkConflictError("Work operation changed before it was updated.")
+            if state not in _LEGAL_TRANSITIONS.get(current.state, set()):
+                connection.rollback()
+                raise WorkConflictError("Invalid Work operation state transition.")
+            _update_operation_row(
+                connection,
+                current,
+                state=state,
+                native_thread_id=native_thread_id or current.native_thread_id,
+                native_turn_id=native_turn_id or current.native_turn_id,
+                native_connection_id=(
+                    native_connection_id or current.native_connection_id
+                ),
+                error_code=error_code,
+                error_message=error_message,
+            )
             connection.commit()
-            row = connection.execute(
-                "SELECT * FROM work_operations WHERE operation_id = ?",
-                (operation_id,),
-            ).fetchone()
-            if row is None:
-                raise WorkUnavailableError("Could not load Work operation.")
-            return _operation_from_row(row)
+            return _get_operation(connection, operation_id)
 
         return await self._run(operation)
-
-    async def prune_deleted_session_operations(
-        self, thread_id: str, *, keep_operation_id: str
-    ) -> None:
-        await self._run(
-            lambda connection: connection.execute(
-                """
-                DELETE FROM work_operations
-                WHERE (session_id = ? OR result_thread_id = ?)
-                    AND operation_id != ?
-                """,
-                (thread_id, thread_id, keep_operation_id),
-            )
-        )
 
     async def recent_projects(self, *, limit: int) -> tuple[str, ...]:
         if limit <= 0:
@@ -344,7 +567,7 @@ class SQLiteWorkStore:
         finally:
             connection.close()
 
-    def _migrate_and_repair(self, connection: sqlite3.Connection) -> None:
+    def _migrate(self, connection: sqlite3.Connection) -> None:
         _validate_migrations()
         row = connection.execute("PRAGMA user_version").fetchone()
         if row is None or not isinstance(row[0], int):
@@ -368,26 +591,32 @@ class SQLiteWorkStore:
                 raise
             current = migration.version
 
-        now = _now_ms()
-        connection.execute("BEGIN IMMEDIATE")
-        connection.execute(
-            """
-            UPDATE work_operations
-            SET state = 'interrupted', error_code = 'server_restart',
-                error_message = 'FCC restarted before the operation completed.',
-                updated_at_ms = ?
-            WHERE state IN ('reserved', 'submitted')
-            """,
-            (now,),
-        )
-        connection.commit()
-
 
 def _validate_migrations() -> None:
     expected = tuple(range(1, len(MIGRATIONS) + 1))
     actual = tuple(migration.version for migration in MIGRATIONS)
     if actual != expected:
         raise RuntimeError("Work migrations must be ordered, unique, and contiguous.")
+
+
+def _insert_session(connection: sqlite3.Connection, record: WorkSessionRecord) -> None:
+    connection.execute(
+        """
+        INSERT INTO work_sessions (
+            thread_id, cwd, cwd_key, model, reasoning_effort,
+            revision, registered_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            record.thread_id,
+            record.cwd,
+            record.cwd_key,
+            record.settings.model,
+            record.settings.reasoning_effort,
+            record.revision,
+            record.registered_at_ms,
+        ),
+    )
 
 
 def _get_session(connection: sqlite3.Connection, thread_id: str) -> WorkSessionRecord:
@@ -400,19 +629,29 @@ def _get_session(connection: sqlite3.Connection, thread_id: str) -> WorkSessionR
 
 
 def _session_from_row(row: sqlite3.Row) -> WorkSessionRecord:
+    model = _row_str(row, "model")
+    if not model:
+        raise WorkUnavailableError("Work storage contains an empty model.")
     return WorkSessionRecord(
         thread_id=_row_str(row, "thread_id"),
         cwd=_row_str(row, "cwd"),
         cwd_key=_row_str(row, "cwd_key"),
         settings=WorkSessionSettings(
-            model=_row_optional_str(row, "model"),
+            model=model,
             reasoning_effort=_row_optional_str(row, "reasoning_effort"),
-            collaboration_mode=_row_optional_str(row, "collaboration_mode"),
-            permission_profile=_row_optional_str(row, "permission_profile"),
         ),
         revision=_row_int(row, "revision"),
         registered_at_ms=_row_int(row, "registered_at_ms"),
     )
+
+
+def _get_operation(connection: sqlite3.Connection, operation_id: str) -> WorkOperation:
+    row = connection.execute(
+        "SELECT * FROM work_operations WHERE operation_id = ?", (operation_id,)
+    ).fetchone()
+    if row is None:
+        raise WorkNotFoundError("Work operation was not found.")
+    return _operation_from_row(row)
 
 
 def _operation_from_row(row: sqlite3.Row) -> WorkOperation:
@@ -420,10 +659,16 @@ def _operation_from_row(row: sqlite3.Row) -> WorkOperation:
         operation_id=_row_str(row, "operation_id"),
         kind=WorkOperationKind(_row_str(row, "kind")),
         session_id=_row_optional_str(row, "session_id"),
+        interaction_id=_row_optional_str(row, "interaction_id"),
         intent_digest=_row_str(row, "intent_digest"),
+        payload=_row_payload(row),
         state=WorkOperationState(_row_str(row, "state")),
-        result_thread_id=_row_optional_str(row, "result_thread_id"),
-        result_turn_id=_row_optional_str(row, "result_turn_id"),
+        expected_revision=_row_optional_int(row, "expected_revision"),
+        captured_model=_row_optional_str(row, "captured_model"),
+        captured_reasoning_effort=_row_optional_str(row, "captured_reasoning_effort"),
+        native_thread_id=_row_optional_str(row, "native_thread_id"),
+        native_turn_id=_row_optional_str(row, "native_turn_id"),
+        native_connection_id=_row_optional_str(row, "native_connection_id"),
         error_code=_row_optional_str(row, "error_code"),
         error_message=_row_optional_str(row, "error_message"),
         created_at_ms=_row_int(row, "created_at_ms"),
@@ -431,9 +676,78 @@ def _operation_from_row(row: sqlite3.Row) -> WorkOperation:
     )
 
 
+def _update_operation_row(
+    connection: sqlite3.Connection,
+    current: WorkOperation,
+    *,
+    state: WorkOperationState,
+    native_thread_id: str | None,
+    native_turn_id: str | None,
+    native_connection_id: str | None,
+    error_code: str | None,
+    error_message: str | None,
+    captured_model: str | None = None,
+    captured_reasoning_effort: str | None = None,
+) -> None:
+    payload_json = (
+        json.dumps(
+            current.payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if state in {WorkOperationState.ACCEPTED, WorkOperationState.EXECUTING}
+        else None
+    )
+    updated = connection.execute(
+        """
+        UPDATE work_operations
+        SET payload_json = ?, state = ?, captured_model = ?,
+            captured_reasoning_effort = ?, native_thread_id = ?,
+            native_turn_id = ?, native_connection_id = ?, error_code = ?,
+            error_message = ?, updated_at_ms = ?
+        WHERE operation_id = ?
+        """,
+        (
+            payload_json,
+            state.value,
+            captured_model if captured_model is not None else current.captured_model,
+            (
+                captured_reasoning_effort
+                if captured_reasoning_effort is not None
+                else current.captured_reasoning_effort
+            ),
+            native_thread_id,
+            native_turn_id,
+            native_connection_id,
+            error_code,
+            error_message,
+            _now_ms(),
+            current.operation_id,
+        ),
+    ).rowcount
+    if updated != 1:
+        raise WorkUnavailableError("Could not update Work operation.")
+
+
 def _expect_revision(session: WorkSessionRecord, expected: int) -> None:
     if session.revision != expected:
         raise WorkConflictError("Work session changed in another tab. Reload it.")
+
+
+def _row_payload(row: sqlite3.Row) -> JsonObject | None:
+    text = _row_optional_str(row, "payload_json")
+    if text is None:
+        return None
+    try:
+        decoded: object = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise WorkUnavailableError("Work storage contains invalid JSON.") from exc
+    if not isinstance(decoded, dict) or not all(
+        isinstance(key, str) for key in decoded
+    ):
+        raise WorkUnavailableError("Work storage contains an invalid payload.")
+    return decoded
 
 
 def _row_str(row: sqlite3.Row, key: str) -> str:
@@ -454,6 +768,15 @@ def _row_optional_str(row: sqlite3.Row, key: str) -> str | None:
 
 def _row_int(row: sqlite3.Row, key: str) -> int:
     value: object = row[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise WorkUnavailableError("Work storage contains an invalid integer value.")
+    return value
+
+
+def _row_optional_int(row: sqlite3.Row, key: str) -> int | None:
+    value: object = row[key]
+    if value is None:
+        return None
     if isinstance(value, bool) or not isinstance(value, int):
         raise WorkUnavailableError("Work storage contains an invalid integer value.")
     return value

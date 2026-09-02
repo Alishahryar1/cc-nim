@@ -16,6 +16,7 @@ class WorkStatus(StrEnum):
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"
     FAILED = "failed"
+    NEEDS_ATTENTION = "needs_attention"
     DISCONNECTED = "disconnected"
 
 
@@ -24,14 +25,20 @@ class WorkOperationKind(StrEnum):
     SEND = "send"
     STOP = "stop"
     DELETE = "delete"
+    RESPOND = "respond"
 
 
 class WorkOperationState(StrEnum):
-    RESERVED = "reserved"
-    SUBMITTED = "submitted"
-    COMPLETED = "completed"
-    INTERRUPTED = "interrupted"
+    ACCEPTED = "accepted"
+    EXECUTING = "executing"
+    UNKNOWN = "unknown"
+    SUCCEEDED = "succeeded"
     FAILED = "failed"
+    ABANDONED = "abandoned"
+
+    @property
+    def terminal(self) -> bool:
+        return self in {self.SUCCEEDED, self.FAILED, self.ABANDONED}
 
 
 class WorkInteractionKind(StrEnum):
@@ -43,10 +50,8 @@ class WorkInteractionKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class WorkSessionSettings:
-    model: str | None
+    model: str
     reasoning_effort: str | None
-    collaboration_mode: str | None
-    permission_profile: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +98,7 @@ class WorkTimelineItem:
 @dataclass(frozen=True, slots=True)
 class WorkTurnPage:
     items: tuple[WorkTimelineItem, ...]
-    next_cursor: str | None
+    next_cursor: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,10 +127,16 @@ class WorkOperation:
     operation_id: str
     kind: WorkOperationKind
     session_id: str | None
+    interaction_id: str | None
     intent_digest: str
+    payload: JsonObject | None
     state: WorkOperationState
-    result_thread_id: str | None
-    result_turn_id: str | None
+    expected_revision: int | None
+    captured_model: str | None
+    captured_reasoning_effort: str | None
+    native_thread_id: str | None
+    native_turn_id: str | None
+    native_connection_id: str | None
     error_code: str | None
     error_message: str | None
     created_at_ms: int
@@ -139,6 +150,8 @@ class WorkOperationAcknowledgement:
     state: WorkOperationState
     thread_id: str | None
     turn_id: str | None
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +160,7 @@ class WorkBootstrap:
     reason: str | None
     codex_version: str | None
     recent_projects: tuple[str, ...]
+    unresolved_creates: tuple[WorkOperationAcknowledgement, ...]
     event_generation: str
     event_cursor: int
 
@@ -160,7 +174,7 @@ class WorkUnavailableError(WorkError):
 
 
 class WorkCompatibilityError(WorkError):
-    """The installed Codex is too old for the Work contract."""
+    """The installed Codex lacks the required Work contract."""
 
 
 class WorkNotFoundError(WorkError):

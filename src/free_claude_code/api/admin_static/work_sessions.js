@@ -17,7 +17,8 @@
     feedStatus: "connecting",
     eventBuffer: null,
     feedTimer: null,
-    pendingCreateOperation: null,
+    operations: new Map(),
+    unknownOperation: null,
     draft: "",
     draftSessionId: null,
     modelComboboxes: new Set(),
@@ -43,6 +44,14 @@
     "stopping",
     "deleting",
   ]);
+
+  const TERMINAL_OPERATION_STATES = new Set([
+    "succeeded",
+    "failed",
+    "abandoned",
+  ]);
+
+  const OPERATION_STORAGE_KEY = "fcc.work.operations.v1";
 
   const root = () => document.getElementById("workRoot");
 
@@ -77,7 +86,9 @@
     if (state.initialized) return;
     state.initialized = true;
     state.api = api;
+    loadOperations();
     connectFeed();
+    void reconcileOperations();
     if (workIsVisible()) renderLoading();
   }
 
@@ -187,6 +198,7 @@
     state.interactions.clear();
     state.libraryItems = [];
     state.libraryCursor = null;
+    state.unknownOperation = null;
   }
 
   function applyEvent({ type, payload }) {
@@ -244,18 +256,175 @@
   }
 
   function applyOperation(payload) {
-    if (payload.operation_id === state.pendingCreateOperation) {
-      if (payload.state === "completed" && payload.thread_id) {
-        state.pendingCreateOperation = null;
-        openSession(payload.thread_id);
-      } else if (payload.state === "failed" || payload.state === "interrupted") {
-        state.pendingCreateOperation = null;
-        setNotice(payload.error_message || "Could not create the Work session.", "error");
+    if (payload.kind === "create" && state.bootstrap) {
+      const withoutCurrent = (state.bootstrap.unresolved_creates || []).filter(
+        (operation) => operation.operation_id !== payload.operation_id,
+      );
+      state.bootstrap.unresolved_creates = TERMINAL_OPERATION_STATES.has(payload.state)
+        ? withoutCurrent
+        : [...withoutCurrent, payload];
+      if (!state.detail && workIsVisible()) renderLibraryItems();
+    }
+    const record = state.operations.get(payload.operation_id);
+    if (
+      record?.kind === "send" &&
+      payload.state === "succeeded" &&
+      record.payload.text === state.draft
+    ) {
+      state.draft = "";
+      saveDraft();
+      const textarea = document.getElementById("workComposer");
+      if (textarea) {
+        textarea.value = "";
+        resizeComposer(textarea);
       }
     }
-    if (payload.thread_id !== state.detail?.summary?.thread_id) return;
-    if (payload.state === "failed" || payload.state === "interrupted") {
+    if (record && TERMINAL_OPERATION_STATES.has(payload.state)) forgetOperation(record.operation_id);
+    if (payload.state === "unknown") {
+      state.unknownOperation = payload;
+      showUnknownOperation(payload);
+      return;
+    }
+    if (state.unknownOperation?.operation_id === payload.operation_id) {
+      state.unknownOperation = null;
+      setNotice("");
+    }
+    if (payload.kind === "create" && payload.state === "succeeded" && payload.thread_id) {
+      openSession(payload.thread_id);
+      return;
+    }
+    if (payload.state === "failed") {
       setNotice(payload.error_message || "The Work operation did not complete.", "error");
+      return;
+    }
+    if (payload.thread_id !== state.detail?.summary?.thread_id) return;
+    if (payload.state === "abandoned") setNotice("You can continue with a new command.", "warn");
+  }
+
+  function loadOperations() {
+    state.operations.clear();
+    let values = [];
+    try {
+      values = JSON.parse(sessionStorage.getItem(OPERATION_STORAGE_KEY) || "[]");
+    } catch {
+      sessionStorage.removeItem(OPERATION_STORAGE_KEY);
+    }
+    if (!Array.isArray(values)) return;
+    values.forEach((value) => {
+      if (
+        value &&
+        typeof value.operation_id === "string" &&
+        typeof value.kind === "string" &&
+        typeof value.url === "string" &&
+        value.payload &&
+        typeof value.payload === "object"
+      ) {
+        state.operations.set(value.operation_id, value);
+      }
+    });
+  }
+
+  function saveOperations() {
+    sessionStorage.setItem(
+      OPERATION_STORAGE_KEY,
+      JSON.stringify([...state.operations.values()]),
+    );
+  }
+
+  function rememberOperation(record) {
+    state.operations.set(record.operation_id, record);
+    saveOperations();
+  }
+
+  function forgetOperation(operationId) {
+    if (!state.operations.delete(operationId)) return;
+    saveOperations();
+  }
+
+  function replaceOperation(record, acknowledgement) {
+    if (record.operation_id === acknowledgement.operation_id) return record;
+    forgetOperation(record.operation_id);
+    const canonical = {
+      ...record,
+      operation_id: acknowledgement.operation_id,
+      payload: { ...record.payload, operation_id: acknowledgement.operation_id },
+    };
+    rememberOperation(canonical);
+    return canonical;
+  }
+
+  async function submitOperation(record) {
+    rememberOperation(record);
+    try {
+      const acknowledgement = await state.api(record.url, {
+        method: "POST",
+        body: JSON.stringify(record.payload),
+      });
+      replaceOperation(record, acknowledgement);
+      applyOperation(acknowledgement);
+      return acknowledgement;
+    } catch (error) {
+      if (Number.isInteger(error.status)) forgetOperation(record.operation_id);
+      throw error;
+    }
+  }
+
+  async function reconcileOperations() {
+    for (const record of [...state.operations.values()]) {
+      try {
+        const operation = await state.api(
+          `/admin/api/work/operations/${encodeURIComponent(record.operation_id)}`,
+        );
+        applyOperation(operation);
+      } catch (error) {
+        if (error.status !== 404) continue;
+        try {
+          await submitOperation(record);
+        } catch (submitError) {
+          if (Number.isInteger(submitError.status)) {
+            setNotice(submitError.message, "error");
+          }
+        }
+      }
+    }
+  }
+
+  function operationRecord(kind, url, payload) {
+    const operationId = uuid();
+    return {
+      operation_id: operationId,
+      kind,
+      url,
+      payload: { ...payload, operation_id: operationId },
+    };
+  }
+
+  function showUnknownOperation(operation) {
+    const notice = document.getElementById("workNotice");
+    if (!notice) return;
+    notice.replaceChildren(
+      node(
+        "span",
+        "",
+        operation.error_message || "FCC could not prove whether Codex completed this action.",
+      ),
+      button("Continue anyway", "secondary-button", () => abandonOperation(operation)),
+    );
+    notice.className = "work-notice warn";
+    notice.hidden = false;
+  }
+
+  async function abandonOperation(operation) {
+    if (!window.confirm("Continue even though this Codex action could not be confirmed?")) return;
+    try {
+      const acknowledgement = await state.api(
+        `/admin/api/work/operations/${encodeURIComponent(operation.operation_id)}/abandon`,
+        { method: "POST", body: JSON.stringify({ confirm: true }) },
+      );
+      applyOperation(acknowledgement);
+      await refresh(window.location.pathname);
+    } catch (error) {
+      setNotice(error.message, "error");
     }
   }
 
@@ -295,6 +464,7 @@
     const version = state.routeVersion;
     try {
       state.bootstrap = await state.api("/admin/api/work/bootstrap");
+      (state.bootstrap.unresolved_creates || []).forEach(applyOperation);
     } catch (error) {
       if (version === state.routeVersion && workIsVisible()) renderUnavailable(error.message);
       return;
@@ -389,7 +559,32 @@
     const list = document.getElementById("workProjectList");
     if (!list) return;
     list.replaceChildren();
-    if (!state.libraryItems.length) {
+    const unresolved = (state.bootstrap?.unresolved_creates || []).filter(
+      (operation) => !TERMINAL_OPERATION_STATES.has(operation.state),
+    );
+    unresolved.forEach((operation) => {
+      const stored = state.operations.get(operation.operation_id);
+      const card = node("section", "work-session-card work-pending-card");
+      card.dataset.operationId = operation.operation_id;
+      card.append(
+        node("strong", "", stored?.payload?.cwd || "New Work Session"),
+        node(
+          "p",
+          "",
+          operation.state === "unknown"
+            ? "Creation needs your attention."
+            : "Codex session creation is in progress.",
+        ),
+        node("span", `work-status ${operation.state}`, humanize(operation.state)),
+      );
+      if (operation.state === "unknown") {
+        card.appendChild(
+          button("Continue anyway", "secondary-button", () => abandonOperation(operation)),
+        );
+      }
+      list.appendChild(card);
+    });
+    if (!state.libraryItems.length && !unresolved.length) {
       list.appendChild(
         node(
           "div",
@@ -460,21 +655,17 @@
       button("Cancel", "secondary-button", () => dialog.close()),
       button("Create", "primary-button", async () => {
         message.hidden = true;
-        const operationId = uuid();
-        state.pendingCreateOperation = operationId;
+        const record = operationRecord("create", "/admin/api/work/sessions", {
+          cwd: input.value,
+        });
         try {
-          const acknowledgement = await state.api("/admin/api/work/sessions", {
-            method: "POST",
-            body: JSON.stringify({ cwd: input.value, operation_id: operationId }),
-          });
+          const acknowledgement = await submitOperation(record);
           dialog.close();
           setNotice("Creating Codex session…");
-          if (acknowledgement.state === "completed" && acknowledgement.thread_id) {
-            state.pendingCreateOperation = null;
+          if (acknowledgement.state === "succeeded" && acknowledgement.thread_id) {
             openSession(acknowledgement.thread_id);
           }
         } catch (error) {
-          state.pendingCreateOperation = null;
           message.textContent = error.message;
           message.className = "work-notice error";
           message.hidden = false;
@@ -546,16 +737,7 @@
     const header = node("header", "work-session-header");
     const row = node("div", "work-header-row");
     row.appendChild(button("← Work", "work-back-button", goLibrary));
-    const title = node("input", "work-title");
-    title.value = detail.summary.title;
-    title.maxLength = 200;
-    title.setAttribute("aria-label", "Work session name");
-    title.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") title.blur();
-    });
-    title.addEventListener("blur", () => {
-      if (title.value !== state.detail?.summary?.title) void renameSession(title.value);
-    });
+    const title = node("h2", "work-title", detail.summary.title);
     row.append(title, button("Delete", "danger-button", deleteSession));
     const meta = node("div", "work-session-meta");
     const status = node(
@@ -585,22 +767,6 @@
         reasoningValues(detail),
         detail.settings.reasoning_effort,
         (value) => updateSettings({ reasoning_effort: value || null }),
-      ),
-      renderSelectControl(
-        "Mode",
-        "workMode",
-        collaborationValues(detail),
-        detail.settings.collaboration_mode,
-        (value) => updateSettings({ collaboration_mode: value || null }),
-        true,
-      ),
-      renderSelectControl(
-        "Permissions",
-        "workPermissions",
-        permissionValues(detail),
-        detail.settings.permission_profile,
-        (value) => updateSettings({ permission_profile: value || null }),
-        true,
       ),
     );
     return controls;
@@ -643,24 +809,18 @@
     values,
     selected,
     onChange,
-    includeDefault = false,
   ) {
     const group = node("label", "work-control");
     group.appendChild(node("span", "", labelText));
     const select = node("select");
     select.id = id;
-    if (includeDefault) {
-      const option = node("option", "", "Default");
-      option.value = "";
-      select.appendChild(option);
-    }
     values.forEach((value) => {
       const option = node("option", "", humanize(value));
       option.value = value;
       select.appendChild(option);
     });
     select.value = selected || "";
-    select.disabled = values.length === 0 && !includeDefault;
+    select.disabled = values.length === 0;
     select.addEventListener("change", () => onChange(select.value));
     group.appendChild(select);
     return group;
@@ -686,19 +846,6 @@
       .filter((value) => typeof value === "string");
   }
 
-  function collaborationValues(detail) {
-    return (detail.controls?.collaboration_modes || [])
-      .map((mode) => mode.name)
-      .filter((value) => typeof value === "string");
-  }
-
-  function permissionValues(detail) {
-    return (detail.controls?.permission_profiles || [])
-      .filter((profile) => profile.allowed !== false)
-      .map((profile) => profile.id)
-      .filter((value) => typeof value === "string");
-  }
-
   async function updateSettings(updates) {
     if (!state.detail) return;
     try {
@@ -715,27 +862,6 @@
       state.detail.settings = record.settings;
       state.detail.summary.revision = record.revision;
       renderDetail();
-    } catch (error) {
-      setNotice(error.message, "error");
-      await loadDetail(state.detail.summary.thread_id, state.routeVersion);
-    }
-  }
-
-  async function renameSession(name) {
-    if (!state.detail) return;
-    try {
-      const record = await state.api(
-        `/admin/api/work/sessions/${encodeURIComponent(state.detail.summary.thread_id)}/name`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            expected_revision: state.detail.summary.revision,
-            name,
-          }),
-        },
-      );
-      state.detail.summary.title = name.trim().replace(/\s+/g, " ");
-      state.detail.summary.revision = record.revision;
     } catch (error) {
       setNotice(error.message, "error");
       await loadDetail(state.detail.summary.thread_id, state.routeVersion);
@@ -812,16 +938,12 @@
     const textarea = document.getElementById("workComposer");
     const text = state.draft;
     try {
-      await state.api(
-        `/admin/api/work/sessions/${encodeURIComponent(state.detail.summary.thread_id)}/turns`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            expected_revision: state.detail.summary.revision,
-            operation_id: uuid(),
-            text,
-          }),
-        },
+      await submitOperation(
+        operationRecord(
+          "send",
+          `/admin/api/work/sessions/${encodeURIComponent(state.detail.summary.thread_id)}/turns`,
+          { expected_revision: state.detail.summary.revision, text },
+        ),
       );
       state.draft = "";
       saveDraft();
@@ -840,12 +962,12 @@
   async function stopTurn() {
     if (!state.detail) return;
     try {
-      await state.api(
-        `/admin/api/work/sessions/${encodeURIComponent(state.detail.summary.thread_id)}/stop`,
-        {
-          method: "POST",
-          body: JSON.stringify({ operation_id: uuid() }),
-        },
+      await submitOperation(
+        operationRecord(
+          "stop",
+          `/admin/api/work/sessions/${encodeURIComponent(state.detail.summary.thread_id)}/stop`,
+          {},
+        ),
       );
       setCurrentStatus("stopping");
     } catch (error) {
@@ -857,12 +979,12 @@
     if (!state.detail) return;
     if (!window.confirm("Delete this native Codex session and its history?")) return;
     try {
-      await state.api(
-        `/admin/api/work/sessions/${encodeURIComponent(state.detail.summary.thread_id)}/delete`,
-        {
-          method: "POST",
-          body: JSON.stringify({ operation_id: uuid() }),
-        },
+      await submitOperation(
+        operationRecord(
+          "delete",
+          `/admin/api/work/sessions/${encodeURIComponent(state.detail.summary.thread_id)}/delete`,
+          {},
+        ),
       );
       setCurrentStatus("deleting");
     } catch (error) {
@@ -890,11 +1012,6 @@
     const shouldFollow = follow && nearBottom(timeline);
     const scrollTop = timeline.scrollTop;
     timeline.replaceChildren();
-    if (state.detail?.turns?.next_cursor) {
-      timeline.appendChild(
-        button("Load older activity", "secondary-button work-load-more", loadOlder),
-      );
-    }
     const items = [...state.items.values()];
     items.forEach((item) => timeline.appendChild(renderTimelineItem(item)));
     [...state.interactions.values()].forEach((interaction) =>
@@ -1022,31 +1139,13 @@
 
   async function answerInteraction(interaction, value) {
     try {
-      await state.api(
-        `/admin/api/work/sessions/${encodeURIComponent(interaction.thread_id)}/interactions/${interaction.interaction_id}`,
-        { method: "POST", body: JSON.stringify({ value }) },
+      await submitOperation(
+        operationRecord(
+          "respond",
+          `/admin/api/work/sessions/${encodeURIComponent(interaction.thread_id)}/interactions/${interaction.interaction_id}/responses`,
+          { value },
+        ),
       );
-      state.interactions.delete(interaction.interaction_id);
-      renderTimeline({ follow: false });
-    } catch (error) {
-      setNotice(error.message, "error");
-    }
-  }
-
-  async function loadOlder() {
-    if (!state.detail?.turns?.next_cursor) return;
-    const threadId = state.detail.summary.thread_id;
-    const cursor = state.detail.turns.next_cursor;
-    try {
-      const page = await state.api(
-        `/admin/api/work/sessions/${encodeURIComponent(threadId)}/turns?cursor=${encodeURIComponent(cursor)}&limit=50`,
-      );
-      page.items.forEach((item) => {
-        const key = itemKey(item);
-        if (!state.items.has(key)) state.items.set(key, item);
-      });
-      state.detail.turns.next_cursor = page.next_cursor;
-      renderTimeline({ follow: false });
     } catch (error) {
       setNotice(error.message, "error");
     }
@@ -1092,6 +1191,7 @@
       completed: "Completed",
       interrupted: "Interrupted",
       failed: "Failed",
+      needs_attention: "Needs attention",
       disconnected: "Disconnected",
     };
     return labels[status] || humanize(status);
