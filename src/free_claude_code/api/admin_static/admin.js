@@ -755,8 +755,8 @@ function pollConnectedAccount(provider) {
         state.authPollers.delete(provider.provider_id);
         if (status.connected) {
           await hydrateModelOptions();
-          updateStats();
         }
+        updateStats();
       }
     } catch (error) {
       state.authPollers.delete(provider.provider_id);
@@ -1174,25 +1174,6 @@ function updateDirtyState() {
     count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
   byId("applyButton").disabled = count === 0;
   updateStats();
-}
-
-async function validate(showResult = true) {
-  const result = await api("/admin/api/config/validate", {
-    method: "POST",
-    body: JSON.stringify({ values: changedValues() }),
-  });
-  if (showResult) {
-    showValidationResult(result);
-  }
-  return result;
-}
-
-function showValidationResult(result) {
-  if (result.valid) {
-    showMessage("Config shape is valid", "ok");
-  } else {
-    showMessage(result.errors.join("; "), "error");
-  }
 }
 
 async function apply() {
