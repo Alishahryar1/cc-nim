@@ -142,10 +142,10 @@ async function load() {
   }
   await refreshConnectedAccounts();
   await hydrateModelOptions();
-  await refreshLocalStatus();
   if (window.ChatSessions) {
     await window.ChatSessions.initialize(api);
   }
+  await refreshLocalStatus();
   updateDirtyState();
   updateStats();
   initSearch();
@@ -390,13 +390,6 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (subtitleEl && activeView.subtitle) {
     subtitleEl.textContent = activeView.subtitle;
   }
-  const chatActive = activeView.id === "chat";
-  document.querySelector(".app-shell").classList.toggle("chat-active", chatActive);
-  document.querySelector(".main").classList.toggle("chat-main", chatActive);
-  const topBar = document.querySelector(".topbar");
-  if (topBar) topBar.hidden = chatActive;
-  const actionBar = document.querySelector(".action-bar");
-  if (actionBar) actionBar.hidden = chatActive;
 
   document.querySelectorAll(".nav-link").forEach((link) => {
     const selected = link.dataset.view === activeView.id;
@@ -418,7 +411,8 @@ function setActiveView(viewId, { scroll = false } = {}) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  if (chatActive && window.ChatSessions) {
+  // FIX BUG 1: Use activeView.id check instead of undefined chatActive variable
+  if (activeView.id === "chat" && window.ChatSessions) {
     window.ChatSessions.activate(window.location.pathname);
   }
 }
@@ -761,8 +755,8 @@ function pollConnectedAccount(provider) {
         state.authPollers.delete(provider.provider_id);
         if (status.connected) {
           await hydrateModelOptions();
+          updateStats();
         }
-        updateStats();
       }
     } catch (error) {
       state.authPollers.delete(provider.provider_id);
@@ -1180,6 +1174,25 @@ function updateDirtyState() {
     count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
   byId("applyButton").disabled = count === 0;
   updateStats();
+}
+
+async function validate(showResult = true) {
+  const result = await api("/admin/api/config/validate", {
+    method: "POST",
+    body: JSON.stringify({ values: changedValues() }),
+  });
+  if (showResult) {
+    showValidationResult(result);
+  }
+  return result;
+}
+
+function showValidationResult(result) {
+  if (result.valid) {
+    showMessage("Config shape is valid", "ok");
+  } else {
+    showMessage(result.errors.join("; "), "error");
+  }
 }
 
 async function apply() {

@@ -25,7 +25,8 @@ def test_admin_loads_current_release_assets_before_rendering_dynamic_content(
     page.goto(f"{admin_base_url}/admin")
 
     expect(page.locator('[data-provider="nvidia_nim"]')).to_be_visible()
-    expect(page.locator(".brand p")).to_have_text(
+    expect(page.locator(".brand p")).to_have_text("Control Center")
+    expect(page.locator(".sidebar-footer-card p").first).to_have_text(
         f"Server Control · v{package_version()}"
     )
     logo_link = page.get_by_role("link", name="Open Free Claude Code on GitHub")

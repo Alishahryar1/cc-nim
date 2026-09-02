@@ -171,7 +171,6 @@ textarea {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   min-height: 100vh;
-  padding-bottom: 96px;
 }
 
 /* Sidebar Navigation */
@@ -196,6 +195,7 @@ textarea {
 }
 
 .brand-mark {
+.brand-mark {
   display: block;
   flex: 0 0 auto;
   width: 40px;
@@ -206,6 +206,7 @@ textarea {
   display: block;
   width: 100%;
   height: 100%;
+}
 }
 
 .brand-icon {
@@ -334,7 +335,7 @@ textarea:focus-visible,
 /* Main Content Area */
 .main {
   min-width: 0;
-  padding: 32px 40px;
+  padding: 32px 40px 96px;
   max-width: 1320px;
   margin: 0 auto;
   width: 100%;
@@ -1203,7 +1204,7 @@ textarea:focus-visible,
   }
 
   .main {
-    padding: 22px 18px;
+    padding: 22px 18px 300px;
   }
 
   .action-bar {
