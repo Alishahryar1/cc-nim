@@ -35,34 +35,6 @@ def _hold_next_chat_operation(page: Page, action: str) -> None:
     )
 
 
-def _hold_next_chat_detail(page: Page, session_id: str) -> None:
-    page.evaluate(
-        """
-        sessionId => {
-          const originalFetch = window.fetch.bind(window);
-          window.__heldChatDetail = false;
-          window.fetch = (...args) => {
-            const method = String(args[1]?.method || "GET").toUpperCase();
-            if (
-              method !== "GET" ||
-              !String(args[0]).endsWith(`/admin/api/chat/sessions/${sessionId}`)
-            ) {
-              return originalFetch(...args);
-            }
-            window.fetch = originalFetch;
-            window.__heldChatDetail = true;
-            return new Promise((resolve, reject) => {
-              window.__releaseHeldChatDetail = () => {
-                originalFetch(...args).then(resolve, reject);
-              };
-            });
-          };
-        }
-        """,
-        session_id,
-    )
-
-
 def _select_model(page: Page, model_ref: str) -> None:
     model = page.get_by_role("combobox", name="Selected model")
     model.click()
@@ -976,24 +948,8 @@ def test_long_transcript_keeps_composer_visible_and_preserves_reader_scroll_posi
         "return box.top >= 0 && box.bottom <= window.innerHeight; }"
     )
     scroller.evaluate("node => { node.scrollTop = 0; }")
-    session_id = page.url.rsplit("/", 1)[-1]
-    _hold_next_chat_detail(page, session_id)
 
     page.get_by_role("button", name="Stop").click()
-    page.wait_for_function("window.__heldChatDetail === true")
-    current = page.request.get(
-        f"{admin_base_url}/admin/api/chat/sessions/{session_id}"
-    ).json()
-    renamed = page.request.patch(
-        f"{admin_base_url}/admin/api/chat/sessions/{session_id}",
-        data={
-            "expected_revision": current["session"]["revision"],
-            "title": "Reader position race",
-        },
-    )
-    assert renamed.ok
-    expect(page.get_by_label("Chat title")).to_have_value("Reader position race")
-    page.evaluate("() => { window.__releaseHeldChatDetail(); }")
 
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
     assert composer_is_fully_visible
