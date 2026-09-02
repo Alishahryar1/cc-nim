@@ -1,26 +1,26 @@
-import asyncio
 import base64
-from collections.abc import AsyncIterator
 from dataclasses import replace
-from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.types import Message, Scope
 
-from free_claude_code.api.chat_routes import _stream_response
 from free_claude_code.application.chat import (
+    ChatActiveOperation,
     ChatCompaction,
     ChatContextEstimate,
+    ChatEventOverflowError,
     ChatModelOption,
+    ChatOperationAcknowledgement,
+    ChatOperationKind,
+    ChatOperationPhase,
     ChatPreferences,
+    ChatPublishedEvent,
     ChatReasoning,
     ChatSegment,
     ChatSession,
     ChatSessionDetail,
     ChatSessionPage,
     ChatSessionSummary,
-    ChatStreamEvent,
     ChatTurn,
     ChatValidationError,
     GenerationStatus,
@@ -34,24 +34,38 @@ SESSION_ID = "29e3b8fd-8744-4377-b8cf-4c9d48daf962"
 OPERATION_ID = "7cd43d62-c1aa-42f8-9963-6c0811c0dfaf"
 
 
-class StubStream:
-    operation_id = OPERATION_ID
+class StubSubscription:
+    cursor = 4
 
     def __init__(self) -> None:
         self.closed = False
 
-    def __aiter__(self) -> AsyncIterator[ChatStreamEvent]:
+    def __aiter__(self):
         return self._events()
 
-    async def _events(self) -> AsyncIterator[ChatStreamEvent]:
-        yield ChatStreamEvent(
+    async def _events(self):
+        yield ChatPublishedEvent(
             event="turn.completed",
-            sequence=1,
-            data={"operation_id": OPERATION_ID, "session_id": SESSION_ID},
+            id=5,
+            data={
+                "operation_id": OPERATION_ID,
+                "session_id": SESSION_ID,
+                "kind": "send",
+                "operation_sequence": 3,
+            },
         )
 
     async def aclose(self) -> None:
         self.closed = True
+
+
+class OverflowSubscription(StubSubscription):
+    cursor = 7
+
+    async def _events(self):
+        if False:
+            yield
+        raise ChatEventOverflowError(9)
 
 
 class StubChat:
@@ -94,9 +108,9 @@ class StubChat:
             last_reasoning=self.session.reasoning,
             updated_at=1,
         )
-        self.last_stream: StubStream | None = None
+        self.last_subscription: StubSubscription | None = None
         self.deleted = False
-        self.active_operation = False
+        self.active_operation: ChatActiveOperation | None = None
 
     def availability(self) -> tuple[bool, str | None]:
         return True, None
@@ -113,6 +127,13 @@ class StubChat:
                 max_output_tokens=8_000,
             ),
         )
+
+    async def subscribe(
+        self,
+    ) -> tuple[StubSubscription, tuple[ChatActiveOperation, ...]]:
+        self.last_subscription = StubSubscription()
+        active = (self.active_operation,) if self.active_operation is not None else ()
+        return self.last_subscription, active
 
     async def preferences(self) -> ChatPreferences:
         return self.preferences_value
@@ -148,7 +169,6 @@ class StubChat:
             compaction=compaction,
             context=context,
             context_error=context_error,
-            active_operation=self.active_operation,
         )
 
     async def list_sessions(
@@ -227,15 +247,18 @@ class StubChat:
         expected_revision: int,
         operation_id: str,
         text: str,
-    ) -> StubStream:
+    ) -> ChatOperationAcknowledgement:
         assert (session_id, expected_revision, operation_id, text) == (
             SESSION_ID,
             self.session.revision,
             OPERATION_ID,
             "hello",
         )
-        self.last_stream = StubStream()
-        return self.last_stream
+        return ChatOperationAcknowledgement(
+            session_id=session_id,
+            operation_id=operation_id,
+            kind=ChatOperationKind.SEND,
+        )
 
     async def retry(
         self,
@@ -243,9 +266,13 @@ class StubChat:
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> StubStream:
-        del session_id, expected_revision, operation_id
-        return StubStream()
+    ) -> ChatOperationAcknowledgement:
+        del expected_revision
+        return ChatOperationAcknowledgement(
+            session_id=session_id,
+            operation_id=operation_id,
+            kind=ChatOperationKind.RETRY,
+        )
 
     async def regenerate(
         self,
@@ -253,9 +280,13 @@ class StubChat:
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> StubStream:
-        del session_id, expected_revision, operation_id
-        return StubStream()
+    ) -> ChatOperationAcknowledgement:
+        del expected_revision
+        return ChatOperationAcknowledgement(
+            session_id=session_id,
+            operation_id=operation_id,
+            kind=ChatOperationKind.REGENERATE,
+        )
 
     async def compact(
         self,
@@ -263,9 +294,13 @@ class StubChat:
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> StubStream:
-        del session_id, expected_revision, operation_id
-        return StubStream()
+    ) -> ChatOperationAcknowledgement:
+        del expected_revision
+        return ChatOperationAcknowledgement(
+            session_id=session_id,
+            operation_id=operation_id,
+            kind=ChatOperationKind.COMPACT,
+        )
 
     async def stop(self, session_id: str, *, operation_id: str) -> bool:
         return (session_id, operation_id) == (SESSION_ID, OPERATION_ID)
@@ -278,6 +313,18 @@ class UnestimatableChat(StubChat):
         raise ChatValidationError(
             "This model does not support reasoning. Set thinking to Off."
         )
+
+
+class OverflowChat(StubChat):
+    async def subscribe(
+        self,
+    ) -> tuple[OverflowSubscription, tuple[ChatActiveOperation, ...]]:
+        subscription = OverflowSubscription()
+        self.last_subscription = subscription
+        return subscription, ()
+
+    async def stop(self, session_id: str, *, operation_id: str) -> bool:
+        raise AssertionError((session_id, operation_id))
 
 
 def _client(chat: StubChat | None = None) -> TestClient:
@@ -299,11 +346,24 @@ def test_chat_deep_links_serve_the_versioned_admin_shell():
 
 def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
     chat = StubChat()
-    chat.active_operation = True
+    chat.active_operation = ChatActiveOperation(
+        session_id=SESSION_ID,
+        operation_id=OPERATION_ID,
+        kind=ChatOperationKind.SEND,
+        phase=ChatOperationPhase.GENERATING,
+        operation_sequence=2,
+        submitted_text="next",
+        turn_id="turn-next",
+        generation_id="generation-next",
+        regeneration=False,
+        actual_model="groq/model",
+        segments=(ChatSegment(0, SegmentKind.TEXT, "live"),),
+    )
     client = _client(chat)
 
     bootstrap = client.get("/admin/api/chat/bootstrap").json()
     detail = client.get(f"/admin/api/chat/sessions/{SESSION_ID}").json()
+    feed = client.get("/admin/api/chat/events")
 
     assert bootstrap["models"][0]["supports_reasoning"] is True
     assert bootstrap["models"][0]["input_modalities"] == ["text"]
@@ -313,7 +373,8 @@ def test_chat_bootstrap_and_detail_project_rich_models_and_safe_markdown():
     assert "<script>" not in segment["html"]
     assert detail["turns"][0]["generation"]["actual_model"] == ("open_router/fallback")
     assert detail["turns"][0]["operation_id"] == "operation"
-    assert detail["active_operation"] is True
+    assert "active_operation" not in detail
+    assert '"submitted_text": "next"' in feed.text
 
 
 def test_chat_detail_stays_readable_when_context_controls_need_repair():
@@ -354,7 +415,7 @@ def test_chat_crud_and_prompt_routes_use_application_port():
     assert chat.deleted is True
 
 
-def test_chat_stream_serializes_events_and_closes_operation():
+def test_chat_long_operation_acknowledges_without_owning_its_event_stream():
     chat = StubChat()
     response = _client(chat).post(
         f"/admin/api/chat/sessions/{SESSION_ID}/send",
@@ -365,50 +426,46 @@ def test_chat_stream_serializes_events_and_closes_operation():
         },
     )
 
+    assert response.status_code == 202
+    assert response.json() == {
+        "session_id": SESSION_ID,
+        "operation_id": OPERATION_ID,
+        "kind": "send",
+    }
+    assert chat.last_subscription is None
+
+
+def test_chat_event_feed_starts_at_snapshot_barrier_and_closes_subscription():
+    chat = StubChat()
+
+    response = _client(chat).get("/admin/api/chat/events")
+
     assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert "event: feed.ready" in response.text
+    assert "id: 4" in response.text
+    assert 'data: {"cursor": 4, "active_operations": []}' in response.text
     assert "event: turn.completed" in response.text
-    assert "id: 1" in response.text
-    assert chat.last_stream is not None and chat.last_stream.closed is True
+    assert "id: 5" in response.text
+    assert chat.last_subscription is not None
+    assert chat.last_subscription.closed is True
 
 
-@pytest.mark.asyncio
-async def test_chat_stream_closes_when_cancelled_before_body_iteration():
-    stream = StubStream()
-    response = _stream_response(stream)
-    response_started = asyncio.Event()
+def test_chat_event_feed_overflow_requests_resync_without_stopping_work():
+    chat = OverflowChat()
 
-    async def receive() -> Message:
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
+    response = _client(chat).get("/admin/api/chat/events")
 
-    async def send(message: Message) -> None:
-        assert message["type"] == "http.response.start"
-        response_started.set()
-        await asyncio.Event().wait()
-
-    scope = cast(
-        Scope,
-        {
-            "type": "http",
-            "asgi": {"version": "3.0", "spec_version": "2.4"},
-            "http_version": "1.1",
-            "method": "POST",
-            "scheme": "http",
-            "path": f"/admin/api/chat/sessions/{SESSION_ID}/send",
-            "raw_path": b"/admin/api/chat/sessions/send",
-            "query_string": b"",
-            "headers": [],
-            "client": ("127.0.0.1", 50000),
-            "server": ("127.0.0.1", 8000),
-        },
-    )
-    response_task = asyncio.create_task(response(scope, receive, send))
-    await asyncio.wait_for(response_started.wait(), timeout=1)
-    response_task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await response_task
-    assert stream.closed is True
+    assert response.status_code == 200
+    assert "event: feed.ready" in response.text
+    assert "id: 7" in response.text
+    assert "event: feed.resync_required" in response.text
+    assert "id: 9" in response.text
+    assert 'data: {"cursor": 9}' in response.text
+    assert chat.last_subscription is not None
+    assert chat.last_subscription.closed is True
 
 
 def test_chat_routes_apply_loopback_and_origin_protection():

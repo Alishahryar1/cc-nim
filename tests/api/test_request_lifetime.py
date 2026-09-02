@@ -60,6 +60,7 @@ async def _unused_send(_message: Message) -> None:
     [
         _http_scope("/health"),
         _http_scope("/v1/messages", method="OPTIONS"),
+        _http_scope("/admin/api/chat/sessions/session/send"),
         _http_scope("/admin/api/chat/sessions/session/stop"),
         cast(Scope, {"type": "lifespan", "asgi": {"version": "3.0"}}),
     ],
@@ -98,7 +99,6 @@ async def test_non_inference_scopes_delegate_with_original_callables(
     [
         "/v1/messages",
         "/v1/responses",
-        "/admin/api/chat/sessions/session/send",
     ],
 )
 async def test_request_body_frames_are_relayed_once_in_order(path: str) -> None:
