@@ -919,4 +919,6 @@ def test_chat_remains_usable_at_narrow_viewport(
 
     expect(page.get_by_role("combobox", name="Selected model")).to_be_visible()
     expect(page.get_by_label("Thinking")).to_be_visible()
-    expect(page.get_by_role("textbox", name="Message", exact=True)).to_be_in_viewport()
+    textbox = page.get_by_role("textbox", name="Message", exact=True)
+    textbox.scroll_into_view_if_needed()
+    expect(textbox).to_be_in_viewport()

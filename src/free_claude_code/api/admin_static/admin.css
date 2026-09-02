@@ -178,6 +178,7 @@ textarea {
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow-y: auto;
   border-right: 1px solid var(--line);
   background: var(--panel-gradient);
   padding: 24px 18px 20px;
@@ -1204,7 +1205,7 @@ textarea:focus-visible,
   }
 
   .main {
-    padding: 22px 18px 300px;
+    padding: 22px 18px 100px;
   }
 
   .action-bar {
