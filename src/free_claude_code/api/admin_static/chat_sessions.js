@@ -725,8 +725,11 @@
   async function updateSession(changes) {
     if (!state.session) return;
     if (state.operation && (changes.model || changes.reasoning)) return;
+    await applySessionChanges(changes, state.session.revision, true);
+  }
+
+  async function applySessionChanges(changes, expectedRevision, allowConflictRetry) {
     const sessionId = state.session.id;
-    const expectedRevision = state.session.revision;
     const routeVersion = state.routeVersion;
     try {
       const session = await state.api(
@@ -751,6 +754,21 @@
     } catch (error) {
       if (routeVersion !== state.routeVersion || state.session?.id !== sessionId)
         return;
+      // A stream that commits between the page render and this edit bumps the
+      // session revision, so this PATCH can race it and 409. Reload and
+      // re-apply the same edit once against the fresh revision instead of
+      // silently dropping the change.
+      if (allowConflictRetry && error.status === 409) {
+        await reloadSession();
+        if (
+          routeVersion !== state.routeVersion ||
+          state.session?.id !== sessionId ||
+          (state.operation && (changes.model || changes.reasoning))
+        )
+          return;
+        await applySessionChanges(changes, state.session.revision, false);
+        return;
+      }
       await reloadSession();
       setNotice(error.message, "error");
     }
