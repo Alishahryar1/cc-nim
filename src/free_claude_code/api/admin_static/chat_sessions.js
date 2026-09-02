@@ -17,17 +17,48 @@
     libraryLoadMore: null,
     olderLoad: null,
     operation: null,
+    activeOperations: new Map(),
+    pendingCommands: new Map(),
+    sessionSummaries: new Map(),
+    sessionRevisions: new Map(),
+    deletedSessions: new Set(),
+    retiredTitleInputs: new WeakSet(),
     draft: "",
     draftSessionId: null,
     draftOperationId: null,
+    draftSubmittedText: "",
     routeVersion: 0,
     estimateTimer: null,
     estimateVersion: 0,
-    foreignPollTimer: null,
-    serverOperationActive: false,
-    eventChannel: null,
+    feed: null,
+    feedStatus: "connecting",
+    feedLastId: 0,
+    feedSyncVersion: 0,
+    eventBuffer: null,
+    feedRestartTimer: null,
     modelComboboxes: new Set(),
   };
+
+  const CHAT_EVENT_TYPES = [
+    "session.created",
+    "session.updated",
+    "session.deleted",
+    "preferences.updated",
+    "operation.started",
+    "turn.started",
+    "segment.started",
+    "segment.delta",
+    "segment.completed",
+    "compaction.started",
+    "compaction.progress",
+    "compaction.completed",
+    "compaction.failed",
+    "compaction.stopped",
+    "turn.completed",
+    "turn.failed",
+    "turn.stopped",
+    "operation.failed",
+  ];
 
   const root = () => document.getElementById("chatRoot");
 
@@ -56,14 +87,676 @@
   async function initialize(api) {
     if (state.initialized) return;
     state.api = api;
-    if (typeof window.BroadcastChannel === "function") {
-      state.eventChannel = new BroadcastChannel("fcc-chat-sessions");
-      state.eventChannel.addEventListener("message", handleCrossTabEvent);
-    }
     state.initialized = true;
+    connectEventFeed();
     if (chatIsVisible()) {
-      await activate(window.location.pathname);
+      renderLoading();
     }
+  }
+
+  function mutationsReady() {
+    return state.feedStatus === "live";
+  }
+
+  function connectEventFeed() {
+    window.clearTimeout(state.feedRestartTimer);
+    state.feedRestartTimer = null;
+    state.feed?.close();
+    state.feedStatus = state.feedLastId ? "reconnecting" : "connecting";
+    refreshFeedState();
+    const feed = new EventSource("/admin/api/chat/events");
+    state.feed = feed;
+    feed.addEventListener("feed.ready", (event) => {
+      if (state.feed === feed) void synchronizeFeed(event);
+    });
+    feed.addEventListener("feed.resync_required", () => {
+      if (state.feed === feed) restartEventFeed();
+    });
+    CHAT_EVENT_TYPES.forEach((type) => {
+      feed.addEventListener(type, (event) => {
+        if (state.feed === feed) receiveChatEvent(type, event);
+      });
+    });
+    feed.addEventListener("error", () => {
+      if (state.feed !== feed) return;
+      state.feedSyncVersion += 1;
+      state.feedStatus = "reconnecting";
+      refreshFeedState();
+      if (!state.bootstrap) void refresh(window.location.pathname);
+    });
+  }
+
+  function restartEventFeed() {
+    state.feedSyncVersion += 1;
+    state.feed?.close();
+    state.feed = null;
+    state.feedStatus = "reconnecting";
+    refreshFeedState();
+    window.clearTimeout(state.feedRestartTimer);
+    state.feedRestartTimer = window.setTimeout(connectEventFeed, 250);
+  }
+
+  async function synchronizeFeed(event) {
+    const cursor = Number.parseInt(event.lastEventId, 10);
+    let snapshot;
+    try {
+      snapshot = JSON.parse(event.data);
+    } catch {
+      restartEventFeed();
+      return;
+    }
+    if (
+      !Number.isSafeInteger(cursor) ||
+      cursor < 0 ||
+      snapshot?.cursor !== cursor ||
+      !Array.isArray(snapshot?.active_operations)
+    ) {
+      restartEventFeed();
+      return;
+    }
+    const syncVersion = ++state.feedSyncVersion;
+    state.feedLastId = cursor;
+    state.feedStatus = "synchronizing";
+    refreshFeedState();
+    const snapshotOperationIds = installActiveSnapshot(snapshot.active_operations);
+    if (!snapshotOperationIds) {
+      restartEventFeed();
+      return;
+    }
+    await withBufferedEvents(() => refresh(window.location.pathname));
+    if (syncVersion !== state.feedSyncVersion) return;
+    settlePendingAfterSnapshot(snapshotOperationIds);
+    state.feedStatus = "live";
+    refreshFeedState();
+  }
+
+  async function withBufferedEvents(loadSnapshot) {
+    if (state.eventBuffer) {
+      await loadSnapshot();
+      return;
+    }
+    const buffer = [];
+    state.eventBuffer = buffer;
+    try {
+      await loadSnapshot();
+    } finally {
+      if (state.eventBuffer !== buffer) return;
+      state.eventBuffer = null;
+      buffer.forEach(applyChatEvent);
+    }
+  }
+
+  function receiveChatEvent(type, event) {
+    let payload;
+    const id = Number.parseInt(event.lastEventId, 10);
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      restartEventFeed();
+      return;
+    }
+    if (!Number.isSafeInteger(id) || id <= 0 || !payload) {
+      restartEventFeed();
+      return;
+    }
+    if (id <= state.feedLastId) return;
+    if (id !== state.feedLastId + 1) {
+      restartEventFeed();
+      return;
+    }
+    state.feedLastId = id;
+    const chatEvent = { type, id, payload };
+    if (state.eventBuffer) {
+      state.eventBuffer.push(chatEvent);
+    } else {
+      applyChatEvent(chatEvent);
+    }
+  }
+
+  function applyChatEvent(event) {
+    const { type, payload } = event;
+    if (type === "session.created" || type === "session.updated") {
+      applySessionSummary(payload);
+      return;
+    }
+    if (type === "session.deleted") {
+      applySessionDeletion(payload.session_id);
+      return;
+    }
+    if (type === "preferences.updated") {
+      applyPreferencesUpdate(payload);
+      return;
+    }
+    applyOperationEvent(type, payload);
+  }
+
+  function applySessionSummary(payload) {
+    const summary = sessionSummaryFromPayload(payload);
+    const current = summary ? reduceSessionSummary(summary) : null;
+    if (!current) return;
+    upsertLibrarySummary(current);
+    if (state.session?.id !== current.id) {
+      if (!state.session && chatIsVisible()) renderLibraryItems();
+      return;
+    }
+    if (current.revision < state.session.revision) return;
+    const controlsChanged =
+      state.session.title !== current.title ||
+      state.session.model !== current.model ||
+      state.session.reasoning !== current.reasoning;
+    const titleEdit = captureTitleEdit();
+    const selection = captureComposerSelection();
+    state.session = {
+      ...state.session,
+      title: current.title,
+      model: current.model,
+      reasoning: current.reasoning,
+      revision: current.revision,
+      created_at: current.created_at,
+      updated_at: current.updated_at,
+    };
+    if (controlsChanged) {
+      renderSessionPreservingScroll(titleEdit);
+      restoreComposerSelection(selection);
+    }
+    scheduleEstimate(true);
+  }
+
+  function sessionSummaryFromPayload(payload) {
+    if (
+      typeof payload.session_id !== "string" ||
+      typeof payload.title !== "string" ||
+      typeof payload.model !== "string" ||
+      typeof payload.reasoning !== "string" ||
+      !Number.isInteger(payload.revision) ||
+      typeof payload.preview !== "string" ||
+      !Number.isInteger(payload.created_at) ||
+      !Number.isInteger(payload.updated_at)
+    )
+      return null;
+    return {
+      id: payload.session_id,
+      title: payload.title,
+      model: payload.model,
+      reasoning: payload.reasoning,
+      revision: payload.revision,
+      preview: payload.preview,
+      created_at: payload.created_at,
+      updated_at: payload.updated_at,
+    };
+  }
+
+  function reduceSessionSummary(summary) {
+    if (state.deletedSessions.has(summary.id)) return null;
+    const knownRevision = state.sessionRevisions.get(summary.id) || 0;
+    if (summary.revision < knownRevision) return null;
+    state.sessionRevisions.set(summary.id, summary.revision);
+    state.sessionSummaries.set(summary.id, summary);
+    return summary;
+  }
+
+  function upsertLibrarySummary(summary) {
+    state.libraryItems = state.libraryItems.filter((item) => item.id !== summary.id);
+    if (matchesLibraryQuery(summary)) state.libraryItems.push(summary);
+    sortLibraryItems();
+  }
+
+  function matchesLibraryQuery(summary) {
+    const query = state.libraryQuery.trim().toLocaleLowerCase();
+    return !query || summary.title.toLocaleLowerCase().includes(query);
+  }
+
+  function sortLibraryItems() {
+    state.libraryItems.sort(
+      (left, right) =>
+        right.updated_at - left.updated_at || right.id.localeCompare(left.id),
+    );
+  }
+
+  function applySessionDeletion(sessionId) {
+    if (typeof sessionId !== "string") return;
+    state.deletedSessions.add(sessionId);
+    state.sessionSummaries.delete(sessionId);
+    state.sessionRevisions.delete(sessionId);
+    const operation = state.activeOperations.get(sessionId);
+    if (operation) cancelOperationRender(operation);
+    state.activeOperations.delete(sessionId);
+    const pending = state.pendingCommands.get(sessionId);
+    if (pending) cancelOperationRender(pending);
+    state.pendingCommands.delete(sessionId);
+    removeDraft(sessionId);
+    state.libraryItems = state.libraryItems.filter(
+      (session) => session.id !== sessionId,
+    );
+    if (
+      state.session?.id === sessionId ||
+      routedSessionId(window.location.pathname) === sessionId
+    ) {
+      detachVisibleOperation();
+      window.history.replaceState({}, "", "/admin/chat");
+      void route(window.location.pathname);
+    } else if (!state.session && chatIsVisible()) {
+      renderLibraryItems();
+    }
+  }
+
+  function applyPreferencesUpdate(payload) {
+    if (!state.bootstrap || !Number.isInteger(payload.updated_at)) return;
+    const current = state.bootstrap.preferences;
+    if (current && payload.updated_at < current.updated_at) return;
+    state.bootstrap.preferences = {
+      system_prompt: payload.system_prompt,
+      last_model: payload.last_model,
+      last_reasoning: payload.last_reasoning,
+      updated_at: payload.updated_at,
+    };
+    if (state.session) scheduleEstimate(true);
+  }
+
+  function createOperation(values) {
+    const phase = values.phase || "generating";
+    return {
+      id: values.id,
+      sessionId: values.sessionId,
+      action: values.action,
+      phase,
+      segments: values.segments || [],
+      sequence: values.sequence || 0,
+      status: phase === "compacting" ? "Compacting…" : "Thinking…",
+      userText: values.userText || "",
+      accepted: Boolean(values.accepted),
+      failureMessage: "",
+      renderFrame: null,
+      returnFocusToComposer: Boolean(values.returnFocusToComposer),
+      commandPending: Boolean(values.commandPending),
+      serverObserved: Boolean(values.serverObserved),
+      ambiguousError: "",
+      turnId: values.turnId || null,
+      generationId: values.generationId || null,
+      regeneration: Boolean(values.regeneration),
+      actualModel: values.actualModel || null,
+    };
+  }
+
+  function operationFromSnapshot(snapshot, existing = null) {
+    const operation =
+      existing && existing.id === snapshot.operation_id
+        ? existing
+        : createOperation({
+            id: snapshot.operation_id,
+            sessionId: snapshot.session_id,
+            action: snapshot.kind,
+          });
+    if (snapshot.operation_sequence < operation.sequence) return operation;
+    operation.action = snapshot.kind;
+    operation.phase = snapshot.phase;
+    operation.status =
+      snapshot.phase === "compacting" ? "Compacting…" : "Thinking…";
+    operation.userText = snapshot.submitted_text || "";
+    operation.turnId = snapshot.turn_id;
+    operation.generationId = snapshot.generation_id;
+    operation.regeneration = Boolean(snapshot.regeneration);
+    operation.actualModel = snapshot.actual_model;
+    operation.segments = (snapshot.segments || []).map((segment) => ({
+      kind: segment.kind,
+      text: segment.text,
+      pending: [],
+    }));
+    operation.sequence = snapshot.operation_sequence;
+    operation.accepted = Boolean(snapshot.turn_id || snapshot.generation_id);
+    operation.serverObserved = true;
+    operation.commandPending = false;
+    operation.ambiguousError = "";
+    return operation;
+  }
+
+  function validOperationKind(value) {
+    return ["send", "retry", "regenerate", "compact"].includes(value);
+  }
+
+  function validOperationSnapshot(snapshot) {
+    return Boolean(
+      snapshot &&
+        typeof snapshot.session_id === "string" &&
+        typeof snapshot.operation_id === "string" &&
+        validOperationKind(snapshot.kind) &&
+        ["generating", "compacting"].includes(snapshot.phase) &&
+        Number.isInteger(snapshot.operation_sequence) &&
+        Array.isArray(snapshot.segments),
+    );
+  }
+
+  function installActiveSnapshot(snapshots) {
+    const next = new Map();
+    const operationIds = new Set();
+    for (const snapshot of snapshots) {
+      if (!validOperationSnapshot(snapshot) || next.has(snapshot.session_id)) {
+        return null;
+      }
+      const current = state.activeOperations.get(snapshot.session_id);
+      const pending = state.pendingCommands.get(snapshot.session_id);
+      const reusable =
+        current?.id === snapshot.operation_id
+          ? current
+          : pending?.id === snapshot.operation_id
+            ? pending
+            : null;
+      const operation = operationFromSnapshot(snapshot, reusable);
+      next.set(snapshot.session_id, operation);
+      operationIds.add(snapshot.operation_id);
+      if (pending?.id === snapshot.operation_id) {
+        state.pendingCommands.delete(snapshot.session_id);
+      }
+    }
+    state.activeOperations.forEach((operation, sessionId) => {
+      if (next.get(sessionId) !== operation) cancelOperationRender(operation);
+    });
+    state.activeOperations = next;
+    selectVisibleOperation();
+    if (!state.session && chatIsVisible()) renderLibraryItems();
+    return operationIds;
+  }
+
+  function settlePendingAfterSnapshot(operationIds) {
+    if (!operationIds) {
+      restartEventFeed();
+      return;
+    }
+    [...state.pendingCommands.values()].forEach((pending) => {
+      if (pending.commandPending || operationIds.has(pending.id)) return;
+      if (pending.serverObserved) {
+        clearPendingCommand(pending);
+      } else if (pending.ambiguousError) {
+        markCommandUncertain(pending);
+      }
+    });
+    selectVisibleOperation();
+    if (state.session) renderSessionPreservingScroll();
+  }
+
+  function selectVisibleOperation() {
+    if (!state.session) {
+      state.operation = null;
+      return;
+    }
+    state.operation =
+      state.activeOperations.get(state.session.id) ||
+      state.pendingCommands.get(state.session.id) ||
+      null;
+  }
+
+  function applyOperationEvent(type, payload) {
+    if (
+      typeof payload.session_id !== "string" ||
+      typeof payload.operation_id !== "string" ||
+      !validOperationKind(payload.kind) ||
+      !Number.isInteger(payload.operation_sequence)
+    )
+      return;
+    const active = state.activeOperations.get(payload.session_id);
+    const pending = state.pendingCommands.get(payload.session_id);
+    const matchingActive = active?.id === payload.operation_id ? active : null;
+    const matchingPending = pending?.id === payload.operation_id ? pending : null;
+    if (isTerminalEvent(type, payload.kind)) {
+      if (
+        matchingActive &&
+        payload.operation_sequence <= matchingActive.sequence
+      )
+        return;
+      if (matchingActive) matchingActive.sequence = payload.operation_sequence;
+      if (matchingPending) matchingPending.serverObserved = true;
+      void settleOperation(type, payload, matchingActive || matchingPending);
+      return;
+    }
+    let operation = matchingActive || matchingPending;
+    if (!operation) {
+      operation = createOperation({
+        id: payload.operation_id,
+        sessionId: payload.session_id,
+        action: payload.kind,
+      });
+    }
+    if (payload.operation_sequence <= operation.sequence) return;
+    if (active && active !== operation) cancelOperationRender(active);
+    state.activeOperations.set(payload.session_id, operation);
+    if (matchingPending) state.pendingCommands.delete(payload.session_id);
+    operation.serverObserved = true;
+    operation.commandPending = false;
+    let structural = true;
+    let restoreComposerFocus = false;
+    if (type === "operation.started") {
+      operation.action = payload.kind;
+      operation.phase = payload.phase;
+      operation.status =
+        payload.phase === "compacting" ? "Compacting…" : "Thinking…";
+      operation.userText = payload.submitted_text || "";
+    } else if (type === "turn.started") {
+      operation.accepted = true;
+      operation.phase = "generating";
+      operation.status = "Thinking…";
+      operation.turnId = payload.turn_id;
+      operation.generationId = payload.generation_id;
+      operation.regeneration = Boolean(payload.regeneration);
+      if (operation.action === "send") confirmSubmittedDraft(operation.id);
+      restoreComposerFocus =
+        operation.returnFocusToComposer && composerFocusIsUnclaimed();
+    } else if (type === "segment.started") {
+      operation.segments[payload.ordinal] = {
+        kind: payload.segment_kind,
+        text: "",
+        pending: [],
+      };
+    } else if (type === "segment.delta") {
+      const segment = operation.segments[payload.ordinal];
+      if (segment) {
+        if (state.operation === operation) {
+          segment.pending.push(payload.delta);
+          structural = false;
+          scheduleLiveRender(operation);
+        } else {
+          segment.text += payload.delta;
+        }
+      }
+    } else if (type === "compaction.started") {
+      operation.phase = "compacting";
+      operation.status = "Compacting…";
+    } else if (type === "compaction.completed" && operation.action !== "compact") {
+      operation.phase = "generating";
+      operation.status = "Thinking…";
+    }
+    operation.sequence = payload.operation_sequence;
+    if (state.session?.id === operation.sessionId) state.operation = operation;
+    if (structural && state.operation === operation) {
+      renderOperationStructure(operation);
+      if (restoreComposerFocus) focusComposerAtEnd();
+    } else if (!state.session && chatIsVisible()) {
+      renderLibraryItems();
+    }
+  }
+
+  function isTerminalEvent(type, kind) {
+    return (
+      [
+        "turn.completed",
+        "turn.failed",
+        "turn.stopped",
+        "compaction.failed",
+        "compaction.stopped",
+        "operation.failed",
+      ].includes(type) ||
+      (type === "compaction.completed" && kind === "compact")
+    );
+  }
+
+  async function settleOperation(type, payload, operation) {
+    const sessionId = payload.session_id;
+    const operationId = payload.operation_id;
+    if (operation) cancelOperationRender(operation);
+    if (state.activeOperations.get(sessionId)?.id === operationId) {
+      state.activeOperations.delete(sessionId);
+    }
+    if (state.pendingCommands.get(sessionId)?.id === operationId) {
+      state.pendingCommands.delete(sessionId);
+    }
+    if (state.session?.id !== sessionId) {
+      if (!state.session && chatIsVisible()) renderLibraryItems();
+      return;
+    }
+    selectVisibleOperation();
+    if (type === "operation.failed") {
+      if (payload.kind === "send") rejectSubmittedDraft(operationId);
+      renderSessionPreservingScroll();
+      setNotice(payload.message || "Chat operation failed.", "error");
+      return;
+    }
+    await reloadSession();
+    if (type === "compaction.failed") {
+      setNotice(payload.message || "Compaction failed.", "error");
+    }
+  }
+
+  function refreshFeedState() {
+    if (state.session) refreshComposerState();
+    const newChat = document.querySelector('[data-testid="chat-new"]');
+    if (newChat) newChat.disabled = !mutationsReady();
+  }
+
+  function focusComposerAtEnd() {
+    const textarea = document.getElementById("chatComposer");
+    restoreComposerSelection(
+      textarea
+        ? {
+            start: textarea.value.length,
+            end: textarea.value.length,
+            direction: "none",
+          }
+        : null,
+    );
+  }
+
+  function draftKey(sessionId) {
+    return `fcc.chat.draft.${sessionId}`;
+  }
+
+  function loadDraft(sessionId) {
+    state.draftSessionId = sessionId;
+    state.draft = "";
+    state.draftOperationId = null;
+    state.draftSubmittedText = "";
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(draftKey(sessionId)) || "null");
+      if (!stored || typeof stored !== "object") return;
+      if (typeof stored.text === "string") state.draft = stored.text;
+      if (typeof stored.operationId === "string") {
+        state.draftOperationId = stored.operationId;
+      }
+      if (typeof stored.submittedText === "string") {
+        state.draftSubmittedText = stored.submittedText;
+      }
+    } catch {
+      // In-memory draft state remains usable when browser storage is unavailable.
+    }
+  }
+
+  function saveDraft() {
+    if (!state.draftSessionId) return;
+    try {
+      if (!state.draft && !state.draftOperationId) {
+        sessionStorage.removeItem(draftKey(state.draftSessionId));
+        return;
+      }
+      sessionStorage.setItem(
+        draftKey(state.draftSessionId),
+        JSON.stringify({
+          text: state.draft,
+          operationId: state.draftOperationId,
+          submittedText: state.draftSubmittedText,
+        }),
+      );
+    } catch {
+      // In-memory draft state remains usable when browser storage is unavailable.
+    }
+  }
+
+  function removeDraft(sessionId) {
+    try {
+      sessionStorage.removeItem(draftKey(sessionId));
+    } catch {
+      // Deletion remains correct even when browser storage is unavailable.
+    }
+    if (state.draftSessionId === sessionId) {
+      state.draft = "";
+      state.draftSessionId = null;
+      state.draftOperationId = null;
+      state.draftSubmittedText = "";
+    }
+  }
+
+  function confirmSubmittedDraft(operationId) {
+    if (state.draftOperationId !== operationId) return;
+    if (state.draft === state.draftSubmittedText) state.draft = "";
+    state.draftOperationId = null;
+    state.draftSubmittedText = "";
+    saveDraft();
+    const textarea = document.getElementById("chatComposer");
+    if (textarea) textarea.value = state.draft;
+  }
+
+  function rejectSubmittedDraft(operationId) {
+    if (state.draftOperationId !== operationId) return;
+    if (!state.draft) state.draft = state.draftSubmittedText;
+    state.draftOperationId = null;
+    state.draftSubmittedText = "";
+    saveDraft();
+  }
+
+  function rejectCommand(operation, message) {
+    cancelOperationRender(operation);
+    if (state.pendingCommands.get(operation.sessionId) === operation) {
+      state.pendingCommands.delete(operation.sessionId);
+    }
+    if (operation.action === "send") rejectSubmittedDraft(operation.id);
+    if (state.operation === operation) {
+      selectVisibleOperation();
+      renderSessionPreservingScroll();
+      setNotice(message, "error");
+    }
+  }
+
+  function clearPendingCommand(operation) {
+    if (state.pendingCommands.get(operation.sessionId) === operation) {
+      state.pendingCommands.delete(operation.sessionId);
+    }
+    if (
+      operation.action === "send" &&
+      state.turns.some((turn) => turn.operation_id === operation.id)
+    ) {
+      confirmSubmittedDraft(operation.id);
+    }
+    cancelOperationRender(operation);
+  }
+
+  function markCommandUncertain(operation) {
+    clearPendingCommand(operation);
+    if (state.operation !== operation) return;
+    selectVisibleOperation();
+    renderSessionPreservingScroll();
+    setNotice(
+      "The connection was lost before FCC could confirm this command. Check the chat before trying it again.",
+      "error",
+    );
+  }
+
+  function reconcileAmbiguousCommand(operation) {
+    if (state.pendingCommands.get(operation.sessionId) !== operation) return;
+    restartEventFeed();
+  }
+
+  function detachVisibleOperation() {
+    if (!state.operation) return;
+    cancelOperationRender(state.operation);
+    commitPendingDeltas(state.operation);
+    state.operation = null;
   }
 
   async function refresh(path = window.location.pathname) {
@@ -92,10 +785,9 @@
       renderLoading();
       return;
     }
-    stopForeignOperationPoll();
     state.routeVersion += 1;
     renderLoading();
-    await refresh(path);
+    await withBufferedEvents(() => refresh(path));
   }
 
   function chatIsVisible() {
@@ -104,7 +796,6 @@
   }
 
   async function route(path) {
-    stopForeignOperationPoll();
     const version = ++state.routeVersion;
     const sessionId = routedSessionId(path);
     if (!sessionId) {
@@ -139,9 +830,8 @@
   }
 
   async function showLibrary(version) {
-    cancelLocalStream();
+    detachVisibleOperation();
     state.session = null;
-    state.serverOperationActive = false;
     if (!state.bootstrap?.available) {
       renderUnavailable();
       return;
@@ -160,6 +850,7 @@
     );
     const newButton = button("New chat", "primary-button", createSession);
     newButton.dataset.testid = "chat-new";
+    newButton.disabled = !mutationsReady();
     header.append(copy, newButton);
 
     const search = node("input", "chat-search");
@@ -220,9 +911,16 @@
     try {
       const page = await state.api(`/admin/api/chat/sessions?${params}`);
       if (!isCurrent()) return;
-      state.libraryItems = reset
-        ? page.sessions
-        : [...state.libraryItems, ...page.sessions];
+      const merged = new Map(
+        state.libraryItems.map((session) => [session.id, session]),
+      );
+      page.sessions.forEach((session) => {
+        if (state.deletedSessions.has(session.id)) return;
+        const current = reduceSessionSummary(session);
+        if (current && matchesLibraryQuery(current)) merged.set(current.id, current);
+      });
+      state.libraryItems = [...merged.values()].filter(matchesLibraryQuery);
+      sortLibraryItems();
       state.libraryCursor = page.next_cursor;
       renderLibraryItems();
     } catch (error) {
@@ -255,6 +953,16 @@
       const preview = node("p", "", session.preview || "No messages yet");
       const meta = node("span", "", `${session.model} · ${relativeTime(session.updated_at)}`);
       item.append(heading, preview, meta);
+      const active = state.activeOperations.get(session.id);
+      if (active) {
+        item.appendChild(
+          node(
+            "span",
+            "chat-session-status",
+            active.action === "compact" ? "Compacting…" : "Thinking…",
+          ),
+        );
+      }
       list.appendChild(item);
     });
     const more = document.getElementById("chatLoadMore");
@@ -265,6 +973,7 @@
   }
 
   async function createSession() {
+    if (!mutationsReady()) return;
     setNotice("Creating chat…");
     try {
       const session = await state.api("/admin/api/chat/sessions", {
@@ -282,17 +991,33 @@
     route(window.location.pathname);
   }
 
-  async function showSession(id, version) {
+  async function showSession(id, version, freshnessRetry = false) {
     if (!state.bootstrap?.available) {
       renderUnavailable();
       return;
     }
-    renderLoading();
+    const refreshingVisibleSession =
+      state.session?.id === id && Boolean(document.getElementById("chatTranscript"));
+    if (!refreshingVisibleSession) renderLoading();
     try {
       const detail = await state.api(`/admin/api/chat/sessions/${id}`);
       if (version !== state.routeVersion) return;
-      applyDetail(detail);
-      renderSession();
+      const titleEdit = refreshingVisibleSession ? captureTitleEdit() : null;
+      const composerSelection = refreshingVisibleSession
+        ? captureComposerSelection()
+        : null;
+      if (!applyDetail(detail)) {
+        if (!freshnessRetry && !state.deletedSessions.has(id)) {
+          await showSession(id, version, true);
+        }
+        return;
+      }
+      if (refreshingVisibleSession) {
+        renderSessionPreservingScroll(titleEdit);
+        restoreComposerSelection(composerSelection);
+      } else {
+        renderSession();
+      }
     } catch (error) {
       if (version !== state.routeVersion) return;
       const empty = node("section", "chat-empty");
@@ -306,31 +1031,43 @@
   }
 
   function applyDetail(detail) {
-    invalidateEstimate();
-    if (state.draftSessionId !== detail.session.id) {
-      state.draft = "";
-      state.draftSessionId = detail.session.id;
-      state.draftOperationId = null;
-    } else if (
-      state.draftOperationId &&
-      detail.turns.some((turn) => turn.operation_id === state.draftOperationId)
+    const sessionId = detail.session.id;
+    const knownRevision = state.sessionRevisions.get(sessionId) || 0;
+    if (
+      state.deletedSessions.has(sessionId) ||
+      detail.session.revision < knownRevision ||
+      (state.session?.id === sessionId &&
+        detail.session.revision < state.session.revision)
     ) {
-      state.draft = "";
-      state.draftOperationId = null;
+      return false;
     }
+    state.sessionRevisions.set(sessionId, detail.session.revision);
+    invalidateEstimate();
+    if (state.draftSessionId !== sessionId) {
+      loadDraft(sessionId);
+    }
+    const pendingTurn =
+      state.draftOperationId &&
+      detail.turns.find((turn) => turn.operation_id === state.draftOperationId);
+    if (pendingTurn) confirmSubmittedDraft(state.draftOperationId);
     state.session = detail.session;
     state.turns = detail.turns;
     state.nextBefore = detail.next_before;
     state.compaction = detail.compaction;
     state.context = detail.context;
     state.contextError = detail.context_error || "";
-    state.serverOperationActive = Boolean(detail.active_operation);
+    selectVisibleOperation();
     if (state.draft && !state.operation) scheduleEstimate(true);
+    return true;
   }
 
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
     const session = state.session;
     if (!session) return;
+    const previousTitle = document.querySelector(".chat-title");
+    if (previousTitle instanceof HTMLInputElement) {
+      state.retiredTitleInputs.add(previousTitle);
+    }
     state.modelComboboxes.clear();
     const shell = node("div", "chat-session-shell");
     const header = renderSessionHeader(session);
@@ -350,15 +1087,15 @@
     } else {
       scroller.scrollTop = scrollTop;
     }
-    syncForeignOperationPoll();
   }
 
-  function renderSessionPreservingScroll() {
+  function renderSessionPreservingScroll(titleEdit = captureTitleEdit()) {
     const scroller = document.getElementById("chatTranscript");
     renderSession({
       followLatest: !scroller || nearBottom(scroller),
       scrollTop: scroller?.scrollTop || 0,
     });
+    restoreTitleEdit(titleEdit);
   }
 
   function renderSessionHeader(session) {
@@ -369,7 +1106,14 @@
     title.value = session.title;
     title.maxLength = 200;
     title.setAttribute("aria-label", "Chat title");
-    title.addEventListener("change", () => updateSession({ title: title.value }));
+    title.addEventListener("blur", () => {
+      if (
+        title.isConnected &&
+        !state.retiredTitleInputs.has(title) &&
+        title.value !== state.session?.title
+      )
+        void updateSession({ title: title.value });
+    });
     title.addEventListener("keydown", (event) => {
       if (event.key === "Enter") title.blur();
     });
@@ -478,6 +1222,8 @@
     textarea.addEventListener("input", () => {
       state.draft = textarea.value;
       state.draftOperationId = null;
+      state.draftSubmittedText = "";
+      saveDraft();
       refreshComposerState();
       scheduleEstimate();
     });
@@ -532,9 +1278,36 @@
     textarea.setSelectionRange(start, end, selection.direction);
   }
 
+  function captureTitleEdit() {
+    const input = document.querySelector(".chat-title");
+    if (
+      !(input instanceof HTMLInputElement) ||
+      document.activeElement !== input ||
+      input.value === state.session?.title
+    )
+      return null;
+    return {
+      value: input.value,
+      start: input.selectionStart,
+      end: input.selectionEnd,
+      direction: input.selectionDirection,
+    };
+  }
+
+  function restoreTitleEdit(edit) {
+    const input = document.querySelector(".chat-title");
+    if (!(input instanceof HTMLInputElement) || !edit) return;
+    input.value = edit.value;
+    input.focus({ preventScroll: true });
+    const start = Math.min(edit.start ?? edit.value.length, edit.value.length);
+    const end = Math.min(edit.end ?? edit.value.length, edit.value.length);
+    input.setSelectionRange(start, end, edit.direction || "none");
+  }
+
   function renderTranscript() {
     const scroller = document.getElementById("chatTranscript");
     if (!scroller) return;
+    if (state.operation) commitPendingDeltas(state.operation);
     scroller.replaceChildren();
     if (state.nextBefore) {
       scroller.appendChild(
@@ -551,8 +1324,10 @@
     state.turns.forEach((turn, index) => {
       scroller.appendChild(renderUserMessage(turn));
       const replacingLatest =
-        index === state.turns.length - 1 &&
-        ["retry", "regenerate"].includes(state.operation?.action);
+        turn.id === state.operation?.turnId ||
+        (index === state.turns.length - 1 &&
+          !state.operation?.turnId &&
+          ["retry", "regenerate"].includes(state.operation?.action));
       if (!replacingLatest) scroller.appendChild(renderAssistantMessage(turn));
       if (
         state.compaction &&
@@ -562,7 +1337,14 @@
         dividerRendered = true;
       }
     });
-    if (state.operation?.action === "send" && state.operation.userText) {
+    const operationHasTurn = state.turns.some(
+      (turn) => turn.operation_id === state.operation?.id,
+    );
+    if (
+      state.operation?.action === "send" &&
+      state.operation.userText &&
+      !operationHasTurn
+    ) {
       const pending = node("article", "chat-message user-message");
       pending.append(
         node("div", "chat-message-label", "You"),
@@ -723,7 +1505,7 @@
   }
 
   async function updateSession(changes) {
-    if (!state.session) return;
+    if (!state.session || !mutationsReady()) return;
     if (state.operation && (changes.model || changes.reasoning)) return;
     await applySessionChanges(changes, state.session.revision, true);
   }
@@ -745,10 +1527,12 @@
       if (
         routeVersion !== state.routeVersion ||
         state.session?.id !== sessionId ||
-        state.session.revision !== expectedRevision
+        state.session.revision !== expectedRevision ||
+        state.deletedSessions.has(sessionId)
       )
         return;
       state.session = session;
+      state.sessionRevisions.set(session.id, session.revision);
       renderSessionPreservingScroll();
       scheduleEstimate(true);
     } catch (error) {
@@ -775,7 +1559,7 @@
   }
 
   async function deleteSession() {
-    if (!state.session) return;
+    if (!state.session || !mutationsReady()) return;
     if (!window.confirm(`Permanently delete “${state.session.title}”?`)) return;
     const sessionId = state.session.id;
     try {
@@ -783,7 +1567,6 @@
         method: "DELETE",
         body: JSON.stringify({ expected_revision: state.session.revision }),
       });
-      state.eventChannel?.postMessage({ type: "session.deleted", sessionId });
       goLibrary();
     } catch (error) {
       setNotice(error.message, "error");
@@ -791,27 +1574,13 @@
   }
 
   function goLibrary() {
-    cancelLocalStream();
+    detachVisibleOperation();
     window.history.pushState({}, "", "/admin/chat");
     route(window.location.pathname);
   }
 
-  function handleCrossTabEvent(event) {
-    const message = event.data;
-    if (
-      !message ||
-      message.type !== "session.deleted" ||
-      typeof message.sessionId !== "string" ||
-      (state.session?.id !== message.sessionId &&
-        routedSessionId(window.location.pathname) !== message.sessionId)
-    )
-      return;
-    cancelLocalStream();
-    window.history.replaceState({}, "", "/admin/chat");
-    route(window.location.pathname);
-  }
-
   function editSystemPrompt() {
+    if (!mutationsReady()) return;
     const current = state.bootstrap.preferences?.system_prompt || "";
     const dialog = document.createElement("dialog");
     dialog.className = "chat-prompt-dialog";
@@ -933,14 +1702,10 @@
 
   function sendBlockReason() {
     if (!state.session) return "Chat unavailable";
+    if (!mutationsReady()) return "Reconnecting…";
     if (state.operation) return "A chat operation is already running";
     const latest = state.turns[state.turns.length - 1];
-    if (
-      state.serverOperationActive ||
-      latest?.generation?.status === "running"
-    ) {
-      return "This chat is running in another tab";
-    }
+    if (latest?.generation?.status === "running") return "This chat is running";
     const option = modelOption(state.session.model);
     if (!option) return "Choose an available model";
     if (option.supports_reasoning === false && state.session.reasoning !== "off") {
@@ -969,9 +1734,7 @@
     const blocked = sendBlockReason();
     const latest = state.turns[state.turns.length - 1];
     const busy = Boolean(
-      state.operation ||
-        state.serverOperationActive ||
-        latest?.generation?.status === "running",
+      state.operation || latest?.generation?.status === "running",
     );
     send.disabled = Boolean(blocked) || !textarea.value.trim();
     send.hidden = Boolean(state.operation);
@@ -988,7 +1751,12 @@
         ".chat-controls button, .chat-controls input, .chat-controls select",
       )
       .forEach((control) => {
-        control.disabled = busy;
+        control.disabled = busy || !mutationsReady();
+      });
+    document
+      .querySelectorAll(".chat-header-row .danger-button, .chat-title")
+      .forEach((control) => {
+        control.disabled = !mutationsReady();
       });
     if (compact) {
       compact.disabled = busy || !state.context?.can_compact;
@@ -1015,194 +1783,64 @@
   }
 
   async function runOperation(action, extra) {
-    if (!state.session || state.operation) return;
+    if (!state.session || state.operation || !mutationsReady()) return;
     invalidateEstimate();
-    let failure = null;
     const activeElementId = document.activeElement?.id;
-    const operation = {
+    const operation = createOperation({
       id: crypto.randomUUID(),
       sessionId: state.session.id,
       action,
-      controller: new AbortController(),
-      segments: [],
-      sequence: 0,
-      status: action === "compact" ? "Compacting…" : "Thinking…",
+      phase: action === "compact" ? "compacting" : "generating",
       userText: extra.text || "",
-      accepted: false,
-      failureMessage: "",
-      renderFrame: null,
       returnFocusToComposer:
         action === "send" &&
         (activeElementId === "chatComposer" || activeElementId === "chatSend"),
-    };
+      commandPending: true,
+    });
     if (action === "send") {
       state.draftOperationId = operation.id;
+      state.draftSubmittedText = operation.userText;
+      saveDraft();
     }
+    state.pendingCommands.set(operation.sessionId, operation);
     state.operation = operation;
     renderSessionPreservingScroll();
     try {
-      const response = await fetch(
+      const acknowledgement = await state.api(
         `/admin/api/chat/sessions/${operation.sessionId}/${action}`,
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             expected_revision: state.session.revision,
             operation_id: operation.id,
             ...extra,
           }),
-          cache: "no-store",
-          signal: operation.controller.signal,
         },
       );
-      if (!response.ok) throw await responseError(response);
-      if (!response.body) throw new Error("The browser could not open the chat stream.");
-      await consumeEvents(response.body, operation);
-      if (operation.failureMessage) {
-        failure = new Error(operation.failureMessage);
-      }
-    } catch (error) {
-      if (action === "send" && !operation.accepted) {
-        state.draft = operation.userText;
-        state.draftSessionId = operation.sessionId;
-        state.draftOperationId = operation.id;
-      }
-      if (error.name !== "AbortError") failure = error;
-    } finally {
-      cancelOperationRender(operation);
-      const composerSelection =
-        captureComposerSelection() ||
-        (operation.returnFocusToComposer && composerFocusIsUnclaimed()
-          ? {
-              start: state.draft.length,
-              end: state.draft.length,
-              direction: "none",
-            }
-          : null);
-      if (state.operation === operation) state.operation = null;
-      if (state.session?.id === operation.sessionId) await reloadSession();
-      restoreComposerSelection(composerSelection);
-      const persistedFailure = state.turns[state.turns.length - 1]?.generation;
-      const failureIsInline =
-        operation.failureMessage &&
-        persistedFailure?.status === "failed" &&
-        persistedFailure.error_message === operation.failureMessage;
-      if (failure && !failureIsInline) setNotice(failure.message, "error");
-    }
-  }
-
-  async function consumeEvents(body, operation) {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    const frameParts = [];
-    let boundaryTail = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        const chunk = decoder.decode(value || new Uint8Array(), { stream: !done });
-        const probe = boundaryTail + chunk;
-        const boundary = /\r?\n\r?\n/g;
-        const prefixLength = boundaryTail.length;
-        let chunkStart = 0;
-        for (const match of probe.matchAll(boundary)) {
-          const chunkEnd = match.index + match[0].length - prefixLength;
-          frameParts.push(chunk.slice(chunkStart, chunkEnd));
-          applyStreamFrame(frameParts.join(""), operation);
-          frameParts.length = 0;
-          chunkStart = chunkEnd;
-        }
-        const remainder = chunk.slice(chunkStart);
-        if (remainder) frameParts.push(remainder);
-        boundaryTail = chunkStart
-          ? remainder.slice(-3)
-          : (boundaryTail + chunk).slice(-3);
-        if (done) {
-          const finalFrame = frameParts.join("");
-          if (finalFrame.trim()) applyStreamFrame(finalFrame, operation);
-          return;
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  }
-
-  function applyStreamFrame(frame, operation) {
-    if (state.operation !== operation) return;
-    let event = "message";
-    let sequence = 0;
-    let payload = null;
-    frame.split(/\r?\n/).forEach((line) => {
-      if (line.startsWith("event:")) event = line.slice(6).trim();
-      if (line.startsWith("id:")) sequence = Number.parseInt(line.slice(3), 10);
-      if (line.startsWith("data:")) payload = JSON.parse(line.slice(5).trim());
-    });
-    if (!payload || payload.operation_id !== operation.id) return;
-    if (!Number.isFinite(sequence) || sequence <= operation.sequence) return;
-    if (
-      state.session?.id === operation.sessionId &&
-      Number.isInteger(payload.revision)
-    ) {
-      state.session.revision = payload.revision;
-    }
-    let liveDelta = false;
-    let restoreComposerFocus = false;
-    if (event === "turn.started") {
-      operation.accepted = true;
       if (
-        operation.action === "send" &&
-        state.draftOperationId === operation.id
+        acknowledgement.session_id !== operation.sessionId ||
+        acknowledgement.operation_id !== operation.id ||
+        acknowledgement.kind !== action
       ) {
-        state.draft = "";
-        state.draftSessionId = operation.sessionId;
-        state.draftOperationId = null;
-        const textarea = document.getElementById("chatComposer");
-        if (textarea) textarea.value = "";
+        throw new Error("The server returned an invalid operation acknowledgement.");
       }
-      restoreComposerFocus =
-        operation.returnFocusToComposer && composerFocusIsUnclaimed();
-    } else if (event === "segment.started") {
-      operation.segments[payload.ordinal] = {
-        kind: payload.kind,
-        text: "",
-        pending: [],
-      };
-    } else if (event === "segment.delta") {
-      const segment = operation.segments[payload.ordinal];
-      if (segment) {
-        segment.pending.push(payload.delta);
-        liveDelta = true;
+      operation.commandPending = false;
+      operation.serverObserved = true;
+    } catch (error) {
+      operation.commandPending = false;
+      const active = state.activeOperations.get(operation.sessionId);
+      const pending = state.pendingCommands.get(operation.sessionId);
+      if (
+        active?.id === operation.id ||
+        (pending !== operation && operation.serverObserved)
+      )
+        return;
+      if (error.status) {
+        rejectCommand(operation, error.message);
+        return;
       }
-    } else if (event === "compaction.completed") {
-      operation.status = "Compacted";
-    } else if (event === "compaction.failed") {
-      operation.failureMessage = payload.message || "Compaction failed";
-      operation.status = operation.failureMessage;
-    } else if (event === "compaction.stopped") {
-      operation.status = "Stopped";
-    } else if (event === "turn.failed") {
-      operation.failureMessage = payload.message || "Generation failed";
-      operation.status = operation.failureMessage;
-    } else if (event === "turn.stopped") {
-      operation.status = "Stopped";
-    }
-    operation.sequence = sequence;
-    if (liveDelta) {
-      scheduleLiveRender(operation);
-      return;
-    }
-    renderOperationStructure(operation);
-    if (restoreComposerFocus) {
-      const textarea = document.getElementById("chatComposer");
-      restoreComposerSelection(
-        textarea
-          ? {
-              start: textarea.value.length,
-              end: textarea.value.length,
-              direction: "none",
-            }
-          : null,
-      );
+      operation.ambiguousError = error.message;
+      reconcileAmbiguousCommand(operation);
     }
   }
 
@@ -1262,74 +1900,38 @@
     operation.status = "Stopping…";
     renderOperationStructure(operation);
     try {
-      await state.api(`/admin/api/chat/sessions/${operation.sessionId}/stop`, {
-        method: "POST",
-        body: JSON.stringify({ operation_id: operation.id }),
-      });
+      const result = await state.api(
+        `/admin/api/chat/sessions/${operation.sessionId}/stop`,
+        {
+          method: "POST",
+          body: JSON.stringify({ operation_id: operation.id }),
+        },
+      );
+      if (!result.stopped) restartEventFeed();
     } catch (error) {
       setNotice(error.message, "error");
     }
-  }
-
-  function cancelLocalStream() {
-    if (!state.operation) return;
-    cancelOperationRender(state.operation);
-    state.operation.controller.abort();
-    state.operation = null;
   }
 
   async function reloadSession() {
     const id = state.session?.id;
     if (!id) return;
+    const selection = captureComposerSelection();
     try {
       const detail = await state.api(`/admin/api/chat/sessions/${id}`);
       if (state.session?.id !== id) return;
-      applyDetail(detail);
-      renderSessionPreservingScroll();
+      const titleEdit = captureTitleEdit();
+      if (!applyDetail(detail)) return;
+      renderSessionPreservingScroll(titleEdit);
+      restoreComposerSelection(selection);
     } catch (error) {
       if (error.status === 404 && state.session?.id === id) {
-        cancelLocalStream();
+        detachVisibleOperation();
         window.history.replaceState({}, "", "/admin/chat");
         await route(window.location.pathname);
         return;
       }
       setNotice(error.message, "error");
-    }
-  }
-
-  function stopForeignOperationPoll() {
-    window.clearTimeout(state.foreignPollTimer);
-    state.foreignPollTimer = null;
-  }
-
-  function syncForeignOperationPoll() {
-    stopForeignOperationPoll();
-    const latest = state.turns[state.turns.length - 1];
-    const chatView = root()?.closest(".admin-view");
-    if (
-      !state.session ||
-      state.operation ||
-      (!state.serverOperationActive &&
-        latest?.generation?.status !== "running") ||
-      chatView?.hidden
-    ) {
-      return;
-    }
-    const sessionId = state.session.id;
-    state.foreignPollTimer = window.setTimeout(async () => {
-      state.foreignPollTimer = null;
-      if (state.session?.id !== sessionId || state.operation) return;
-      await reloadSession();
-      syncForeignOperationPoll();
-    }, 750);
-  }
-
-  async function responseError(response) {
-    try {
-      const payload = await response.json();
-      return new Error(payload.detail || `${response.status} ${response.statusText}`);
-    } catch {
-      return new Error(`${response.status} ${response.statusText}`);
     }
   }
 
@@ -1366,6 +1968,17 @@
   }
 
   window.ChatSessions = { initialize, activate, refresh };
+
+  window.addEventListener("offline", () => {
+    if (!state.initialized) return;
+    state.feedSyncVersion += 1;
+    state.feedStatus = "reconnecting";
+    refreshFeedState();
+  });
+
+  window.addEventListener("online", () => {
+    if (state.initialized && state.feedStatus !== "live") restartEventFeed();
+  });
 
   document.addEventListener("pointerdown", (event) => {
     state.modelComboboxes.forEach((combobox) => {

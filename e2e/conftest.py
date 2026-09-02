@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 import uvicorn
+from playwright.sync_api import Page
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
@@ -60,7 +61,6 @@ class _ModelListingProvider(BaseProvider):
         )
         self._model_infos = model_infos
         self._error = error
-        self._slow_used = False
         self._message_attempts: dict[str, int] = {}
 
     def preflight_messages(
@@ -101,13 +101,12 @@ class _ModelListingProvider(BaseProvider):
         user_content = str(request.messages[-1].content) if request.messages else ""
         attempt = self._message_attempts.get(user_content, 0) + 1
         self._message_attempts[user_content] = attempt
-        slow = not self._slow_used and (
-            "[slow]" in user_content
-            or ("[slow-regenerate]" in user_content and attempt > 1)
-            or (summary and "[slow-compaction]" in user_content)
+        slow = (
+            ("[slow]" in user_content and attempt == 1)
+            or ("[slow-regenerate]" in user_content and attempt == 2)
+            or (summary and "[slow-compaction]" in user_content and attempt == 1)
         )
         fragmented = "[fragmented]" in user_content
-        self._slow_used = self._slow_used or slow
         failed_regeneration = "[fail-regenerate]" in user_content and attempt > 1
         if summary:
             text = "Earlier details retained."
@@ -455,3 +454,14 @@ def admin_base_url(
         clear_settings_cache()
         if thread.is_alive():
             pytest.fail("Admin browser-test server did not stop")
+
+
+@pytest.fixture(autouse=True)
+def close_browser_connections_before_server_teardown(
+    admin_base_url: str,
+    page: Page,
+) -> Iterator[None]:
+    del admin_base_url
+    yield
+    if not page.is_closed():
+        page.goto("about:blank")

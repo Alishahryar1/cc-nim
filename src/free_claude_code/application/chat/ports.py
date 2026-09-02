@@ -4,17 +4,20 @@ from collections.abc import AsyncIterator
 from typing import Protocol
 
 from .models import (
+    ChatActiveOperation,
     ChatCompaction,
     ChatContextEstimate,
     ChatGeneration,
     ChatModelOption,
+    ChatOperationAcknowledgement,
     ChatPreferences,
+    ChatPublishedEvent,
     ChatReasoning,
     ChatSegment,
     ChatSession,
     ChatSessionDetail,
     ChatSessionPage,
-    ChatStreamEvent,
+    ChatSessionSummary,
     ChatTranscript,
     ChatTurn,
     GenerationStatus,
@@ -43,6 +46,8 @@ class ChatStorePort(Protocol):
         cursor: tuple[int, str] | None,
         limit: int,
     ) -> ChatSessionPage: ...
+
+    async def get_session_summary(self, session_id: str) -> ChatSessionSummary: ...
 
     async def get_session(self, session_id: str) -> ChatSession: ...
 
@@ -155,12 +160,12 @@ class ChatStorePort(Protocol):
     ) -> ChatCompaction: ...
 
 
-class ChatOperationStream(Protocol):
-    """One initiating browser's event stream and cancellation boundary."""
+class ChatEventSubscriptionPort(Protocol):
+    """Read-only process-local Chat event subscription."""
 
-    operation_id: str
+    cursor: int
 
-    def __aiter__(self) -> AsyncIterator[ChatStreamEvent]: ...
+    def __aiter__(self) -> AsyncIterator[ChatPublishedEvent]: ...
 
     async def aclose(self) -> None: ...
 
@@ -171,6 +176,10 @@ class ChatApplicationPort(Protocol):
     def availability(self) -> tuple[bool, str | None]: ...
 
     def models(self) -> tuple[ChatModelOption, ...]: ...
+
+    async def subscribe(
+        self,
+    ) -> tuple[ChatEventSubscriptionPort, tuple[ChatActiveOperation, ...]]: ...
 
     async def preferences(self) -> ChatPreferences: ...
 
@@ -223,7 +232,7 @@ class ChatApplicationPort(Protocol):
         expected_revision: int,
         operation_id: str,
         text: str,
-    ) -> ChatOperationStream: ...
+    ) -> ChatOperationAcknowledgement: ...
 
     async def retry(
         self,
@@ -231,7 +240,7 @@ class ChatApplicationPort(Protocol):
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream: ...
+    ) -> ChatOperationAcknowledgement: ...
 
     async def regenerate(
         self,
@@ -239,7 +248,7 @@ class ChatApplicationPort(Protocol):
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream: ...
+    ) -> ChatOperationAcknowledgement: ...
 
     async def compact(
         self,
@@ -247,6 +256,6 @@ class ChatApplicationPort(Protocol):
         *,
         expected_revision: int,
         operation_id: str,
-    ) -> ChatOperationStream: ...
+    ) -> ChatOperationAcknowledgement: ...
 
     async def stop(self, session_id: str, *, operation_id: str) -> bool: ...

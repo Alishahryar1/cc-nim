@@ -42,7 +42,11 @@ def unregister_pid(pid: int) -> None:
         _pids.discard(int(pid))
 
 
-def kill_pid_tree_best_effort(pid: int) -> None:
+def kill_pid_tree_best_effort(
+    pid: int,
+    *,
+    timeout_seconds: float | None = None,
+) -> None:
     """Kill a tracked process and its children where the platform supports it."""
     if not pid:
         return
@@ -54,6 +58,7 @@ def kill_pid_tree_best_effort(pid: int) -> None:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,
+                timeout=timeout_seconds,
             )
         except Exception as e:
             logger.debug("process_registry: taskkill failed pid=%s: %s", pid, e)
