@@ -1389,16 +1389,20 @@ interface:
 - A bounded single-consumer event stream carries native notifications and the
   supported interactive server requests without interpreting them as Work
   state. Interactive responses are admitted once on the connection generation
-  that emitted them. `currentTime/read` is answered locally; unnegotiated server
-  methods receive method-not-found and emit a bounded unsupported-interaction
-  event rather than hanging the child or guessing a response.
+  that emitted them, until FCC answers or Codex clears the request through
+  `serverRequest/resolved`. That control notification retires wire-response
+  admission before remaining observable to the future Work application.
+  `currentTime/read` is answered locally; unnegotiated server methods receive
+  method-not-found and emit a bounded unsupported-interaction event rather than
+  hanging the child or guessing a response.
 - Model, permission-profile, collaboration-mode, and config catalogs degrade
   independently when an installed Codex version lacks one discovery method.
   Required thread and turn methods remain actionable compatibility failures.
-- Added fields and notification methods are preserved, malformed or oversized
-  protocol data and event overflow fail one connection generation visibly, and
-  a later operation may start a clean child. Submitted turns are never replayed
-  after an uncertain failure because that could duplicate commands or edits.
+- Unknown notification methods and complete notification params payloads are
+  preserved. Malformed or oversized protocol data and event overflow fail one
+  connection generation visibly, and a later operation may start a clean child.
+  Submitted turns are never replayed after an uncertain failure because that
+  could duplicate commands or edits.
 - One explicit starting/ready/closing/closed lifecycle owns startup and cleanup.
   Shutdown closes stdin first, then terminates and kills only if the child does
   not exit. All response futures and stdio readers remain owned until cleanup is

@@ -83,7 +83,7 @@ class CodexTurnHandle:
 
 @dataclass(frozen=True, slots=True)
 class CodexNotification:
-    """A native Codex notification, including fields unknown to FCC."""
+    """A native Codex notification with its complete params payload."""
 
     connection_id: str
     method: str

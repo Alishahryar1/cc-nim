@@ -136,7 +136,19 @@ def main() -> None:
             elif request_id == "future-1":
                 _emit({"method": "fixture/methodNotFound", "params": message})
             elif request_id == "approval-1":
-                _emit({"method": "fixture/approvalAnswered", "params": message})
+                if scenario == "resolve_before_response":
+                    _append(log_path, "response:approval-1")
+                _emit_together(
+                    {
+                        "method": "serverRequest/resolved",
+                        "params": {
+                            "threadId": "thread-1",
+                            "requestId": "approval-1",
+                            "futureField": {"kept": True},
+                        },
+                    },
+                    {"method": "fixture/approvalAnswered", "params": message},
+                )
             continue
         params = message.get("params", {})
 
@@ -250,6 +262,17 @@ def main() -> None:
                     "params": {"availableDecisions": ["accept", "decline"]},
                 }
             )
+            if scenario == "resolve_before_response":
+                _emit(
+                    {
+                        "method": "serverRequest/resolved",
+                        "params": {
+                            "threadId": "thread-1",
+                            "requestId": "approval-1",
+                            "futureField": {"kept": True},
+                        },
+                    }
+                )
 
 
 if __name__ == "__main__":

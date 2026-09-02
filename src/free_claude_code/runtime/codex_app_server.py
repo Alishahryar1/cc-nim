@@ -57,6 +57,7 @@ _TERMINATE_SECONDS = 2.0
 _VERSION_TIMEOUT_SECONDS = 5.0
 _STDERR_CHUNK_BYTES = 8192
 _METHOD_NOT_FOUND = -32601
+_SERVER_REQUEST_RESOLVED = "serverRequest/resolved"
 _IS_WINDOWS = os.name == "nt"
 
 _INTERACTIVE_SERVER_METHODS = frozenset(
@@ -134,6 +135,32 @@ class _Connection:
     terminal_error: Exception | None = None
     cleanup_task: asyncio.Task[_CleanupOutcome] | None = None
     cleanup_outcome: _CleanupOutcome | None = None
+
+    def admit_server_request(self, request_id: CodexRequestId) -> bool:
+        """Record a request that this connection may answer exactly once."""
+
+        if request_id in self.pending_server_requests:
+            return False
+        self.pending_server_requests.add(request_id)
+        return True
+
+    def claim_server_request(self, request_id: CodexRequestId) -> bool:
+        """Atomically claim the right to answer one pending request."""
+
+        if request_id not in self.pending_server_requests:
+            return False
+        self.pending_server_requests.remove(request_id)
+        return True
+
+    def resolve_server_request(self, request_id: CodexRequestId) -> None:
+        """Retire a request that Codex has already resolved or cleared."""
+
+        self.pending_server_requests.discard(request_id)
+
+    def clear_server_requests(self) -> None:
+        """Retire every request owned by this connection generation."""
+
+        self.pending_server_requests.clear()
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,11 +358,10 @@ class CodexAppServerClient:
             raise CodexConnectionError(
                 "The Codex request belongs to a closed app-server connection."
             )
-        if request_id not in connection.pending_server_requests:
+        if not connection.claim_server_request(request_id):
             raise CodexConnectionError(
                 "The Codex request is no longer awaiting a response."
             )
-        connection.pending_server_requests.remove(request_id)
         await self._write_message(
             connection,
             {"id": request_id, "result": result},
@@ -802,13 +828,10 @@ class CodexAppServerClient:
                     method=method,
                     params=params,
                 )
-            return await self._emit(
+            return await self._handle_notification(
                 connection,
-                CodexNotification(
-                    connection_id=connection.id,
-                    method=method,
-                    params=params,
-                ),
+                method=method,
+                params=params,
             )
         if has_id:
             request_id = _request_id(request_id_value)
@@ -866,6 +889,32 @@ class CodexAppServerClient:
             "Codex app-server emitted an unrecognized protocol message."
         )
 
+    async def _handle_notification(
+        self,
+        connection: _Connection,
+        *,
+        method: str,
+        params: JsonValue,
+    ) -> bool:
+        if method == _SERVER_REQUEST_RESOLVED:
+            if not isinstance(params, dict):
+                raise CodexProtocolError(
+                    "Codex serverRequest/resolved omitted its params object."
+                )
+            if not isinstance(params.get("threadId"), str):
+                raise CodexProtocolError(
+                    "Codex serverRequest/resolved omitted its threadId string."
+                )
+            connection.resolve_server_request(_request_id(params.get("requestId")))
+        return await self._emit(
+            connection,
+            CodexNotification(
+                connection_id=connection.id,
+                method=method,
+                params=params,
+            ),
+        )
+
     async def _handle_server_request(
         self,
         connection: _Connection,
@@ -884,11 +933,10 @@ class CodexAppServerClient:
             )
             return True
         if method in _INTERACTIVE_SERVER_METHODS:
-            if request_id in connection.pending_server_requests:
+            if not connection.admit_server_request(request_id):
                 raise CodexProtocolError(
                     "Codex app-server reused an outstanding server request ID."
                 )
-            connection.pending_server_requests.add(request_id)
             emitted = await self._emit(
                 connection,
                 CodexServerRequest(
@@ -899,7 +947,7 @@ class CodexAppServerClient:
                 ),
             )
             if not emitted:
-                connection.pending_server_requests.discard(request_id)
+                connection.resolve_server_request(request_id)
             return emitted
         await self._write_message(
             connection,
@@ -1057,7 +1105,7 @@ class CodexAppServerClient:
         for pending in tuple(connection.pending.values()):
             if not pending.future.done():
                 pending.future.set_exception(error)
-        connection.pending_server_requests.clear()
+        connection.clear_server_requests()
         if emit_event and was_ready:
             self._emit_connection_lost(connection.id, str(error))
         task = asyncio.create_task(

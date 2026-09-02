@@ -397,6 +397,14 @@ async def test_thread_turn_events_and_bidirectional_server_requests(
                 request_id=approval.request_id,
                 result={"decision": "decline"},
             )
+        resolved = await _next(events)
+        assert isinstance(resolved, CodexNotification)
+        assert resolved.method == "serverRequest/resolved"
+        assert resolved.params == {
+            "threadId": "thread-1",
+            "requestId": "approval-1",
+            "futureField": {"kept": True},
+        }
         answered = await _next(events)
         assert isinstance(answered, CodexNotification)
         assert answered.method == "fixture/approvalAnswered"
@@ -406,6 +414,60 @@ async def test_thread_turn_events_and_bidirectional_server_requests(
             turn_id=turn.turn_id,
         )
         await client.delete_thread(thread.thread_id)
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_resolution_retires_server_request_before_local_response(
+    tmp_path: Path,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    client = _client(
+        tmp_path,
+        scenario="resolve_before_response",
+        request_log=request_log,
+    )
+    events = client.events()
+    try:
+        thread = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+        await client.start_turn(
+            thread_id=thread.thread_id,
+            text="hello",
+            settings=CodexTurnSettings(),
+        )
+
+        approval: CodexServerRequest | None = None
+        resolved: CodexNotification | None = None
+        while approval is None or resolved is None:
+            event = await _next(events)
+            if isinstance(event, CodexServerRequest):
+                if event.request_id == "approval-1":
+                    approval = event
+                continue
+            if (
+                isinstance(event, CodexNotification)
+                and event.method == "serverRequest/resolved"
+            ):
+                resolved = event
+
+        assert resolved.params == {
+            "threadId": "thread-1",
+            "requestId": "approval-1",
+            "futureField": {"kept": True},
+        }
+        with pytest.raises(CodexConnectionError, match="no longer awaiting"):
+            await client.respond(
+                connection_id=approval.connection_id,
+                request_id=approval.request_id,
+                result={"decision": "decline"},
+            )
+
+        await client.delete_thread(thread.thread_id)
+        assert (
+            "response:approval-1"
+            not in request_log.read_text(encoding="utf-8").splitlines()
+        )
     finally:
         await client.close()
 
