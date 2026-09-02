@@ -706,6 +706,98 @@ async def test_cancelled_response_waiting_for_writer_remains_answerable(
 
 
 @pytest.mark.asyncio
+async def test_cancelled_response_during_drain_remains_committed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request_log = tmp_path / "requests.log"
+    release_resolution = tmp_path / "release-approval-resolution"
+    client = _client(
+        tmp_path,
+        scenario="hold_resolution_after_replay",
+        request_log=request_log,
+        control_dir=tmp_path,
+    )
+    events = client.events()
+    response: asyncio.Task[None] | None = None
+    release_drain = asyncio.Event()
+    try:
+        thread = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
+        await client.start_turn(
+            thread_id=thread.thread_id,
+            text="hello",
+            settings=CodexTurnSettings(),
+        )
+        approval = await _next_server_request(events)
+        connection = client._connection
+        assert connection is not None
+        process = connection.process
+        assert process is not None
+        stdin = process.stdin
+        assert stdin is not None
+        original_drain = stdin.drain
+        drain_started = asyncio.Event()
+
+        async def gated_drain() -> None:
+            drain_started.set()
+            await release_drain.wait()
+            await original_drain()
+
+        monkeypatch.setattr(stdin, "drain", gated_drain)
+        response = asyncio.create_task(
+            client.respond(
+                connection_id=approval.connection_id,
+                request_id=approval.request_id,
+                result={"decision": "decline"},
+            )
+        )
+        async with asyncio.timeout(1):
+            await drain_started.wait()
+
+        while True:
+            event = await _next(events)
+            if isinstance(event, CodexServerRequest):
+                pytest.fail("A post-write replay was exposed as answerable.")
+            if (
+                isinstance(event, CodexNotification)
+                and event.method == "fixture/postWriteReplay"
+            ):
+                break
+            if isinstance(event, CodexConnectionLost):
+                pytest.fail(
+                    f"Codex connection failed before post-write replay: {event.message}"
+                )
+
+        response.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await response
+        release_drain.set()
+        with pytest.raises(CodexConnectionError, match="no longer awaiting"):
+            await client.respond(
+                connection_id=approval.connection_id,
+                request_id=approval.request_id,
+                result={"decision": "decline"},
+            )
+        assert (
+            request_log.read_text(encoding="utf-8")
+            .splitlines()
+            .count("response:approval-1")
+            == 1
+        )
+
+        release_resolution.touch()
+        await _next_notification(events, "serverRequest/resolved")
+        await client.delete_thread(thread.thread_id)
+    finally:
+        release_drain.set()
+        release_resolution.touch()
+        if response is not None and not response.done():
+            response.cancel()
+            await asyncio.gather(response, return_exceptions=True)
+        await client.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("scenario", ["malformed", "oversized"])
 async def test_invalid_protocol_disconnects_without_hanging_pending_calls(
     tmp_path: Path,

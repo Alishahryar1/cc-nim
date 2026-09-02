@@ -158,6 +158,15 @@ def main() -> None:
                 _append(log_path, "response:approval-1")
                 if scenario == "replay_after_response":
                     _emit(_approval_request())
+                elif scenario == "hold_resolution_after_replay":
+                    _emit_together(
+                        _approval_request(),
+                        {
+                            "method": "fixture/postWriteReplay",
+                            "params": {"observed": True},
+                        },
+                    )
+                    _wait_for("release-approval-resolution")
                 _emit_together(
                     _approval_resolved(),
                     {"method": "fixture/approvalAnswered", "params": message},
