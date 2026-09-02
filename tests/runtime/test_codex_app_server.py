@@ -208,19 +208,28 @@ async def test_concurrent_callers_wait_for_initialized_before_sending_methods(
 
 
 @pytest.mark.asyncio
-async def test_notification_after_initialized_is_not_lost_to_readiness_transition(
+async def test_notification_buffered_with_initialize_waits_for_readiness(
     tmp_path: Path,
 ) -> None:
-    client = _client(tmp_path, scenario="notification_after_initialized")
+    request_log = tmp_path / "requests.log"
+    client = _client(
+        tmp_path,
+        scenario="notification_with_initialize",
+        request_log=request_log,
+    )
     events = client.events()
     try:
         initialization = await client.initialize()
         event = await _next(events)
+        thread = await client.start_thread(CodexThreadSettings(cwd=str(tmp_path)))
 
         assert isinstance(event, CodexNotification)
         assert event.connection_id == initialization.connection_id
         assert event.method == "fixture/ready"
         assert event.params == {"initialized": True}
+        assert thread.connection_id == initialization.connection_id
+        methods = request_log.read_text(encoding="utf-8").splitlines()
+        assert methods.index("initialized") < methods.index("thread/start")
     finally:
         await client.close()
 

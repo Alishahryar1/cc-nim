@@ -14,6 +14,15 @@ def _emit(message: object) -> None:
     sys.stdout.flush()
 
 
+def _emit_together(*messages: object) -> None:
+    sys.stdout.write(
+        "".join(
+            json.dumps(message, separators=(",", ":")) + "\n" for message in messages
+        )
+    )
+    sys.stdout.flush()
+
+
 def _append(path: str | None, value: str) -> None:
     if path:
         with Path(path).open("a", encoding="utf-8") as output:
@@ -120,13 +129,6 @@ def main() -> None:
                     pass
                 while True:
                     time.sleep(60)
-            if scenario == "notification_after_initialized":
-                _emit(
-                    {
-                        "method": "fixture/ready",
-                        "params": {"initialized": True},
-                    }
-                )
             continue
         if not isinstance(method, str):
             if request_id == "clock-1":
@@ -143,6 +145,18 @@ def main() -> None:
             _wait_for("release-initialize")
         if method == "initialize" and scenario == "invalid_initialize":
             _emit({"id": request_id, "result": []})
+            continue
+        if method == "initialize" and scenario == "notification_with_initialize":
+            _emit_together(
+                {
+                    "id": request_id,
+                    "result": _normal_response(method, params),
+                },
+                {
+                    "method": "fixture/ready",
+                    "params": {"initialized": True},
+                },
+            )
             continue
         if method == "thread/start" and scenario == "delay_thread_start":
             _signal("thread-start-seen")

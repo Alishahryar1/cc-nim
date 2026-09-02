@@ -121,6 +121,8 @@ class _CleanupOutcome:
 class _Connection:
     id: str
     state: _ConnectionState = _ConnectionState.STARTING
+    initialize_response_received: bool = False
+    ready_for_events: asyncio.Event = field(default_factory=asyncio.Event)
     process: asyncio.subprocess.Process | None = None
     version: str | None = None
     pending: dict[CodexRequestId, _PendingCall] = field(default_factory=dict)
@@ -614,12 +616,21 @@ class CodexAppServerClient:
                         "Codex Direct mode closed during initialization."
                     )
                 stdin.write(encoded)
+                await stdin.drain()
+                if (
+                    self._closed
+                    or self._connection is not connection
+                    or connection.state is not _ConnectionState.STARTING
+                ):
+                    raise CodexConnectionError(
+                        "Codex Direct mode closed during initialization."
+                    )
                 _transition_connection(
                     connection,
                     expected=_ConnectionState.STARTING,
                     target=_ConnectionState.READY,
                 )
-                await stdin.drain()
+                connection.ready_for_events.set()
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
             error = CodexConnectionError(
                 "Could not finish Codex app-server initialization."
@@ -767,11 +778,21 @@ class CodexAppServerClient:
         request_id_value = message.get("id")
         has_id = "id" in message
         if isinstance(method, str):
-            if connection.state is not _ConnectionState.READY:
-                raise CodexProtocolError(
-                    "Codex app-server emitted a request or notification "
-                    "before initialization completed."
-                )
+            if connection.state is _ConnectionState.STARTING:
+                if not connection.initialize_response_received:
+                    raise CodexProtocolError(
+                        "Codex app-server emitted a request or notification "
+                        "before its initialize response."
+                    )
+                await connection.ready_for_events.wait()
+                if (
+                    self._closed
+                    or self._connection is not connection
+                    or connection.state is not _ConnectionState.READY
+                ):
+                    return False
+            elif connection.state is not _ConnectionState.READY:
+                return False
             params = message.get("params", {})
             if has_id:
                 request_id = _request_id(request_id_value)
@@ -802,6 +823,11 @@ class CodexAppServerClient:
                     "Codex connection admitted a non-initialize startup request."
                 )
             if "result" in message and "error" not in message:
+                if (
+                    connection.state is _ConnectionState.STARTING
+                    and pending.method == "initialize"
+                ):
+                    connection.initialize_response_received = True
                 if not pending.future.done():
                     pending.future.set_result(message["result"])
                 return True

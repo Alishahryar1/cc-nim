@@ -1374,11 +1374,14 @@ harness abstraction before a second rich harness contract exists.
 implements that port over Codex's supported `app-server --stdio` JSONL
 interface:
 
-- One application-owned child starts lazily, performs the required
-  `initialize`/`initialized` handshake, and supports concurrent native threads
-  through serialized writes and correlated out-of-order responses. Concurrent
-  first callers share one shielded startup task, so cancelling one waiter does
-  not cancel the application-owned child.
+- One application-owned child starts lazily and performs the required
+  `initialize`/`initialized` handshake. Response correlation records the
+  successful `initialize` reply immediately, while app-server requests and
+  notifications buffered behind that reply wait until `initialized` has
+  drained and the same connection is ready. The child then supports concurrent
+  native threads through serialized writes and correlated out-of-order
+  responses. Concurrent first callers share one shielded startup task, so
+  cancelling one waiter does not cancel the application-owned child.
 - The child reuses the exact ephemeral FCC provider, command-backed proxy auth,
   generated model catalog, credential scrubbing, `CODEX_HOME`, and loopback
   bypass assembled by `fcc-codex`; synchronous catalog discovery runs outside
