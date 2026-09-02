@@ -1,139 +1,75 @@
-"""Platform-neutral lifecycle for the FCC desktop shell."""
+"""Foreground lifecycle for the tray-less FCC desktop host.
 
+One front, one server, one process: acquire the singleton lock, bring up
+the managed HTTPS front, run the FCC server on a worker thread, print the
+gateway URL once, and block the main thread on SIGINT/SIGTERM. No tray,
+no console fallback, no plain-HTTP fallback — if the front cannot come up
+the host fails fast.
+"""
+
+import signal
 import threading
-from collections.abc import Callable
-from typing import Protocol
 
 from free_claude_code.cli.commands import (
-    ServerStatus,
     ServerSupervisor,
     load_server_settings,
     open_admin_when_ready,
-    schedule_open_admin_browser,
 )
-from free_claude_code.cli.launchers.common import preflight_proxy
-from free_claude_code.config.loader import get_settings
+from free_claude_code.cli.tls_proxy import (
+    CaddyTlsProxy,
+    desktop_gateway_base_url,
+)
 from free_claude_code.config.paths import config_dir_path
-from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
-
-class DesktopTray(Protocol):
-    """UI loop owned by the platform tray adapter."""
-
-    def run(self) -> None: ...
-
-    def stop(self) -> None: ...
+_stop_event = threading.Event()
 
 
-class DesktopTrayFactory(Protocol):
-    """Construct a tray adapter around a desktop controller."""
+def _wait_for_signal() -> None:
+    """Block the host until SIGINT/SIGTERM sets the stop event."""
 
-    def __call__(self, controller: DesktopController) -> DesktopTray: ...
-
-
-class ServerOwner(Protocol):
-    """Server lifecycle used by the desktop controller."""
-
-    @property
-    def status(self) -> ServerStatus: ...
-
-    def schedule_run(self) -> bool: ...
-
-    def run(self, *, open_admin_browser: bool | None = None) -> None: ...
-
-    def request_restart(self) -> bool: ...
-
-    def request_stop(self) -> None: ...
+    _stop_event.wait()
 
 
-class DesktopController:
-    """Coordinate one tray loop with one in-process FCC server owner."""
-
-    def __init__(
-        self,
-        supervisor: ServerOwner,
-        tray_factory: DesktopTrayFactory,
-        open_admin: Callable[[], None],
-    ) -> None:
-        self._supervisor = supervisor
-        self._open_admin = open_admin
-        self._thread_lock = threading.Lock()
-        self._server_thread: threading.Thread | None = None
-        self._tray = tray_factory(self)
-
-    @property
-    def status(self) -> ServerStatus:
-        return self._supervisor.status
-
-    def run(self) -> None:
-        """Run the tray on this thread and the FCC server on its owned worker."""
-
-        self._start_server()
-        try:
-            self._tray.run()
-        finally:
-            self._supervisor.request_stop()
-            self._tray.stop()
-            with self._thread_lock:
-                thread = self._server_thread
-            if thread is not None:
-                thread.join()
-
-    def open_admin(self) -> None:
-        self._open_admin()
-
-    def restart_server(self) -> None:
-        """Restart an active server or relaunch one that exited unexpectedly."""
-
-        with self._thread_lock:
-            thread = self._server_thread
-        if thread is not None and thread.is_alive():
-            self._supervisor.request_restart()
-            return
-        self._start_server()
-
-    def quit(self) -> None:
-        """Close the server gracefully and end the platform tray loop."""
-
-        self._supervisor.request_stop()
-        self._tray.stop()
-
-    def _start_server(self) -> None:
-        with self._thread_lock:
-            if self._server_thread is not None and self._server_thread.is_alive():
-                return
-            if not self._supervisor.schedule_run():
-                return
-            self._server_thread = threading.Thread(
-                target=self._run_server,
-                name="fcc-desktop-server",
-            )
-            self._server_thread.start()
-
-    def _run_server(self) -> None:
-        self._supervisor.run()
+def _shutdown_requested() -> bool:
+    return _stop_event.is_set()
 
 
-def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
-    """Start the singleton desktop host or focus the already running FCC UI."""
+def launch_desktop() -> None:
+    """Run the FCC desktop host: one front, one server, foreground."""
 
     settings = load_server_settings()
     instance_lock = InterprocessFileLock(config_dir_path() / "desktop.lock")
     if not instance_lock.acquire():
+        # A second launch focuses the already running instance's Admin UI.
         open_admin_when_ready(settings)
         return
 
+    _stop_event.clear()
+    tls_front = CaddyTlsProxy(settings)
+    server_thread: threading.Thread | None = None
+    supervisor: ServerSupervisor | None = None
     try:
-        if preflight_proxy(local_proxy_root_url(settings)) is None:
-            open_admin_when_ready(settings)
-            return
+        if settings.tls_proxy_enabled:
+            tls_front.start()  # raises FrontStartError -> fail fast below
 
         supervisor = ServerSupervisor(console_logging=False)
+        if not supervisor.schedule_run():
+            raise RuntimeError("FCC server could not be scheduled.")
+        server_thread = threading.Thread(
+            target=supervisor.run, name="fcc-desktop-server"
+        )
+        server_thread.start()
+        gateway_url = desktop_gateway_base_url(settings)
+        print(f"Claude Desktop gateway: {gateway_url}", flush=True)
 
-        def open_current_admin() -> None:
-            schedule_open_admin_browser(get_settings())
-
-        DesktopController(supervisor, tray_factory, open_current_admin).run()
+        # signal.signal is only valid on the main thread; the host owns it.
+        signal.signal(signal.SIGINT, lambda *_: _stop_event.set())
+        signal.signal(signal.SIGTERM, lambda *_: _stop_event.set())
+        _wait_for_signal()
+        supervisor.request_stop()
     finally:
+        tls_front.stop()
+        if server_thread is not None:
+            server_thread.join()
         instance_lock.release()

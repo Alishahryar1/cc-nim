@@ -2,6 +2,7 @@
 
 import struct
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -35,16 +36,29 @@ def test_export_app_icon_rejects_unknown_format(tmp_path: Path) -> None:
         export_app_icon(tmp_path / "app-icon.jpg")
 
 
-def test_desktop_entrypoint_exports_icon_without_launching_tray(
+def test_desktop_entrypoint_exports_icon_without_launching_host(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     destination = tmp_path / "app-icon.ico"
-    monkeypatch.setattr(desktop_entrypoint.sys, "platform", "linux")
+    host = MagicMock()
+    monkeypatch.setattr(desktop_entrypoint, "launch_desktop", host)
 
     desktop_entrypoint.launch(["--export-icon", str(destination)])
 
     assert destination.read_bytes() == app_icon_bytes(".ico")
+    host.assert_not_called()
+
+
+def test_desktop_entrypoint_launches_host_without_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = MagicMock()
+    monkeypatch.setattr(desktop_entrypoint, "launch_desktop", host)
+
+    desktop_entrypoint.launch([])
+
+    host.assert_called_once_with()
 
 
 def test_desktop_entrypoint_rejects_unknown_arguments(

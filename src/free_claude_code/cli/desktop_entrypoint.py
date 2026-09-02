@@ -1,14 +1,15 @@
-"""Lightweight entrypoint for the optional FCC desktop shell."""
+"""Lightweight entrypoint for the FCC desktop host (all platforms)."""
 
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from free_claude_code.cli.desktop import launch_desktop
 from free_claude_code.cli.desktop_assets import export_app_icon
 
 
 def launch(argv: Sequence[str] | None = None) -> None:
-    """Export installer assets or launch the supported native tray adapter."""
+    """Export installer assets or run the foreground desktop host."""
 
     args = tuple(sys.argv[1:] if argv is None else argv)
     if len(args) == 2 and args[0] == "--export-icon":
@@ -17,10 +18,4 @@ def launch(argv: Sequence[str] | None = None) -> None:
     if args:
         print("Usage: fcc-desktop [--export-icon PATH]", file=sys.stderr)
         raise SystemExit(2)
-    if sys.platform not in {"darwin", "win32"}:
-        print("FCC Desktop is supported on Windows and macOS.", file=sys.stderr)
-        raise SystemExit(1)
-
-    from free_claude_code.cli.desktop_tray import launch as launch_tray
-
-    launch_tray()
+    launch_desktop()

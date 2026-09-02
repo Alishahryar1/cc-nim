@@ -703,6 +703,15 @@ class Settings(BaseModel):
         default="freecc",
         validation_alias="ANTHROPIC_AUTH_TOKEN",
     )
+    tls_proxy_enabled: bool = Field(
+        default=True,
+        validation_alias="TLS_PROXY_ENABLED",
+    )
+    tls_proxy_port: int = Field(default=8443, validation_alias="TLS_PROXY_PORT")
+    desktop_gateway_prefix: NonEmptyString = Field(
+        default="claude-desktop",
+        validation_alias="DESKTOP_GATEWAY_PREFIX",
+    )
 
     @field_validator("max_message_log_entries_per_chat", mode="before")
     @classmethod
@@ -719,6 +728,15 @@ class Settings(BaseModel):
         if upper not in valid:
             raise ValueError(f"LOG_LEVEL must be one of {sorted(valid)}, got {v!r}")
         return upper
+
+    @field_validator("desktop_gateway_prefix")
+    @classmethod
+    def normalize_desktop_gateway_prefix(cls, v: str) -> str:
+        """Strip boundary slashes so the prefix mounts as a single ``/{prefix}``."""
+        prefix = v.strip("/")
+        if not prefix:
+            raise ValueError("DESKTOP_GATEWAY_PREFIX must contain a path segment")
+        return prefix
 
     @field_validator("reasoning_policy")
     @classmethod
