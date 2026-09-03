@@ -4,6 +4,10 @@ from collections.abc import Mapping
 
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.models import MessagesRequest, ThinkingConfig
+from free_claude_code.core.openai_responses import (
+    OpenAIResponsesRequest,
+    responses_reasoning_policy,
+)
 from free_claude_code.core.reasoning import (
     ReasoningControl,
     ReasoningEffort,
@@ -17,13 +21,37 @@ def resolve_reasoning_policy(
 ) -> ReasoningPolicy:
     """Apply one resolved configuration preference to the client request."""
 
+    return _apply_reasoning_preference(
+        client_reasoning_policy(request),
+        preference,
+    )
+
+
+def resolve_responses_reasoning_policy(
+    request: OpenAIResponsesRequest,
+    preference: ReasoningPreference,
+) -> ReasoningPolicy:
+    """Apply one resolved configuration preference to a Responses request."""
+
+    return _apply_reasoning_preference(
+        client_responses_reasoning_policy(request),
+        preference,
+    )
+
+
+def _apply_reasoning_preference(
+    client_policy: ReasoningPolicy,
+    preference: ReasoningPreference,
+) -> ReasoningPolicy:
+    """Apply FCC's route preference to already-parsed client intent."""
+
     if preference is ReasoningPreference.INHERIT:
         raise ValueError("Reasoning preference must be resolved before application.")
     if preference is ReasoningPreference.OFF:
         return ReasoningPolicy.off()
     if preference is not ReasoningPreference.CLIENT:
         return ReasoningPolicy.on(effort=ReasoningEffort(preference.value))
-    return client_reasoning_policy(request)
+    return client_policy
 
 
 def client_reasoning_policy(request: MessagesRequest) -> ReasoningPolicy:
@@ -52,6 +80,14 @@ def client_reasoning_policy(request: MessagesRequest) -> ReasoningPolicy:
         control=ReasoningControl.DEFAULT,
         effort=effort,
     )
+
+
+def client_responses_reasoning_policy(
+    request: OpenAIResponsesRequest,
+) -> ReasoningPolicy:
+    """Return the supported reasoning intent from one Responses request."""
+
+    return responses_reasoning_policy(request.reasoning)
 
 
 def _thinking_control(

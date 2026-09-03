@@ -79,6 +79,8 @@ TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 NARAROUTE_DEFAULT_BASE = "https://router.bynara.id/v1"
 # Poolside AI OpenAI-compatible Chat Completions API.
 POOLSIDE_DEFAULT_BASE = "https://inference.poolside.ai/v1"
+# LLM7.io OpenAI-compatible Chat Completions API.
+LLM7_DEFAULT_BASE = "https://api.llm7.io/v1"
 # Agnes AI OpenAI-compatible Chat Completions API.
 AGNES_DEFAULT_BASE = "https://apihub.agnes-ai.com/v1"
 # ZenMux OpenAI-compatible Chat Completions gateway.
@@ -537,6 +539,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="poolside_api_key",
         default_base_url=POOLSIDE_DEFAULT_BASE,
         proxy_attr="poolside_proxy",
+    ),
+    "llm7": ProviderDescriptor(
+        provider_id="llm7",
+        display_name="LLM7.io",
+        credential_env="LLM7_API_KEY",
+        credential_url="https://dash.llm7.io/",
+        credential_attr="llm7_api_key",
+        default_base_url=LLM7_DEFAULT_BASE,
+        proxy_attr="llm7_proxy",
     ),
     "ollama_cloud": ProviderDescriptor(
         provider_id="ollama_cloud",

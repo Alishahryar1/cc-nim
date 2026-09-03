@@ -201,6 +201,11 @@ class Settings(BaseModel):
         default=None, validation_alias="POOLSIDE_API_KEY"
     )
 
+    # ==================== LLM7.io (OpenAI-compatible) ====================
+    llm7_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="LLM7_API_KEY"
+    )
+
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: OptionalNonEmptyString = Field(
         default=None, validation_alias="FIREWORKS_API_KEY"
@@ -489,6 +494,9 @@ class Settings(BaseModel):
     )
     poolside_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="POOLSIDE_PROXY"
+    )
+    llm7_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="LLM7_PROXY"
     )
     fireworks_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="FIREWORKS_PROXY"

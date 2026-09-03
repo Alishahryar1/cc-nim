@@ -8,7 +8,7 @@ from .extra_body import (
     validate_extra_body_does_not_override_canonical_fields,
     validate_extra_body_does_not_override_reasoning_fields,
 )
-from .profiles import OPENAI_CHAT_PROFILES, OpenAIChatProfile
+from .profiles import OPENAI_CHAT_PROFILES, OpenAIChatProfile, OpenAIModelListing
 from .provider import OpenAIAsyncCredentialProvider, OpenAIChatProvider
 from .reasoning import (
     NO_REASONING,
@@ -17,7 +17,12 @@ from .reasoning import (
     ReasoningObject,
 )
 from .reasoning_details import apply_reasoning_details_replay
-from .request_policy import OpenAIChatRequestPolicy, build_openai_chat_request_body
+from .request_policy import (
+    OpenAIChatRequestPolicy,
+    apply_openai_chat_body_policy,
+    build_openai_chat_request_body,
+)
+from .stream_output import ChatStreamOutput
 from .usage import usage_int
 
 
@@ -43,13 +48,16 @@ def create_openai_chat_provider(
 __all__ = [
     "NO_REASONING",
     "OPENAI_CHAT_PROFILES",
+    "ChatStreamOutput",
     "ChatTemplateReasoning",
     "NamedEffortReasoning",
     "OpenAIAsyncCredentialProvider",
     "OpenAIChatProfile",
     "OpenAIChatProvider",
     "OpenAIChatRequestPolicy",
+    "OpenAIModelListing",
     "ReasoningObject",
+    "apply_openai_chat_body_policy",
     "apply_reasoning_details_replay",
     "build_openai_chat_request_body",
     "create_openai_chat_provider",

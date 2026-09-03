@@ -77,10 +77,11 @@ class InferenceRequestLifetimeMiddleware:
 
 
 def _owns_inference_lifetime(scope: Scope) -> bool:
+    path = scope.get("path")
     return (
         scope["type"] == "http"
         and scope.get("method") == "POST"
-        and scope.get("path") in _INFERENCE_PATHS
+        and path in _INFERENCE_PATHS
     )
 
 

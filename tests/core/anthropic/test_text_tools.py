@@ -1,10 +1,8 @@
 import pytest
 
-from free_claude_code.core.anthropic import (
-    FunctionTagToolParser,
-    OpenAIToolNameCodec,
-)
+from free_claude_code.core.anthropic import FunctionTagToolParser
 from free_claude_code.core.anthropic import tools as tool_parsers
+from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 from tests.providers.request_factory import make_messages_request
 
 

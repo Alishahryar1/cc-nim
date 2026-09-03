@@ -40,10 +40,8 @@ async def stream_automatic_web_search_response(
         request_id=request_id,
         model=routed.resolved.original_model,
     )
-    provider_stream = provider_executor.stream(
+    provider_stream = provider_executor.stream_messages(
         translated,
-        wire_api="messages",
-        raw_log_label="FULL_PAYLOAD",
         raw_log_payload=plan.request.model_dump(),
         request_id=request_id,
     )
@@ -58,7 +56,7 @@ async def stream_automatic_web_search_response(
             preserved_error=sys.exception(),
         )
 
-    message, stream_error = await aggregate_anthropic_sse_to_message(
+    message, stream_error, _complete = await aggregate_anthropic_sse_to_message(
         _iterate_chunks(chunks)
     )
     if stream_error is not None:

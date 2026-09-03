@@ -156,7 +156,7 @@ async def test_stream_preserves_reasoning_content(minimax_provider):
         new_callable=AsyncMock,
         return_value=stream,
     ) as create:
-        events = [event async for event in minimax_provider.stream_response(request)]
+        events = [event async for event in minimax_provider.stream_messages(request)]
 
     parsed = parse_sse_text("".join(events))
     assert thinking_content(parsed) == "plan"

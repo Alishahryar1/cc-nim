@@ -14,10 +14,12 @@ from smoke.lib.e2e import (
     ConversationDriver,
     ProviderMatrixDriver,
     SmokeServerDriver,
+    assert_native_thinking_stream,
     assert_product_stream,
     echo_tool_schema,
     tool_use_blocks,
 )
+from smoke.lib.http import collect_message_stream
 from smoke.lib.skips import (
     skip_if_upstream_unavailable_events,
     skip_if_upstream_unavailable_exception,
@@ -125,20 +127,22 @@ def test_mistral_native_reasoning_model_e2e(smoke_config: SmokeConfig) -> None:
 
     payload = {
         "model": "claude-opus-4-7",
-        "max_tokens": 1024,
+        "max_tokens": 4096,
         "messages": [{"role": "user", "content": "Reply with one short sentence."}],
         "thinking": {"type": "adaptive"},
     }
-    with _server_for_provider(
-        smoke_config, provider_model, "mistral-native-reasoning"
-    ) as server:
-        turn = ConversationDriver(server, smoke_config).stream(payload)
+    try:
+        with _server_for_provider(
+            smoke_config, provider_model, "mistral-native-reasoning"
+        ) as server:
+            events = collect_message_stream(server, payload, smoke_config)
+    except Exception as exc:
+        skip_if_upstream_unavailable_exception(exc)
+        raise
 
-    _assert_provider_product_stream(turn.events)
-    event_text = "\n".join(event.raw for event in turn.events)
-    assert "thinking_delta" in event_text, (
-        f"{provider_model.source}={provider_model.full_model} completed without "
-        "native Mistral thinking output"
+    assert_native_thinking_stream(
+        events,
+        context=f"{provider_model.source}={provider_model.full_model}",
     )
 
 
@@ -195,7 +199,7 @@ def test_provider_codex_responses_text_e2e(
                 json={
                     "model": provider_model.full_model,
                     "input": smoke_config.prompt,
-                    "max_output_tokens": 128,
+                    "max_output_tokens": 1024,
                     "stream": True,
                 },
                 timeout=smoke_config.timeout_s,

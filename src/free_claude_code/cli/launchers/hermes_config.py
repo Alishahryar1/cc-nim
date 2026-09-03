@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 
 from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 from .common import proxy_v1_url
 from .model_catalog import ClientModel
@@ -66,7 +67,13 @@ def build_hermes_managed_config(
     provider_ref = f"custom:{provider_key}"
     key_env = f"{HERMES_KEY_ENV_PREFIX}{nonce.upper()}"
     auxiliary: JsonObject = {
-        task: _auxiliary_task_config(task) for task in _AUXILIARY_TASKS
+        task: _auxiliary_task_config(task, provider_ref=provider_ref)
+        for task in _AUXILIARY_TASKS
+    }
+    model_overrides = {
+        model.wire_slug: override
+        for model in models
+        if (override := _model_override(model))
     }
     config: JsonObject = {
         "providers": {
@@ -74,6 +81,9 @@ def build_hermes_managed_config(
                 "name": "Free Claude Code",
                 "api": proxy_v1_url(proxy_root_url),
                 "key_env": key_env,
+                "extra_headers": {
+                    "Authorization": f"Bearer ${{{key_env}}}",
+                },
                 "transport": "codex_responses",
                 "default_model": active_model,
                 "models": {wire_slug: {} for wire_slug in wire_slugs},
@@ -91,6 +101,8 @@ def build_hermes_managed_config(
         "fallback_model": [],
         "auxiliary": auxiliary,
     }
+    if model_overrides:
+        config["model_overrides"] = {"custom": model_overrides}
     return HermesManagedConfig(
         config=config,
         provider_key=provider_key,
@@ -100,9 +112,9 @@ def build_hermes_managed_config(
     )
 
 
-def _auxiliary_task_config(task: str) -> JsonObject:
+def _auxiliary_task_config(task: str, *, provider_ref: str) -> JsonObject:
     config: JsonObject = {
-        "provider": "main",
+        "provider": provider_ref,
         "model": "",
         "base_url": "",
         "api_key": "",
@@ -112,3 +124,16 @@ def _auxiliary_task_config(task: str) -> JsonObject:
     if task == "title_generation":
         config["prefer_fast_model"] = False
     return config
+
+
+def _model_override(model: ClientModel) -> JsonObject:
+    override: JsonObject = {}
+    if model.supports_reasoning is not None:
+        override["supports_reasoning"] = model.supports_reasoning
+    if model.input_modalities is not None:
+        override["supports_vision"] = ModelInputModality.IMAGE in model.input_modalities
+    if model.context_window_tokens is not None:
+        override["context_window"] = model.context_window_tokens
+    if model.max_output_tokens is not None:
+        override["max_output_tokens"] = model.max_output_tokens
+    return override

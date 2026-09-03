@@ -8,6 +8,7 @@ import pytest
 
 from free_claude_code.cli.launchers.dsh_config import build_dsh_launch_config
 from free_claude_code.cli.launchers.model_catalog import ClientModel
+from free_claude_code.core.model_capabilities import ModelInputModality
 
 
 def _models() -> tuple[ClientModel, ...]:
@@ -16,13 +17,26 @@ def _models() -> tuple[ClientModel, ...]:
             wire_slug="nvidia_nim/vendor/model",
             provider_model_ref="nvidia_nim/vendor/model",
             display_name="Nested model",
-            allows_reasoning=True,
+            supports_reasoning=True,
+            input_modalities=frozenset(
+                {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+            ),
+            context_window_tokens=131072,
+            max_output_tokens=8192,
         ),
         ClientModel(
             wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
             provider_model_ref="open_router/plain-model",
             display_name="No-thinking model",
-            allows_reasoning=False,
+            supports_reasoning=False,
+            input_modalities=frozenset({ModelInputModality.TEXT}),
+            max_output_tokens=4096,
+        ),
+        ClientModel(
+            wire_slug="future_provider/unknown-model",
+            provider_model_ref="future_provider/unknown-model",
+            display_name="Unknown model",
+            supports_reasoning=None,
         ),
     )
 
@@ -80,11 +94,29 @@ def test_dsh_config_pins_responses_models_retries_and_private_state(
                     "xhigh": "xhigh",
                     "max": "max",
                 },
+                "input": ["text", "image"],
+                "contextWindow": 131072,
+                "maxTokens": 8192,
             },
             {
                 "id": "claude-3-freecc-no-thinking/open_router/plain-model",
                 "name": "No-thinking model",
                 "reasoningEfforts": False,
+                "input": ["text"],
+                "maxTokens": 4096,
+            },
+            {
+                "id": "future_provider/unknown-model",
+                "name": "Unknown model",
+                "reasoningEfforts": {
+                    "off": "none",
+                    "minimal": "minimal",
+                    "low": "low",
+                    "medium": "medium",
+                    "high": "high",
+                    "xhigh": "xhigh",
+                    "max": "max",
+                },
             },
         ],
         "defaultInput": ["text"],
@@ -113,14 +145,7 @@ def test_dsh_config_pins_responses_models_retries_and_private_state(
 
     serialized = json.dumps(launch.patch)
     assert "proxy-token" not in serialized
-    for unsupported in (
-        "contextWindow",
-        "maxTokens",
-        "input",
-        "compat",
-        "headers",
-        "telemetry",
-    ):
+    for unsupported in ("compat", "headers", "telemetry"):
         assert unsupported not in serialized
 
 

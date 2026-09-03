@@ -4,7 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import CODESTRAL_DEFAULT_BASE
+from free_claude_code.core.model_capabilities import ModelInputModality
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
@@ -82,7 +84,70 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text(codestral_provider):
+async def test_model_catalog_extracts_exact_input_modalities(codestral_provider):
+    codestral_provider._client.models.list = AsyncMock(
+        return_value={
+            "data": [
+                {
+                    "id": "vision-model",
+                    "capabilities": {
+                        "completion_chat": True,
+                        "vision": True,
+                    },
+                },
+                {
+                    "id": "text-model",
+                    "capabilities": {
+                        "completion_chat": True,
+                        "vision": False,
+                    },
+                },
+            ]
+        }
+    )
+
+    assert await codestral_provider.list_model_infos() == frozenset(
+        {
+            ProviderModelInfo(
+                "vision-model",
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+            ),
+            ProviderModelInfo(
+                "text-model",
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "capabilities",
+    [
+        None,
+        {},
+        {"completion_chat": True},
+        {"completion_chat": True, "vision": "yes"},
+    ],
+)
+@pytest.mark.asyncio
+async def test_model_catalog_degrades_incomplete_capabilities_to_unknown(
+    codestral_provider,
+    capabilities,
+):
+    model = {"id": "model"}
+    if capabilities is not None:
+        model["capabilities"] = capabilities
+    codestral_provider._client.models.list = AsyncMock(return_value={"data": [model]})
+
+    assert await codestral_provider.list_model_infos() == frozenset(
+        {ProviderModelInfo("model")}
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_messages_text(codestral_provider):
     """Text content deltas are emitted as text blocks."""
     req = make_request()
 
@@ -107,7 +172,7 @@ async def test_stream_response_text(codestral_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in codestral_provider.stream_response(req)]
+        events = [event async for event in codestral_provider.stream_messages(req)]
 
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
@@ -115,7 +180,7 @@ async def test_stream_response_text(codestral_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_reasoning_content(codestral_provider):
+async def test_stream_messages_reasoning_content(codestral_provider):
     """reasoning_content deltas are emitted as thinking blocks."""
     req = make_request()
 
@@ -140,7 +205,7 @@ async def test_stream_response_reasoning_content(codestral_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in codestral_provider.stream_response(req)]
+        events = [event async for event in codestral_provider.stream_messages(req)]
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

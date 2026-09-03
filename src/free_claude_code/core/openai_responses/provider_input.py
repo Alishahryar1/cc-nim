@@ -5,14 +5,25 @@ from typing import Any
 
 from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
 from free_claude_code.core.anthropic.conversion import resolve_anthropic_tool_choice
+from free_claude_code.core.anthropic.image_sources import (
+    AnthropicImageSourceError,
+    portable_anthropic_image_url,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.request_serialization import (
     serialize_tool_result_content,
 )
-from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
+from free_claude_code.core.anthropic.tool_results import (
+    ToolResultImage,
+    ToolResultText,
+    decompose_tool_result_content,
+)
+from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
+from free_claude_code.core.reasoning import ReasoningPolicy
 
 from .errors import ResponsesConversionError
+from .reasoning import responses_reasoning_config
 
 
 def build_responses_provider_request(
@@ -78,7 +89,7 @@ def build_responses_provider_request(
     tool_choice = resolve_anthropic_tool_choice(request.tools, request.tool_choice)
     if tool_choice is not None:
         body["tool_choice"] = _tool_choice(tool_choice, tool_names=tool_names)
-    if reasoning_config := _reasoning_config(reasoning):
+    if reasoning_config := responses_reasoning_config(reasoning):
         body["reasoning"] = reasoning_config
     return body
 
@@ -262,13 +273,25 @@ def _user_items(content: Any) -> list[dict[str, Any]]:
             message_parts.append(_image_part(block))
         elif block_type == "tool_result":
             flush_message()
+            tool_content = get_block_attr(block, "content")
+            try:
+                decomposed = decompose_tool_result_content(tool_content)
+            except AnthropicImageSourceError as exc:
+                raise ResponsesConversionError(str(exc)) from exc
+            if decomposed.has_images:
+                output: str | list[JsonObject] = []
+                for part in decomposed.parts:
+                    if isinstance(part, ToolResultText):
+                        output.append({"type": "input_text", "text": part.text})
+                    elif isinstance(part, ToolResultImage):
+                        output.append({"type": "input_image", "image_url": part.url})
+            else:
+                output = serialize_tool_result_content(tool_content)
             items.append(
                 {
                     "type": "function_call_output",
                     "call_id": str(get_block_attr(block, "tool_use_id", "")),
-                    "output": serialize_tool_result_content(
-                        get_block_attr(block, "content")
-                    ),
+                    "output": output,
                 }
             )
         elif block_type == "document":
@@ -284,22 +307,10 @@ def _user_items(content: Any) -> list[dict[str, Any]]:
 
 
 def _image_part(block: Any) -> dict[str, Any]:
-    source = get_block_attr(block, "source", {})
-    source_type = get_block_attr(source, "type")
-    if source_type == "url":
-        url = get_block_attr(source, "url")
-    elif source_type == "base64":
-        media_type = get_block_attr(source, "media_type")
-        data = get_block_attr(source, "data")
-        if not isinstance(media_type, str) or not isinstance(data, str):
-            raise ResponsesConversionError("Base64 images require media_type and data.")
-        url = f"data:{media_type};base64,{data}"
-    else:
-        raise ResponsesConversionError(
-            f"Unsupported image source type {source_type!r}."
-        )
-    if not isinstance(url, str) or not url:
-        raise ResponsesConversionError("Image source requires a non-empty URL.")
+    try:
+        url = portable_anthropic_image_url(get_block_attr(block, "source", {}))
+    except AnthropicImageSourceError as exc:
+        raise ResponsesConversionError(str(exc)) from exc
     return {"type": "input_image", "image_url": url}
 
 
@@ -340,13 +351,3 @@ def _tool_choice(
             raise ResponsesConversionError("Forced tool choice requires a tool name.")
         return {"type": "function", "name": tool_names.encode(name)}
     raise ResponsesConversionError(f"Unsupported tool_choice type {choice_type!r}.")
-
-
-def _reasoning_config(reasoning: ReasoningPolicy) -> dict[str, str]:
-    if reasoning.control is ReasoningControl.OFF:
-        return {"effort": "none"}
-    if reasoning.effort is not None:
-        return {"effort": reasoning.effort.value, "summary": "auto"}
-    if reasoning.requests_reasoning:
-        return {"summary": "auto"}
-    return {}

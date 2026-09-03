@@ -10,8 +10,13 @@ from types import MappingProxyType
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 from .env_files import ANTHROPIC_AUTH_TOKEN_ENV, dotenv_values_from_file
-from .env_migrations import consolidate_managed_config, settings_env_keys
+from .env_migrations import (
+    atomic_write_managed_config,
+    consolidate_managed_config,
+    settings_env_keys,
+)
 from .paths import config_lock_path, managed_env_path
+from .provider_proxies import invalid_provider_proxy_keys
 from .settings import Settings
 
 
@@ -50,6 +55,40 @@ def resolve_settings_snapshot(
     managed_path = managed_env_path()
     managed = dotenv_values_from_file(managed_path) if managed_path.is_file() else {}
     return compose_settings_snapshot(managed, process)
+
+
+def repair_invalid_managed_provider_proxies(
+    env: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
+    """Atomically remove invalid managed proxies not owned by the process."""
+
+    process = env if env is not None else os.environ
+    managed_path = managed_env_path()
+    if not managed_path.is_file():
+        return ()
+
+    lock = InterprocessFileLock(config_lock_path())
+    if not lock.acquire(wait=True, timeout=10.0):
+        raise TimeoutError(
+            f"Could not acquire managed-config lock: {config_lock_path()}"
+        )
+    try:
+        if not managed_path.is_file():
+            return ()
+        managed = dotenv_values_from_file(managed_path)
+        removed = tuple(
+            key for key in invalid_provider_proxy_keys(managed) if key not in process
+        )
+        if not removed:
+            return ()
+
+        repaired = dict(managed)
+        for key in removed:
+            repaired.pop(key)
+        atomic_write_managed_config(repaired, path=managed_path)
+        return removed
+    finally:
+        lock.release()
 
 
 def compose_settings_snapshot(

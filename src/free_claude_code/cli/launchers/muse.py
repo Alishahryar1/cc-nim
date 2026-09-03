@@ -27,9 +27,11 @@ from .model_catalog import (
 _BINARY_NAME = "muse"
 _DISPLAY_NAME = "Muse Code"
 _INSTALL_HINT = (
-    "Install Muse Code on macOS/Linux/WSL with "
-    "`curl -fsSL https://dev.meta.ai/install.sh | bash`. "
-    "Meta does not currently publish an official Windows installer."
+    "Install Muse Code on native Windows with "
+    '`& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/'
+    'Alishahryar1/free-claude-code/main/scripts/install-muse.ps1")))`, '
+    "or on macOS/Linux/WSL with "
+    "`curl -fsSL https://dev.meta.ai/install.sh | bash`."
 )
 _MINIMUM_VERSION = (0, 2, 1)
 _VERSION_TIMEOUT_SECONDS = 5.0

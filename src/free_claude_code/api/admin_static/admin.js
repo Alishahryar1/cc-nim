@@ -4,7 +4,7 @@ const state = {
   modelOptions: [],
   modelComboboxes: new Set(),
   authPollers: new Map(),
-  activeView: "providers",
+  activeView: window.location.pathname.startsWith("/admin/chat") ? "chat" : "providers",
 };
 
 const MASKED_SECRET = "********";
@@ -30,6 +30,13 @@ const VIEW_GROUPS = [
     title: "Messaging",
     sections: ["messaging", "voice"],
     containerId: "messagingSections",
+  },
+  {
+    id: "chat",
+    label: "Chat Sessions",
+    title: "Chat Sessions",
+    sections: [],
+    containerId: "chatRoot",
   },
 ];
 
@@ -77,7 +84,9 @@ async function api(path, options = {}) {
     } catch {
       // The status remains useful when an upstream proxy returns a non-JSON page.
     }
-    throw new Error(detail || `${response.status} ${response.statusText}`);
+    const error = new Error(detail || `${response.status} ${response.statusText}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -91,10 +100,12 @@ async function load() {
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
   byId("configPath").textContent = config.paths.managed;
-  await refreshConnectedAccounts();
-  await hydrateModelOptions();
-  await validate(false);
-  await refreshLocalStatus();
+  await Promise.all([
+    refreshConnectedAccounts(),
+    hydrateModelOptions(),
+    refreshLocalStatus(),
+    window.ChatSessions ? window.ChatSessions.initialize(api) : Promise.resolve(),
+  ]);
   updateDirtyState();
   showMessage("");
 }
@@ -112,7 +123,7 @@ function renderNav() {
       button.setAttribute("aria-current", "page");
     }
     button.addEventListener("click", () => {
-      setActiveView(view.id, { scroll: true });
+      navigateToView(view.id);
     });
     nav.appendChild(button);
   });
@@ -124,6 +135,11 @@ function setActiveView(viewId, { scroll = false } = {}) {
     VIEW_GROUPS.find((view) => view.id === viewId) || VIEW_GROUPS[0];
   state.activeView = activeView.id;
   byId("pageTitle").textContent = activeView.title;
+  const chatActive = activeView.id === "chat";
+  document.querySelector(".app-shell").classList.toggle("chat-active", chatActive);
+  document.querySelector(".main").classList.toggle("chat-main", chatActive);
+  document.querySelector(".topbar").hidden = chatActive;
+  document.querySelector(".action-bar").hidden = chatActive;
 
   document.querySelectorAll(".nav-link").forEach((link) => {
     const selected = link.dataset.view === activeView.id;
@@ -144,6 +160,20 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+  if (chatActive && window.ChatSessions) {
+    window.ChatSessions.activate(window.location.pathname);
+  }
+}
+
+function navigateToView(viewId) {
+  if (viewId === "chat") {
+    if (window.location.pathname !== "/admin/chat") {
+      window.history.pushState({}, "", "/admin/chat");
+    }
+  } else if (window.location.pathname.startsWith("/admin/chat")) {
+    window.history.pushState({}, "", "/admin");
+  }
+  setActiveView(viewId, { scroll: true });
 }
 
 function renderProviders(providerStatus) {
@@ -586,7 +616,7 @@ function renderField(field) {
 
   let control = input;
   if (field.type === "model" || field.type === "optional_model") {
-    control = new ModelCombobox(input, field).element;
+    control = createModelCombobox(input, field).element;
   } else if (field.type === "model_list") {
     const editor = new ModelListEditor(input, field);
     label.htmlFor = editor.inputId;
@@ -670,184 +700,20 @@ function inputForField(field) {
   return input;
 }
 
-class ModelCombobox {
-  constructor(input, field) {
-    this.input = input;
-    this.fieldType = field.type;
-    this.activeIndex = -1;
-    this.query = "";
-
-    this.element = document.createElement("div");
-    this.element.className = "model-combobox";
-    this.listbox = document.createElement("div");
-    this.listbox.className = "model-combobox-list";
-    this.listbox.id = `model-options-${field.key}`;
-    this.listbox.setAttribute("role", "listbox");
-    this.listbox.hidden = true;
-    this.toggle = document.createElement("button");
-    this.toggle.type = "button";
-    this.toggle.className = "model-combobox-toggle";
-    this.toggle.disabled = input.disabled;
-    this.toggle.setAttribute("aria-label", `Show ${field.label} options`);
-
-    input.setAttribute("role", "combobox");
-    input.setAttribute("aria-autocomplete", "list");
-    input.setAttribute("aria-haspopup", "listbox");
-    for (const control of [input, this.toggle]) {
-      control.setAttribute("aria-controls", this.listbox.id);
-      control.setAttribute("aria-expanded", "false");
-    }
-
-    input.addEventListener("click", () => this.open());
-    input.addEventListener("input", () => this.open(input.value));
-    input.addEventListener("keydown", (event) => this.handleKeydown(event));
-    this.toggle.addEventListener("mousedown", (event) => event.preventDefault());
-    this.toggle.addEventListener("click", () => {
-      if (this.isOpen) this.close();
-      else this.open();
-      input.focus();
-    });
-    this.listbox.addEventListener("mousedown", (event) => event.preventDefault());
-    this.listbox.addEventListener("mousemove", (event) => {
-      const optionEl = event.target.closest('[role="option"]');
-      if (optionEl) this.setActive(this.visibleOptions.indexOf(optionEl));
-    });
-    this.listbox.addEventListener("click", (event) => {
-      const optionEl = event.target.closest('[role="option"]');
-      if (optionEl) this.select(optionEl.dataset.value);
-    });
-
-    this.element.append(input, this.toggle, this.listbox);
-    state.modelComboboxes.add(this);
-  }
-
-  get isOpen() {
-    return this.element.classList.contains("open");
-  }
-
-  get values() {
-    return this.fieldType === "optional_model"
-      ? ["None", ...state.modelOptions]
-      : state.modelOptions;
-  }
-
-  get visibleOptions() {
-    return Array.from(this.listbox.querySelectorAll('[role="option"]'));
-  }
-
-  open(query = "") {
-    if (this.input.disabled) return;
-    state.modelComboboxes.forEach((combobox) => {
-      if (combobox !== this) combobox.close();
-    });
-    this.render(query);
-    this.element.classList.add("open");
-    this.listbox.hidden = false;
-    this.setExpanded(true);
-  }
-
-  close() {
-    this.element.classList.remove("open");
-    this.listbox.hidden = true;
-    this.activeIndex = -1;
-    this.input.removeAttribute("aria-activedescendant");
-    this.setExpanded(false);
-  }
-
-  setExpanded(expanded) {
-    for (const control of [this.input, this.toggle]) {
-      control.setAttribute("aria-expanded", String(expanded));
-    }
-  }
-
-  render(query) {
-    this.query = query;
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    const values = normalizedQuery
-      ? this.values.filter((value) =>
-          value.toLocaleLowerCase().includes(normalizedQuery),
-        )
-      : this.values;
-    this.listbox.innerHTML = "";
-
-    if (values.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "model-combobox-empty";
-      empty.textContent = state.modelOptions.length
+function createModelCombobox(input, field) {
+  return new window.FccModelCombobox(input, {
+    listboxId: `model-options-${field.key}`,
+    label: field.label,
+    values: () =>
+      field.type === "optional_model"
+        ? ["None", ...state.modelOptions]
+        : state.modelOptions,
+    emptyMessage: () =>
+      state.modelOptions.length
         ? "No matching models. You can still enter a custom slug."
-        : "No discovered models. Refresh models or enter a custom slug.";
-      this.listbox.appendChild(empty);
-      this.activeIndex = -1;
-      this.input.removeAttribute("aria-activedescendant");
-      return;
-    }
-
-    values.forEach((value, index) => {
-      const optionEl = document.createElement("div");
-      optionEl.className = "model-combobox-option";
-      optionEl.id = `${this.listbox.id}-option-${index}`;
-      optionEl.dataset.value = value;
-      optionEl.setAttribute("role", "option");
-      optionEl.textContent = value;
-      this.listbox.appendChild(optionEl);
-    });
-    const selectedIndex = values.indexOf(this.input.value);
-    this.setActive(selectedIndex >= 0 ? selectedIndex : 0, false);
-  }
-
-  setActive(index, scroll = true) {
-    const options = this.visibleOptions;
-    if (options.length === 0) return;
-    this.activeIndex = Math.max(0, Math.min(index, options.length - 1));
-    options.forEach((optionEl, optionIndex) => {
-      const active = optionIndex === this.activeIndex;
-      optionEl.classList.toggle("active", active);
-      optionEl.setAttribute("aria-selected", String(active));
-    });
-    const activeOption = options[this.activeIndex];
-    this.input.setAttribute("aria-activedescendant", activeOption.id);
-    if (scroll) activeOption.scrollIntoView({ block: "nearest" });
-  }
-
-  move(offset) {
-    const count = this.visibleOptions.length;
-    if (count) this.setActive((this.activeIndex + offset + count) % count);
-  }
-
-  select(value) {
-    this.input.value = value;
-    this.input.dispatchEvent(new Event("change", { bubbles: true }));
-    this.close();
-    this.input.focus();
-  }
-
-  handleKeydown(event) {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      if (this.isOpen) {
-        this.move(event.key === "ArrowDown" ? 1 : -1);
-      } else {
-        this.open();
-        if (event.key === "ArrowUp") {
-          this.setActive(this.visibleOptions.length - 1);
-        }
-      }
-    } else if (this.isOpen && (event.key === "Home" || event.key === "End")) {
-      event.preventDefault();
-      this.setActive(event.key === "Home" ? 0 : this.visibleOptions.length - 1);
-    } else if (this.isOpen && event.key === "Enter") {
-      const active = this.visibleOptions[this.activeIndex];
-      if (active) {
-        event.preventDefault();
-        this.select(active.dataset.value);
-      }
-    } else if (this.isOpen && event.key === "Escape") {
-      event.preventDefault();
-      this.close();
-    } else if (this.isOpen && event.key === "Tab") {
-      this.close();
-    }
-  }
+        : "No discovered models. Refresh models or enter a custom slug.",
+    registry: state.modelComboboxes,
+  });
 }
 
 class ModelListEditor {
@@ -870,7 +736,7 @@ class ModelListEditor {
     this.addInput.autocomplete = "off";
     this.addInput.placeholder = "provider/model";
     this.addInput.disabled = field.locked;
-    const addCombobox = new ModelCombobox(this.addInput, {
+    const addCombobox = createModelCombobox(this.addInput, {
       ...field,
       key: `${field.key}-add`,
       label: "fallback model",
@@ -1022,32 +888,13 @@ function updateDirtyState() {
   byId("applyButton").disabled = count === 0;
 }
 
-async function validate(showResult = true) {
-  const result = await api("/admin/api/config/validate", {
-    method: "POST",
-    body: JSON.stringify({ values: changedValues() }),
-  });
-  if (showResult) {
-    showValidationResult(result);
-  }
-  return result;
-}
-
-function showValidationResult(result) {
-  if (result.valid) {
-    showMessage("Config shape is valid", "ok");
-  } else {
-    showMessage(result.errors.join("; "), "error");
-  }
-}
-
 async function apply() {
   const result = await api("/admin/api/config/apply", {
     method: "POST",
     body: JSON.stringify({ values: changedValues() }),
   });
   if (!result.applied) {
-    showValidationResult(result);
+    showMessage(result.errors.join("; "), "error");
     return;
   }
   const restart = result.restart || {};
@@ -1146,6 +993,7 @@ async function loadModelOptions(refresh = false) {
     method: refresh ? "POST" : "GET",
   });
   setModelOptions(result.models);
+  if (refresh && window.ChatSessions) await window.ChatSessions.refresh();
   return result;
 }
 
@@ -1195,12 +1043,18 @@ function showMessage(message, kind = "") {
   area.className = `message-area ${kind}`.trim();
 }
 
-byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();
   });
+});
+
+window.addEventListener("popstate", () => {
+  const viewId = window.location.pathname.startsWith("/admin/chat")
+    ? "chat"
+    : "providers";
+  setActiveView(viewId, { scroll: false });
 });
 
 load().catch((error) => {

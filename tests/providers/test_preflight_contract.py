@@ -33,7 +33,7 @@ class ProviderWithoutPreflight(BaseProvider):
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         return frozenset()
 
-    async def stream_response(
+    async def stream_messages(
         self,
         request: MessagesRequest,
         input_tokens: int = 0,
@@ -47,14 +47,14 @@ class ProviderWithoutPreflight(BaseProvider):
 
 
 def test_provider_base_requires_an_explicit_preflight_implementation() -> None:
-    with pytest.raises(TypeError, match="preflight_stream"):
+    with pytest.raises(TypeError, match="preflight_messages"):
         ProviderWithoutPreflight(
             make_provider_config(api_key="test", base_url="https://test.invalid")
         )
 
 
 def test_openai_provider_owns_preflight() -> None:
-    assert OpenAIChatProvider.preflight_stream is not BaseProvider.preflight_stream
+    assert OpenAIChatProvider.preflight_messages is not BaseProvider.preflight_messages
 
 
 def test_provider_preflight_calls_builder_and_preserves_policy() -> None:
@@ -64,6 +64,6 @@ def test_provider_preflight_calls_builder_and_preserves_policy() -> None:
         messages=[Message(role="user", content="hello")],
     )
 
-    provider.preflight_stream(request, reasoning=ReasoningPolicy.off())
+    provider.preflight_messages(request, reasoning=ReasoningPolicy.off())
 
     assert provider.build_calls == [(request, ReasoningPolicy.off())]

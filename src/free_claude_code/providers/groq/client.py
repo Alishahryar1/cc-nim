@@ -10,9 +10,8 @@ import openai
 from loguru import logger
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
-from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.reasoning import (
-    DEFAULT_REASONING_POLICY,
     ReasoningEffort,
     ReasoningPolicy,
 )
@@ -23,8 +22,11 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
+    OpenAIModelListing,
     validate_extra_body_does_not_override_reasoning_fields,
 )
+
+from .tpm import correct_tpm_completion_budget
 
 _GROQ_EFFORTS = (
     (ReasoningEffort.MINIMAL, "low"),
@@ -50,6 +52,10 @@ _PROFILE = OpenAIChatProfile(
         _GROQ_EFFORTS,
         disabled_value="none",
         enabled_value="medium",
+    ),
+    model_listing=OpenAIModelListing(
+        context_window_tokens_path=("context_window",),
+        max_output_tokens_path=("max_completion_tokens",),
     ),
 )
 
@@ -97,13 +103,12 @@ class GroqProvider(OpenAIChatProvider):
         super().__init__(config, profile=_PROFILE, admission=admission)
         self._model_reasoning_vocabularies: dict[str, frozenset[str]] = {}
 
-    def _build_request_body(
+    def _finalize_chat_body(
         self,
-        request: MessagesRequest,
+        body: dict[str, Any],
         *,
-        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        reasoning: ReasoningPolicy,
     ) -> dict[str, Any]:
-        body = super()._build_request_body(request, reasoning=reasoning)
         model = body.get("model")
         if not isinstance(model, str):
             return body
@@ -132,6 +137,30 @@ class GroqProvider(OpenAIChatProvider):
         )
         logger.warning("GROQ_STREAM: {} after upstream rejection", action)
         return retry_body
+
+    def _next_create_retry_body(
+        self,
+        error: Exception,
+        body: JsonObject,
+        used_retry_kinds: set[str],
+    ) -> JsonObject | None:
+        retry_body = super()._next_create_retry_body(error, body, used_retry_kinds)
+        if retry_body is not None or "groq_tpm" in used_retry_kinds:
+            return retry_body
+
+        correction = correct_tpm_completion_budget(error, body)
+        if correction is None:
+            return None
+        used_retry_kinds.add("groq_tpm")
+        logger.warning(
+            "GROQ_STREAM: TPM limit={} requested={}; retrying "
+            "max_completion_tokens {} -> {}",
+            correction.limit,
+            correction.requested,
+            correction.previous_max_completion_tokens,
+            correction.corrected_max_completion_tokens,
+        )
+        return correction.body
 
 
 def _parse_reasoning_vocabulary(error: Exception) -> frozenset[str] | None:

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.model_capabilities import ModelInputModality
 from tests.api.support import create_test_app, provider_manager_for_app
 
 
@@ -223,6 +224,89 @@ def test_direct_model_views_exclude_claude_aliases_and_duplicate_variants():
     plain = responses["data"][1]
     assert plain["supportsReasoningEffort"] is False
     assert "reasoningEfforts" not in plain
+
+
+def test_direct_model_views_serialize_known_capabilities_and_omit_unknowns():
+    app = create_test_app(_settings(model_opus=None, model_haiku=None))
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "vision-reasoning",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+                context_window_tokens=131072,
+                max_output_tokens=8192,
+            ),
+            ProviderModelInfo(
+                "text-only",
+                supports_thinking=False,
+                input_modalities=frozenset({ModelInputModality.TEXT}),
+                context_window_tokens=65536,
+            ),
+            ProviderModelInfo("unknown"),
+        },
+    )
+    client = TestClient(app)
+
+    messages = {
+        row["provider_model_ref"]: row
+        for row in client.get("/v1/models?view=messages").json()["data"]
+    }
+    responses = {
+        row["provider_model_ref"]: row
+        for row in client.get("/v1/models?view=responses").json()["data"]
+    }
+
+    assert messages["open_router/vision-reasoning"]["supportsReasoning"] is True
+    assert messages["open_router/vision-reasoning"]["inputModalities"] == [
+        "text",
+        "image",
+    ]
+    assert messages["open_router/vision-reasoning"]["contextWindow"] == 131072
+    assert messages["open_router/vision-reasoning"]["maxCompletionTokens"] == 8192
+    assert messages["open_router/text-only"]["supportsReasoning"] is False
+    assert messages["open_router/text-only"]["inputModalities"] == ["text"]
+    assert messages["open_router/text-only"]["contextWindow"] == 65536
+    assert "maxCompletionTokens" not in messages["open_router/text-only"]
+    assert "supportsReasoning" not in messages["open_router/unknown"]
+    assert "inputModalities" not in messages["open_router/unknown"]
+    assert "contextWindow" not in messages["open_router/unknown"]
+    assert "maxCompletionTokens" not in messages["open_router/unknown"]
+    assert responses["open_router/text-only"]["supportsReasoningEffort"] is False
+    assert "reasoningEfforts" not in responses["open_router/text-only"]
+    assert responses["open_router/vision-reasoning"]["contextWindow"] == 131072
+    assert responses["open_router/vision-reasoning"]["maxCompletionTokens"] == 8192
+
+
+def test_claude_model_view_does_not_expose_capability_fields():
+    app = create_test_app(_settings(model_opus=None, model_haiku=None))
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "vision-reasoning",
+                supports_thinking=True,
+                input_modalities=frozenset(
+                    {ModelInputModality.TEXT, ModelInputModality.IMAGE}
+                ),
+                context_window_tokens=131072,
+                max_output_tokens=8192,
+            )
+        },
+    )
+
+    rows = TestClient(app).get("/v1/models").json()["data"]
+
+    assert all(
+        "supportsReasoning" not in row
+        and "inputModalities" not in row
+        and "contextWindow" not in row
+        and "maxCompletionTokens" not in row
+        for row in rows
+    )
 
 
 def test_muse_model_catalog_is_the_fixed_responses_projection():

@@ -58,9 +58,11 @@ class ProviderGenerationLease:
         self,
         manager: ProviderRuntimeManager,
         generation: _ProviderGeneration,
+        model_infos: tuple[ProviderModelInfo, ...],
     ) -> None:
         self._manager = manager
         self._generation = generation
+        self._model_infos = model_infos
         self._released = False
 
     @property
@@ -70,6 +72,10 @@ class ProviderGenerationLease:
     @property
     def settings(self) -> Settings:
         return self._generation.settings
+
+    @property
+    def model_infos(self) -> tuple[ProviderModelInfo, ...]:
+        return self._model_infos
 
     def is_provider_cached(self, provider_id: str) -> bool:
         return self._generation.runtime.is_cached(provider_id)
@@ -126,13 +132,19 @@ class ProviderRuntimeManager:
     def current_generation_id(self) -> int:
         return self._current.generation_id
 
-    async def acquire(self) -> ProviderGenerationLease:
+    async def acquire(
+        self, *, include_model_infos: bool = False
+    ) -> ProviderGenerationLease:
         if self._closing or self._closed:
             raise ApplicationUnavailableError("Provider runtime is shutting down.")
         generation = self._current
+        model_infos: tuple[ProviderModelInfo, ...] = ()
+        if include_model_infos:
+            self._synchronize_model_cache_scope()
+            model_infos = self._model_cache.cached_prefixed_model_infos()
         generation.active_leases += 1
         generation.drained.clear()
-        return ProviderGenerationLease(self, generation)
+        return ProviderGenerationLease(self, generation, model_infos)
 
     def current_settings(self) -> Settings:
         return self._current.settings
@@ -141,11 +153,11 @@ class ProviderRuntimeManager:
         self._synchronize_model_cache_scope()
         return self._model_cache.cached_model_ids()
 
-    def cached_model_supports_thinking(
+    def cached_model_info(
         self, provider_id: str, model_id: str
-    ) -> bool | None:
+    ) -> ProviderModelInfo | None:
         self._synchronize_model_cache_scope()
-        return self._model_cache.cached_model_supports_thinking(provider_id, model_id)
+        return self._model_cache.cached_model_info(provider_id, model_id)
 
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         self._synchronize_model_cache_scope()

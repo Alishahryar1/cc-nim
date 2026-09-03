@@ -80,11 +80,6 @@ class StreamBlockLedger:
             )
         return self.tool_states[index]
 
-    def set_stream_tool_id(self, index: int, tool_id: str | None) -> None:
-        if not tool_id:
-            return
-        self.ensure_tool_state(index).tool_id = str(tool_id)
-
     def set_tool_extra_content(
         self, index: int, extra_content: dict[str, Any] | None
     ) -> None:

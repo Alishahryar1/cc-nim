@@ -253,7 +253,7 @@ def classify_grok_invocation(argv: Sequence[str]) -> GrokInvocation:
 
 
 def require_compatible_grok(binary_path: str) -> None:
-    """Exit unless Grok Build satisfies FCC's stable custom-model contract."""
+    """Exit unless Grok Build satisfies FCC's custom-model contract."""
 
     version = grok_binary_version(binary_path)
     if version is not None and version >= _MINIMUM_VERSION:
@@ -261,8 +261,7 @@ def require_compatible_grok(binary_path: str) -> None:
 
     minimum = ".".join(str(part) for part in _MINIMUM_VERSION)
     print(
-        f"The Grok Build CLI at {binary_path} must be a stable release at least "
-        f"version {minimum}.",
+        f"The Grok Build CLI at {binary_path} must be at least version {minimum}.",
         file=sys.stderr,
     )
     print(_INSTALL_HINT, file=sys.stderr)
@@ -270,7 +269,7 @@ def require_compatible_grok(binary_path: str) -> None:
 
 
 def grok_binary_version(binary_path: str) -> tuple[int, int, int] | None:
-    """Read Grok Build's machine-readable stable release metadata."""
+    """Read Grok Build's machine-readable version metadata."""
 
     try:
         result = subprocess.run(
@@ -290,7 +289,7 @@ def grok_binary_version(binary_path: str) -> tuple[int, int, int] | None:
         payload: JsonValue = json.loads(result.stdout)
     except json.JSONDecodeError:
         return None
-    if not isinstance(payload, dict) or payload.get("channel") != "stable":
+    if not isinstance(payload, dict):
         return None
 
     current_version = payload.get("currentVersion")

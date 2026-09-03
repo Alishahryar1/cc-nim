@@ -6,9 +6,22 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.openai_chat import (
+    IMAGE_TOOL_RESULT_MARKER,
+    close_chat_tool_result_turns,
+    image_tool_result_label,
+)
+
 from .content import get_block_attr, get_block_type
+from .image_sources import AnthropicImageSourceError, portable_anthropic_image_url
 from .models import MessagesRequest
 from .request_serialization import serialize_tool_result_content
+from .tool_results import (
+    ToolResultImage,
+    ToolResultText,
+    decompose_tool_result_content,
+)
 from .utils import set_if_not_none
 
 
@@ -204,31 +217,57 @@ def _openai_system_text(
     return "\n\n".join(text_parts)
 
 
-def _openai_user_image_part(block: Any) -> dict[str, Any]:
+def _openai_user_image_part(block: Any) -> JsonObject:
     """Convert one Anthropic user image block without performing I/O."""
-    source = get_block_attr(block, "source", {})
-    source_type = get_block_attr(source, "type")
-
-    if source_type == "base64":
-        media_type = get_block_attr(source, "media_type")
-        if not isinstance(media_type, str) or not media_type.strip():
-            raise OpenAIConversionError(
-                "Base64 image source requires a non-empty media_type."
-            )
-        data = get_block_attr(source, "data")
-        if not isinstance(data, str) or not data.strip():
-            raise OpenAIConversionError("Base64 image source requires non-empty data.")
-        url = f"data:{media_type};base64,{data}"
-    elif source_type == "url":
-        url = get_block_attr(source, "url")
-        if not isinstance(url, str) or not url.strip():
-            raise OpenAIConversionError("URL image source requires a non-empty url.")
-    else:
-        raise OpenAIConversionError(
-            f"Unsupported image source type {source_type!r}; expected 'base64' or 'url'."
-        )
+    try:
+        url = portable_anthropic_image_url(get_block_attr(block, "source", {}))
+    except AnthropicImageSourceError as exc:
+        raise OpenAIConversionError(str(exc)) from exc
 
     return {"type": "image_url", "image_url": {"url": url}}
+
+
+@dataclass(frozen=True)
+class _OpenAIChatToolResult:
+    tool_message: JsonObject
+    rich_user_message: JsonObject | None = None
+
+
+def _openai_chat_tool_result(block: Any) -> _OpenAIChatToolResult:
+    tool_id = get_block_attr(block, "tool_use_id")
+    tool_content = get_block_attr(block, "content", "")
+    try:
+        decomposed = decompose_tool_result_content(tool_content)
+    except AnthropicImageSourceError as exc:
+        raise OpenAIConversionError(str(exc)) from exc
+
+    if not decomposed.has_images:
+        serialized = serialize_tool_result_content(tool_content)
+        return _OpenAIChatToolResult(
+            tool_message={
+                "role": "tool",
+                "tool_call_id": tool_id,
+                "content": serialized if serialized else "",
+            }
+        )
+
+    rich_parts: list[JsonObject] = [
+        {"type": "text", "text": image_tool_result_label(str(tool_id))}
+    ]
+    for part in decomposed.parts:
+        if isinstance(part, ToolResultText):
+            rich_parts.append({"type": "text", "text": part.text})
+        elif isinstance(part, ToolResultImage):
+            rich_parts.append({"type": "image_url", "image_url": {"url": part.url}})
+
+    return _OpenAIChatToolResult(
+        tool_message={
+            "role": "tool",
+            "tool_call_id": tool_id,
+            "content": IMAGE_TOOL_RESULT_MARKER,
+        },
+        rich_user_message={"role": "user", "content": rich_parts},
+    )
 
 
 def _openai_user_content_parts(content: Any) -> list[dict[str, Any]]:
@@ -280,45 +319,13 @@ def _coalesce_openai_user_messages(
     return result
 
 
-class _SyntheticOpenAIToolTurnBoundary(dict[str, Any]):
-    """Identify an FCC-inserted assistant boundary until wire serialization."""
-
-    __slots__ = ()
-
-
-def is_synthetic_openai_tool_turn_boundary(message: object) -> bool:
-    """Return whether FCC inserted this message to close an OpenAI tool turn."""
-    return isinstance(message, _SyntheticOpenAIToolTurnBoundary)
-
-
-def _close_openai_tool_result_turns(
-    messages: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Close completed tool rounds before subsequent user input."""
-    result: list[dict[str, Any]] = []
-    for message in messages:
-        if (
-            message.get("role") == "user"
-            and result
-            and result[-1].get("role") == "tool"
-        ):
-            # Some OpenAI-compatible chat templates reject a user role directly
-            # after tool output. Non-empty whitespace closes the assistant turn
-            # without inventing model content.
-            result.append(
-                _SyntheticOpenAIToolTurnBoundary(role="assistant", content=" ")
-            )
-        result.append(message)
-    return result
-
-
 class _OpenAIChatHistoryLedger:
     """Assemble OpenAI chat history while respecting tool-result dependencies."""
 
     def __init__(self) -> None:
         self._output: list[dict[str, Any]] = []
         self._segments: list[_TranscriptSegment] = []
-        self._tool_results: dict[str, dict[str, Any]] = {}
+        self._tool_results: dict[str, _OpenAIChatToolResult] = {}
 
     def add_plain(self, messages: list[dict[str, Any]]) -> None:
         if messages:
@@ -369,17 +376,14 @@ class _OpenAIChatHistoryLedger:
         if not tuid_s:
             self.add_plain(AnthropicToOpenAIConverter._convert_user_message([block]))
             return
-        tool_content = get_block_attr(block, "content", "")
-        serialized = serialize_tool_result_content(tool_content)
-        tool_message = {
-            "role": "tool",
-            "tool_call_id": tuid,
-            "content": serialized if serialized else "",
-        }
+        converted = _openai_chat_tool_result(block)
         if self._has_pending_tool_id(tuid_s):
-            self._tool_results[tuid_s] = tool_message
+            self._tool_results[tuid_s] = converted
         else:
-            self.add_plain([tool_message])
+            messages = [converted.tool_message]
+            if converted.rich_user_message is not None:
+                messages.append(converted.rich_user_message)
+            self.add_plain(messages)
 
     def _drain_ready_segments(self) -> None:
         while self._segments:
@@ -402,8 +406,15 @@ class _OpenAIChatHistoryLedger:
                 break
 
             self._segments.pop(0)
-            for tool_id in segment.required_tool_ids:
-                self._output.append(self._tool_results.pop(tool_id))
+            results = [
+                self._tool_results.pop(tool_id) for tool_id in segment.required_tool_ids
+            ]
+            self._output.extend(result.tool_message for result in results)
+            self._output.extend(
+                result.rich_user_message
+                for result in results
+                if result.rich_user_message is not None
+            )
             deferred_messages = (
                 AnthropicToOpenAIConverter._deferred_post_tool_to_messages(segment)
             )
@@ -413,10 +424,17 @@ class _OpenAIChatHistoryLedger:
         if not segment.assistant_emitted:
             self._output.append(segment.assistant_message)
             segment.assistant_emitted = True
-        for tool_id in segment.required_tool_ids:
-            tool_result = self._tool_results.pop(tool_id, None)
-            if tool_result is not None:
-                self._output.append(tool_result)
+        results = [
+            tool_result
+            for tool_id in segment.required_tool_ids
+            if (tool_result := self._tool_results.pop(tool_id, None)) is not None
+        ]
+        self._output.extend(result.tool_message for result in results)
+        self._output.extend(
+            result.rich_user_message
+            for result in results
+            if result.rich_user_message is not None
+        )
         self._output.extend(
             AnthropicToOpenAIConverter._deferred_post_tool_to_messages(segment)
         )
@@ -476,7 +494,7 @@ class AnthropicToOpenAIConverter:
                     ledger.add_tool_turn(segment)
 
         ordered_messages = ledger.finish()
-        closed_messages = _close_openai_tool_result_turns(ordered_messages)
+        closed_messages = close_chat_tool_result_turns(ordered_messages)
         return _coalesce_openai_user_messages(closed_messages)
 
     @staticmethod
@@ -667,6 +685,7 @@ class AnthropicToOpenAIConverter:
     def _convert_user_message(content: list[Any]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         content_parts: list[dict[str, Any]] = []
+        tool_results: list[_OpenAIChatToolResult] = []
 
         def flush_content() -> None:
             if not content_parts:
@@ -680,27 +699,33 @@ class AnthropicToOpenAIConverter:
             result.append({"role": "user", "content": message_content})
             content_parts.clear()
 
+        def flush_tool_results() -> None:
+            if not tool_results:
+                return
+            result.extend(item.tool_message for item in tool_results)
+            result.extend(
+                item.rich_user_message
+                for item in tool_results
+                if item.rich_user_message is not None
+            )
+            tool_results.clear()
+
         for block in content:
             block_type = get_block_type(block)
 
             if block_type == "text":
+                flush_tool_results()
                 content_parts.append(
                     {"type": "text", "text": get_block_attr(block, "text", "")}
                 )
             elif block_type == "image":
+                flush_tool_results()
                 content_parts.append(_openai_user_image_part(block))
             elif block_type == "tool_result":
                 flush_content()
-                tool_content = get_block_attr(block, "content", "")
-                serialized = serialize_tool_result_content(tool_content)
-                result.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": get_block_attr(block, "tool_use_id"),
-                        "content": serialized if serialized else "",
-                    }
-                )
+                tool_results.append(_openai_chat_tool_result(block))
 
+        flush_tool_results()
         flush_content()
         return result
 

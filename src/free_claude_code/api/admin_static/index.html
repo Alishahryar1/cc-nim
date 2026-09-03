@@ -5,16 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Free Claude Code Admin</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/admin/assets/admin.css" />
+    <link rel="stylesheet" href="/admin/assets/__FCC_VERSION__/admin.css" />
+    <link rel="stylesheet" href="/admin/assets/__FCC_VERSION__/chat_sessions.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">FC</div>
+          <a
+            class="brand-mark"
+            href="https://github.com/Alishahryar1/free-claude-code"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open Free Claude Code on GitHub"
+          >
+            <img src="/admin/assets/__FCC_VERSION__/app-icon.svg" alt="" />
+          </a>
           <div>
             <h1>Free Claude Code</h1>
-            <p>Server Control</p>
+            <p>Server Control · v__FCC_VERSION__</p>
           </div>
         </div>
         <nav id="sectionNav" class="section-nav" aria-label="Admin views"></nav>
@@ -71,6 +80,10 @@
               aria-label="Messaging configuration"
             ></div>
           </section>
+
+          <section id="view-chat" class="admin-view" data-view="chat" hidden>
+            <div id="chatRoot" class="chat-root" aria-live="off"></div>
+          </section>
         </div>
       </main>
 
@@ -81,11 +94,12 @@
         </div>
         <div id="messageArea" class="message-area"></div>
         <div class="action-buttons">
-          <button id="validateButton" class="secondary-button" type="button">Validate</button>
           <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>
         </div>
       </footer>
     </div>
-    <script src="/admin/assets/admin.js"></script>
+    <script src="/admin/assets/__FCC_VERSION__/model_combobox.js"></script>
+    <script src="/admin/assets/__FCC_VERSION__/chat_sessions.js"></script>
+    <script src="/admin/assets/__FCC_VERSION__/admin.js"></script>
   </body>
 </html>

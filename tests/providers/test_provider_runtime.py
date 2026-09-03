@@ -21,6 +21,7 @@ from free_claude_code.config.provider_catalog import (
     GITHUB_MODELS_DEFAULT_BASE,
     HUGGINGFACE_DEFAULT_BASE,
     KIMI_CODE_DEFAULT_BASE,
+    LLM7_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
     NARAROUTE_DEFAULT_BASE,
     NEBIUS_DEFAULT_BASE,
@@ -56,6 +57,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 from free_claude_code.providers.openai_codex import OpenAICodexProvider
+from free_claude_code.providers.opencode import OpenCodeProvider
 from free_claude_code.providers.runtime import (
     ProviderRuntime,
     build_provider_config,
@@ -109,6 +111,7 @@ def _make_settings(**overrides):
     mock.ollama_base_url = "http://localhost:11434"
     mock.ollama_api_key = "test_ollama_cloud_key"
     mock.poolside_api_key = "test_poolside_key"
+    mock.llm7_api_key = "test_llm7_key"
     mock.nvidia_nim_proxy = None
     mock.open_router_proxy = None
     mock.lmstudio_proxy = None
@@ -155,6 +158,7 @@ def _make_settings(**overrides):
     mock.cerebras_proxy = None
     mock.ollama_cloud_proxy = None
     mock.poolside_proxy = None
+    mock.llm7_proxy = None
     mock.kilo_api_key = "test_kilo_key"
     mock.kilo_proxy = None
     mock.openai_proxy = None
@@ -256,6 +260,30 @@ def test_poolside_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.proxy_attr == "poolside_proxy"
     assert config.api_key == "poolside-token"
     assert config.base_url == POOLSIDE_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+
+
+def test_llm7_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["llm7"]
+    settings = _make_settings(
+        llm7_api_key="llm7-token",
+        llm7_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("llm7", settings)
+
+    assert descriptor.display_name == "LLM7.io"
+    assert descriptor.credential_env == "LLM7_API_KEY"
+    assert descriptor.credential_attr == "llm7_api_key"
+    assert descriptor.credential_url == "https://dash.llm7.io/"
+    assert descriptor.default_base_url == LLM7_DEFAULT_BASE
+    assert descriptor.base_url_attr is None
+    assert descriptor.proxy_attr == "llm7_proxy"
+    assert config.api_key == "llm7-token"
+    assert config.base_url == LLM7_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
 
@@ -694,20 +722,22 @@ def test_opencode_zen_provider_config_uses_explicit_id_and_name():
     with patch("httpx.AsyncClient"):
         provider = create_provider("opencode_zen", _make_settings())
 
-    assert isinstance(provider, OpenAIChatProvider)
+    assert isinstance(provider, OpenCodeProvider)
     assert provider._base_url == "https://opencode.ai/zen/v1"
     assert provider._provider_name == "OPENCODE_ZEN"
     assert provider._api_key == "test_opencode_key"
+    assert provider._responses._admission is provider._admission
 
 
 def test_opencode_go_provider_config_uses_correct_base_url_and_name():
     with patch("httpx.AsyncClient"):
         provider = create_provider("opencode_go", _make_settings())
 
-    assert isinstance(provider, OpenAIChatProvider)
+    assert isinstance(provider, OpenCodeProvider)
     assert provider._base_url == "https://opencode.ai/zen/go/v1"
     assert provider._provider_name == "OPENCODE_GO"
     assert provider._api_key == "test_opencode_key"
+    assert provider._responses._admission is provider._admission
 
 
 def test_opencode_go_catalog_uses_opencode_api_key() -> None:
@@ -869,9 +899,10 @@ def test_create_provider_instantiates_each_builtin():
         "ollama": OpenAIChatProvider,
         "ollama_cloud": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
-        "opencode_zen": OpenAIChatProvider,
+        "opencode_zen": OpenCodeProvider,
         "poolside": OpenAIChatProvider,
-        "opencode_go": OpenAIChatProvider,
+        "llm7": OpenAIChatProvider,
+        "opencode_go": OpenCodeProvider,
         "vercel": OpenAIChatProvider,
         "bedrock": OpenAIChatProvider,
         "huggingface": OpenAIChatProvider,

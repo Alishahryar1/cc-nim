@@ -19,7 +19,7 @@ UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-aider fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -34,6 +34,7 @@ install_hermes=1
 install_dsh=1
 install_grok=1
 install_muse=1
+install_aider=1
 enable_rtk=0
 torch_backend=""
 temporary_file=""
@@ -179,7 +180,18 @@ choose_coding_agents() {
             install_muse=0
         fi
 
-        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_dsh" -eq 1 ] || [ "$install_grok" -eq 1 ] || [ "$install_muse" -eq 1 ]; then
+        if [ "$install_aider" -eq 1 ]; then
+            aider_default=yes
+        else
+            aider_default=no
+        fi
+        if prompt_yes_no "Install or verify Aider for fcc-aider?" "$aider_default"; then
+            install_aider=1
+        else
+            install_aider=0
+        fi
+
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_dsh" -eq 1 ] || [ "$install_grok" -eq 1 ] || [ "$install_muse" -eq 1 ] || [ "$install_aider" -eq 1 ]; then
             break
         fi
         printf 'Select at least one coding agent.\n\n' >&4
@@ -255,6 +267,13 @@ add_path_entry() {
     esac
 }
 
+prioritize_path_entry() {
+    [ -n "$1" ] || return 0
+    PATH="$1:$PATH"
+    export PATH
+    hash -r 2>/dev/null || true
+}
+
 add_known_bin_directories() {
     if [ -n "${XDG_BIN_HOME:-}" ]; then
         add_path_entry "$XDG_BIN_HOME"
@@ -273,6 +292,21 @@ add_known_bin_directories() {
         add_path_entry "$HOME/.grok/bin"
     fi
 
+    export PATH
+    hash -r 2>/dev/null || true
+}
+
+add_uv_tool_bin_directory() {
+    print_command uv tool dir --bin
+    if tool_bin=$(uv tool dir --bin); then
+        :
+    else
+        status=$?
+        fail "Could not determine the uv tool bin directory (exit code $status)."
+    fi
+    [ -n "$tool_bin" ] || fail "uv returned an empty tool bin directory."
+
+    add_path_entry "$tool_bin"
     export PATH
     hash -r 2>/dev/null || true
 }
@@ -875,6 +909,24 @@ ensure_muse() {
     verify_command muse "Muse Code"
 }
 
+install_aider_cli() {
+    run uv tool install --force --python python3.12 --with pip aider-chat@latest
+}
+
+ensure_aider() {
+    if ! command -v aider >/dev/null 2>&1 && [ "$dry_run" -eq 0 ]; then
+        add_uv_tool_bin_directory
+    fi
+
+    if command -v aider >/dev/null 2>&1; then
+        printf 'Aider already found on PATH; verifying it.\n'
+    else
+        install_aider_cli
+    fi
+
+    verify_command aider "Aider"
+}
+
 ensure_selected_coding_agents() {
     if [ "$install_claude" -eq 1 ]; then
         step "Ensuring Claude Code is installed"
@@ -921,7 +973,12 @@ ensure_selected_coding_agents() {
         ensure_muse
     fi
 
-    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ] && [ "$install_dsh" -eq 0 ] && [ "$install_grok" -eq 0 ] && [ "$install_muse" -eq 0 ]; then
+    if [ "$install_aider" -eq 1 ]; then
+        step "Ensuring Aider is installed"
+        ensure_aider
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ] && [ "$install_dsh" -eq 0 ] && [ "$install_grok" -eq 0 ] && [ "$install_muse" -eq 0 ] && [ "$install_aider" -eq 0 ]; then
         fail "No selected coding agent was installed. Re-run the installer and choose at least one."
     fi
 }
@@ -991,6 +1048,48 @@ verify_uv() {
     printf 'Verified uv %s.\n' "$version"
 }
 
+uv_installer_home_directory() {
+    if [ -n "${HOME:-}" ]; then
+        printf '%s\n' "$HOME"
+        return 0
+    fi
+
+    if [ -n "${USER:-}" ]; then
+        user_name=$USER
+    else
+        user_name=$(id -un) || fail "Could not determine the current user for uv installation."
+    fi
+    home_directory=$(getent passwd "$user_name" | cut -d: -f6)
+    [ -n "$home_directory" ] || fail "Could not determine the home directory for uv installation."
+    printf '%s\n' "$home_directory"
+}
+
+uv_install_bin_directory() {
+    force_install_directory=""
+    if [ -n "${UV_INSTALL_DIR:-}" ]; then
+        force_install_directory=$UV_INSTALL_DIR
+    elif [ -n "${UV_UNMANAGED_INSTALL:-}" ]; then
+        force_install_directory=$UV_UNMANAGED_INSTALL
+    fi
+
+    if [ -n "$force_install_directory" ]; then
+        inferred_home=$(uv_installer_home_directory)
+        cargo_home=${CARGO_HOME:-$inferred_home/.cargo}
+        if [ "$force_install_directory" = "$cargo_home" ]; then
+            printf '%s/bin\n' "$force_install_directory"
+        else
+            printf '%s\n' "$force_install_directory"
+        fi
+    elif [ -n "${XDG_BIN_HOME:-}" ]; then
+        printf '%s\n' "$XDG_BIN_HOME"
+    elif [ -n "${XDG_DATA_HOME:-}" ]; then
+        printf '%s/../bin\n' "$XDG_DATA_HOME"
+    else
+        inferred_home=$(uv_installer_home_directory)
+        printf '%s/.local/bin\n' "$inferred_home"
+    fi
+}
+
 ensure_uv() {
     if [ "$dry_run" -eq 1 ]; then
         if command -v uv >/dev/null 2>&1; then
@@ -1016,7 +1115,8 @@ ensure_uv() {
     fi
 
     download_and_run "$UV_INSTALL_URL" sh "uv"
-    add_known_bin_directories
+    uv_bin=$(uv_install_bin_directory) || return $?
+    prioritize_path_entry "$uv_bin"
     verify_uv
 }
 
@@ -1108,25 +1208,14 @@ configure_and_verify_free_claude_code() {
 
     if [ "$dry_run" -eq 1 ]; then
         print_command uv tool dir --bin
-        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, fcc-grok, and fcc-muse in the uv tool bin directory\n'
+        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, fcc-grok, fcc-muse, and fcc-aider in the uv tool bin directory\n'
         print_command fcc-server --version
         return 0
     fi
 
-    print_command uv tool dir --bin
-    if tool_bin=$(uv tool dir --bin); then
-        :
-    else
-        status=$?
-        fail "Could not determine the uv tool bin directory (exit code $status)."
-    fi
-    [ -n "$tool_bin" ] || fail "uv returned an empty tool bin directory."
+    add_uv_tool_bin_directory
 
-    add_path_entry "$tool_bin"
-    export PATH
-    hash -r 2>/dev/null || true
-
-    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse; do
+    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-aider; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
     done
 
@@ -1263,11 +1352,11 @@ if [ "$enable_rtk" -eq 1 ] && ! command -v rtk >/dev/null 2>&1; then
     fi
 fi
 
-ensure_selected_coding_agents
-configure_rtk_for_selected_agents
-
 step "Ensuring uv $MIN_UV_VERSION or newer is installed"
 ensure_uv
+
+ensure_selected_coding_agents
+configure_rtk_for_selected_agents
 
 step "Installing or updating Free Claude Code"
 install_free_claude_code
@@ -1325,5 +1414,10 @@ else
         printf 'Run Muse Code with: fcc-muse\n'
     else
         printf 'The fcc-muse wrapper is ready after you install Muse Code.\n'
+    fi
+    if [ "$install_aider" -eq 1 ]; then
+        printf 'Run Aider with: fcc-aider\n'
+    else
+        printf 'The fcc-aider wrapper is ready after you install Aider.\n'
     fi
 fi

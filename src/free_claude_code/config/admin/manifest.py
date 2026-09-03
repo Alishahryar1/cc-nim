@@ -132,8 +132,8 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "model_list",
         settings_attr="model_fallbacks",
         description=(
-            "Tried in order after the selected model exhausts retryable provider "
-            "failures. Applies to every client. One request may reach multiple "
+            "Tried in order when the selected provider/model fails before output "
+            "starts. Applies to every client. One request may reach multiple "
             "providers and consume usage at each."
         ),
     ),

@@ -4,18 +4,13 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
-from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.reasoning import (
-    DEFAULT_REASONING_POLICY,
-    ReasoningPolicy,
-)
+from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     OpenAIAsyncCredentialProvider,
     OpenAIChatProfile,
     OpenAIChatProvider,
-    build_openai_chat_request_body,
 )
 
 from .thought_signatures import apply_google_thought_signatures
@@ -57,21 +52,14 @@ class GoogleOpenAIProvider(OpenAIChatProvider):
             )
         self._tool_call_extra_content_by_id[tool_call_id] = deepcopy(extra_content)
 
-    def _build_request_body(
+    def _finalize_chat_body(
         self,
-        request: MessagesRequest,
+        body: dict[str, Any],
         *,
-        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        reasoning: ReasoningPolicy,
     ) -> dict[str, Any]:
-        return build_openai_chat_request_body(
-            request,
-            reasoning=reasoning,
-            policy=self._profile.request_policy,
-            postprocessors=(
-                lambda body, _request_data, _policy: apply_google_thought_signatures(
-                    body,
-                    tool_call_extra_content_by_id=(self._tool_call_extra_content_by_id),
-                ),
-                *self._profile.request_postprocessors,
-            ),
+        apply_google_thought_signatures(
+            body,
+            tool_call_extra_content_by_id=self._tool_call_extra_content_by_id,
         )
+        return body
