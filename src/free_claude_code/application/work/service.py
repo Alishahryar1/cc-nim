@@ -6,6 +6,7 @@ import json
 import os
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 
 import anyio.to_thread
@@ -77,10 +78,21 @@ class WorkService:
         try:
             await self._store.start()
             records = await self._store.list_sessions()
-            await self._coordinator.start(records)
+            operations = await self._store.list_operations(
+                states=(
+                    WorkOperationState.ACCEPTED,
+                    WorkOperationState.EXECUTING,
+                    WorkOperationState.UNKNOWN,
+                )
+            )
+            await self._coordinator.start(records, operations)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            with suppress(Exception):
+                await self._coordinator.close()
+            with suppress(Exception):
+                await self._store.close()
             self._unavailable_message = (
                 str(exc)
                 if isinstance(exc, WorkUnavailableError)
@@ -260,6 +272,11 @@ class WorkService:
             turns=turns,
             live_items=live,
             interactions=snapshot.interactions if snapshot is not None else (),
+            operations=(
+                tuple(acknowledgement(operation) for operation in snapshot.operations)
+                if snapshot is not None
+                else ()
+            ),
             event_cursor=self._coordinator.events.cursor,
         )
 
@@ -286,6 +303,11 @@ class WorkService:
             turns=WorkTurnPage(items=()),
             live_items=snapshot.projection.items if snapshot is not None else (),
             interactions=snapshot.interactions if snapshot is not None else (),
+            operations=(
+                tuple(acknowledgement(operation) for operation in snapshot.operations)
+                if snapshot is not None
+                else ()
+            ),
             event_cursor=self._coordinator.events.cursor,
         )
 
@@ -365,6 +387,13 @@ class WorkService:
     ) -> WorkOperationAcknowledgement:
         self._require_accepting()
         operation_id = _canonical_uuid(operation_id, "operation")
+        snapshot = self._coordinator.snapshot(thread_id)
+        if snapshot is not None and (
+            snapshot.active_turn_id is not None or snapshot.interactions
+        ):
+            raise WorkConflictError(
+                "Stop active Codex work before deleting this session."
+            )
         operation, _created = await self._store.admit_operation(
             operation_id=operation_id,
             kind=WorkOperationKind.DELETE,
@@ -421,38 +450,34 @@ class WorkService:
         )
         return acknowledgement(operation)
 
-    async def abandon_operation(
+    async def acknowledge_unknown(
+        self, thread_id: str
+    ) -> tuple[WorkOperationAcknowledgement, ...]:
+        self._require_accepting()
+        await self._store.get_session(thread_id)
+        abandoned = await self._coordinator.acknowledge_unknown(thread_id)
+        return tuple(acknowledgement(operation) for operation in abandoned)
+
+    async def dismiss_unknown_create(
         self, operation_id: str
     ) -> WorkOperationAcknowledgement:
         self._require_accepting()
         operation_id = _canonical_uuid(operation_id, "operation")
         current = await self._store.get_operation(operation_id)
-        if current.state is not WorkOperationState.UNKNOWN:
+        if (
+            current.kind is not WorkOperationKind.CREATE
+            or current.state is not WorkOperationState.UNKNOWN
+            or current.native_thread_id is not None
+        ):
             raise WorkConflictError(
-                "Only an uncertain Work operation can be continued."
+                "Only an unresolved creation without a native ID can be dismissed."
             )
-        if current.session_id is not None:
-            snapshot = self._coordinator.snapshot(current.session_id)
-            if snapshot is not None and snapshot.status in {
-                WorkStatus.WORKING,
-                WorkStatus.WAITING_FOR_APPROVAL,
-                WorkStatus.WAITING_FOR_INPUT,
-                WorkStatus.STOPPING,
-                WorkStatus.DELETING,
-            }:
-                raise WorkConflictError(
-                    "Wait until Codex is idle before continuing anyway."
-                )
-            if not await self._coordinator.confirmed_idle(current.session_id):
-                raise WorkConflictError(
-                    "Codex activity is not confirmed idle; wait before continuing anyway."
-                )
         abandoned = await self._store.transition_operation(
             operation_id,
             expected_states=(WorkOperationState.UNKNOWN,),
             state=WorkOperationState.ABANDONED,
         )
-        await self._coordinator.abandon(abandoned)
+        self._coordinator.publish_operation(abandoned)
         return acknowledgement(abandoned)
 
     async def _native_index(
@@ -505,15 +530,17 @@ class WorkService:
         title = name or (
             _title_from_preview(preview) if preview else "New Work Session"
         )
+        status = status_override or WorkStatus.READY
+        if snapshot is not None and (
+            status_override is None or snapshot.operations or snapshot.interactions
+        ):
+            status = snapshot.status
         return WorkSessionSummary(
             thread_id=record.thread_id,
             cwd=record.cwd,
             title=title,
             preview=preview,
-            status=(
-                status_override
-                or (snapshot.status if snapshot is not None else WorkStatus.READY)
-            ),
+            status=status,
             revision=record.revision,
             registered_at_ms=record.registered_at_ms,
             updated_at_ms=_native_timestamp_ms(values.get("recencyAt")),

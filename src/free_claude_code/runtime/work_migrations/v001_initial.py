@@ -59,7 +59,11 @@ def apply(connection: sqlite3.Connection) -> None:
             CHECK (
                 (state IN ('accepted', 'executing') AND payload_json IS NOT NULL)
                 OR
-                (state IN ('unknown', 'succeeded', 'failed', 'abandoned')
+                (state = 'unknown' AND kind = 'create'
+                    AND payload_json IS NOT NULL)
+                OR
+                ((state IN ('succeeded', 'failed', 'abandoned')
+                    OR (state = 'unknown' AND kind != 'create'))
                     AND payload_json IS NULL)
             ),
             CHECK (kind = 'create' OR session_id IS NOT NULL),

@@ -89,6 +89,16 @@ def _wait_for(name: str) -> None:
         time.sleep(0.01)
 
 
+def _turn_text(params: object) -> str:
+    if not isinstance(params, dict):
+        return ""
+    inputs = params.get("input")
+    if not isinstance(inputs, list) or not inputs or not isinstance(inputs[0], dict):
+        return ""
+    text = inputs[0].get("text")
+    return text if isinstance(text, str) else ""
+
+
 def _normal_response(method: str, params: object) -> object:
     if method == "initialize":
         return {
@@ -446,6 +456,19 @@ def main() -> None:
         if method == "thread/section/move" and scenario == "exit_on_materialization":
             sys.exit(8)
 
+        if (
+            method == "turn/start"
+            and scenario == "work_flow"
+            and _turn_text(params) == "[reject-turn] restore this draft"
+        ):
+            _emit(
+                {
+                    "id": request_id,
+                    "error": {"code": -32602, "message": "Injected turn rejection"},
+                }
+            )
+            continue
+
         if method == "thread/turns/list" and scenario == "work_flow":
             result = (
                 _normal_response(method, params)
@@ -498,16 +521,7 @@ def main() -> None:
 
         if method == "turn/start":
             if scenario == "work_flow":
-                text = ""
-                if isinstance(params, dict):
-                    inputs = params.get("input")
-                    if (
-                        isinstance(inputs, list)
-                        and inputs
-                        and isinstance(inputs[0], dict)
-                        and isinstance(inputs[0].get("text"), str)
-                    ):
-                        text = inputs[0]["text"]
+                text = _turn_text(params)
                 _emit_together(
                     {
                         "method": "turn/started",

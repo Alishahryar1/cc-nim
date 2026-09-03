@@ -49,6 +49,7 @@ from .models import (
     WorkUnavailableError,
     WorkValidationError,
 )
+from .operation_policy import ACTIVE_OPERATION_STATES, derive_work_status
 from .ports import WorkStorePort
 from .projection import (
     ProjectionState,
@@ -83,7 +84,7 @@ class CoordinatorSessionSnapshot:
     projection: ProjectionState
     interactions: tuple[WorkInteraction, ...]
     active_turn_id: str | None
-    unknown_operation_id: str | None
+    operations: tuple[WorkOperation, ...]
 
 
 @dataclass(slots=True)
@@ -98,20 +99,18 @@ class _PendingInteraction:
 @dataclass(slots=True)
 class _SessionState:
     record: WorkSessionRecord
-    status: WorkStatus = WorkStatus.READY
+    native_status: WorkStatus = WorkStatus.READY
     native_thread: JsonObject | None = None
     missing: bool = False
     projection: ProjectionState = field(default_factory=ProjectionState)
     interactions: dict[str, _PendingInteraction] = field(default_factory=dict)
     request_keys: dict[tuple[str, int | str], str] = field(default_factory=dict)
-    active_send_id: str | None = None
+    operations: dict[str, WorkOperation] = field(default_factory=dict)
     active_turn_id: str | None = None
-    stop_operation_id: str | None = None
-    delete_operation_id: str | None = None
     interrupt_in_flight: bool = False
     delete_in_flight: bool = False
-    unknown_operation_id: str | None = None
     disconnected: bool = False
+    retired: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +121,7 @@ class _Dispatch:
 @dataclass(frozen=True, slots=True)
 class _Recover:
     operation: WorkOperation
+    completed: asyncio.Future[None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,8 +130,14 @@ class _RecordChanged:
 
 
 @dataclass(frozen=True, slots=True)
-class _Abandoned:
+class _OperationChanged:
     operation: WorkOperation
+    completed: asyncio.Future[None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _AcknowledgeUnknown:
+    completed: asyncio.Future[tuple[WorkOperation, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +154,13 @@ class _EffectDone:
 
 
 type _SessionMessage = (
-    _Dispatch | _Recover | _RecordChanged | _Abandoned | _Native | _EffectDone
+    _Dispatch
+    | _Recover
+    | _RecordChanged
+    | _OperationChanged
+    | _AcknowledgeUnknown
+    | _Native
+    | _EffectDone
 )
 
 
@@ -180,28 +192,37 @@ class WorkCoordinator:
         self._dispatcher_task: asyncio.Task[None] | None = None
         self._create_task: asyncio.Task[None] | None = None
         self._event_task: asyncio.Task[None] | None = None
-        self._recovery_task: asyncio.Task[None] | None = None
         self._started = False
         self._closing = False
 
-    async def start(self, records: tuple[WorkSessionRecord, ...]) -> None:
+    async def start(
+        self,
+        records: tuple[WorkSessionRecord, ...],
+        operations: tuple[WorkOperation, ...],
+    ) -> None:
         if self._started:
             return
         self._started = True
         self._closing = False
+        operations_by_session: dict[str, list[WorkOperation]] = {}
+        for operation in operations:
+            if operation.session_id is not None:
+                operations_by_session.setdefault(operation.session_id, []).append(
+                    operation
+                )
         for record in records:
-            self._register_actor(record)
+            self._register_actor(
+                record, tuple(operations_by_session.get(record.thread_id, ()))
+            )
+        self._event_task = asyncio.create_task(
+            self._event_loop(), name="fcc-work-events"
+        )
+        await self._recover_startup(operations)
         self._dispatcher_task = asyncio.create_task(
             self._dispatch_loop(), name="fcc-work-dispatch"
         )
         self._create_task = asyncio.create_task(
             self._create_loop(), name="fcc-work-create"
-        )
-        self._event_task = asyncio.create_task(
-            self._event_loop(), name="fcc-work-events"
-        )
-        self._recovery_task = asyncio.create_task(
-            self._recover_startup(), name="fcc-work-recovery"
         )
         self._wake.set()
 
@@ -215,7 +236,6 @@ class WorkCoordinator:
                 self._dispatcher_task,
                 self._create_task,
                 self._event_task,
-                self._recovery_task,
                 *(actor.task for actor in self._actors.values()),
                 *self._tasks,
             )
@@ -250,14 +270,11 @@ class WorkCoordinator:
             actor = self._register_actor(record)
         await actor.queue.put(_RecordChanged(record))
 
-    async def abandon(self, operation: WorkOperation) -> None:
-        if operation.session_id is None:
-            self._publish_operation(operation)
-            return
-        actor = self._actors.get(operation.session_id)
-        if actor is not None:
-            await actor.queue.put(_Abandoned(operation))
-        self._publish_operation(operation)
+    async def acknowledge_unknown(self, thread_id: str) -> tuple[WorkOperation, ...]:
+        actor = self._actors.get(thread_id)
+        if actor is None:
+            raise WorkConflictError("Work session is not active.")
+        return await actor.acknowledge_unknown()
 
     async def interaction_response(
         self,
@@ -279,24 +296,16 @@ class WorkCoordinator:
             return False
         return False
 
-    async def confirmed_idle(self, thread_id: str) -> bool:
-        try:
-            page = await self.codex.list_turns_page(
-                thread_id=thread_id,
-                cursor=None,
-                limit=1,
-            )
-        except CodexUnavailableError, CodexConnectionError, CodexRequestError:
-            return False
-        if not page.records:
-            return True
-        return optional_string(page.records[0].get("status")) in _TERMINAL_TURN_STATUSES
-
     async def unregister(self, thread_id: str) -> None:
         actor = self._actors.pop(thread_id, None)
         if actor is not None:
             actor.task.cancel()
             await asyncio.gather(actor.task, return_exceptions=True)
+        self._snapshots.pop(thread_id, None)
+
+    def retire_actor(self, thread_id: str, actor: _SessionActor) -> None:
+        if self._actors.get(thread_id) is actor:
+            self._actors.pop(thread_id, None)
         self._snapshots.pop(thread_id, None)
 
     def launch_effect(
@@ -332,6 +341,7 @@ class WorkCoordinator:
         *,
         expected_states: tuple[WorkOperationState, ...] = (
             WorkOperationState.EXECUTING,
+            WorkOperationState.UNKNOWN,
         ),
         native_thread_id: str | None = None,
         native_turn_id: str | None = None,
@@ -349,7 +359,7 @@ class WorkCoordinator:
             error_code=error_code,
             error_message=error_message,
         )
-        self._publish_operation(operation)
+        self.publish_operation(operation)
         return operation
 
     def publish_status(self, snapshot: CoordinatorSessionSnapshot) -> None:
@@ -376,9 +386,27 @@ class WorkCoordinator:
         )
 
     def update_snapshot(self, state: _SessionState) -> CoordinatorSessionSnapshot:
+        operations = tuple(
+            sorted(
+                (
+                    operation
+                    for operation in state.operations.values()
+                    if operation.state in ACTIVE_OPERATION_STATES
+                ),
+                key=lambda operation: (operation.created_at_ms, operation.operation_id),
+            )
+        )
+        all_interactions = tuple(
+            pending.public for pending in state.interactions.values()
+        )
         snapshot = CoordinatorSessionSnapshot(
             record=state.record,
-            status=state.status,
+            status=derive_work_status(
+                operations,
+                all_interactions,
+                native_status=state.native_status,
+                disconnected=state.disconnected,
+            ),
             native_thread=(
                 dict(state.native_thread) if state.native_thread is not None else None
             ),
@@ -390,7 +418,7 @@ class WorkCoordinator:
                 if pending.operation_id is None
             ),
             active_turn_id=state.active_turn_id,
-            unknown_operation_id=state.unknown_operation_id,
+            operations=operations,
         )
         self._snapshots[state.record.thread_id] = snapshot
         return snapshot
@@ -522,7 +550,7 @@ class WorkCoordinator:
             )
         for event in self._buffered_events.pop(handle.thread_id, []):
             await actor.queue.put(_Native(event))
-        self._publish_operation(completed)
+        self.publish_operation(completed)
         self.events.publish("session.created", {"thread_id": handle.thread_id})
 
     async def _materialize_or_confirm(self, thread_id: str) -> bool:
@@ -670,26 +698,17 @@ class WorkCoordinator:
             return
         await actor.queue.put(_Native(event))
 
-    async def _recover_startup(self) -> None:
-        operations = await self.store.list_operations(
-            states=(WorkOperationState.EXECUTING,)
-        )
+    async def _recover_startup(self, operations: tuple[WorkOperation, ...]) -> None:
         for operation in operations:
             if self._closing:
                 return
+            if operation.state not in {
+                WorkOperationState.EXECUTING,
+                WorkOperationState.UNKNOWN,
+            }:
+                continue
             if operation.kind is WorkOperationKind.CREATE:
                 await self._recover_create(operation)
-                continue
-            if operation.kind is WorkOperationKind.RESPOND:
-                await self.settle(
-                    operation.operation_id,
-                    WorkOperationState.UNKNOWN,
-                    error_code="interaction_outcome_unknown",
-                    error_message=(
-                        "FCC restarted before it could confirm whether Codex "
-                        "accepted this response."
-                    ),
-                )
                 continue
             actor = self._actors.get(operation.session_id or "")
             if actor is None:
@@ -700,21 +719,23 @@ class WorkCoordinator:
                     error_message="FCC cannot reconcile this operation without its session.",
                 )
                 continue
-            await actor.queue.put(_Recover(operation))
+            await actor.recover(operation)
 
-        accepted_responses = await self.store.list_operations(
-            states=(WorkOperationState.ACCEPTED,)
-        )
-        for operation in accepted_responses:
-            if operation.kind is WorkOperationKind.RESPOND:
-                await self.settle(
+        for operation in operations:
+            if (
+                operation.state is WorkOperationState.ACCEPTED
+                and operation.kind is WorkOperationKind.RESPOND
+            ):
+                failed = await self.settle(
                     operation.operation_id,
                     WorkOperationState.FAILED,
                     expected_states=(WorkOperationState.ACCEPTED,),
                     error_code="interaction_expired",
                     error_message="The Codex interaction expired when FCC restarted.",
                 )
-        self._wake.set()
+                actor = self._actors.get(operation.session_id or "")
+                if actor is not None:
+                    await actor.replace_operation(failed)
 
     async def _recover_create(self, operation: WorkOperation) -> None:
         thread_id = operation.native_thread_id
@@ -722,6 +743,7 @@ class WorkCoordinator:
             await self.settle(
                 operation.operation_id,
                 WorkOperationState.UNKNOWN,
+                expected_states=(operation.state,),
                 error_code="create_outcome_unknown",
                 error_message="Codex may have created an unregistered thread.",
             )
@@ -732,6 +754,7 @@ class WorkCoordinator:
             await self.settle(
                 operation.operation_id,
                 WorkOperationState.UNKNOWN,
+                expected_states=(operation.state,),
                 native_thread_id=thread_id,
                 error_code=_error_code(exc),
                 error_message="FCC could not reconcile the interrupted create.",
@@ -746,6 +769,7 @@ class WorkCoordinator:
                     if cleanup is True
                     else WorkOperationState.UNKNOWN
                 ),
+                expected_states=(operation.state,),
                 native_thread_id=thread_id,
                 error_code="create_interrupted",
                 error_message=(
@@ -765,6 +789,7 @@ class WorkCoordinator:
             await self.settle(
                 operation.operation_id,
                 WorkOperationState.UNKNOWN,
+                expected_states=(operation.state,),
                 native_thread_id=thread_id,
                 error_code=_error_code(exc),
                 error_message="The native thread exists, but FCC could not register it.",
@@ -813,7 +838,7 @@ class WorkCoordinator:
         actor = self._register_actor(record)
         for event in self._buffered_events.pop(thread_id, []):
             await actor.queue.put(_Native(event))
-        self._publish_operation(completed)
+        self.publish_operation(completed)
         self.events.publish("session.created", {"thread_id": thread_id})
 
     async def _thread_is_materialized(self, thread_id: str) -> bool:
@@ -844,16 +869,20 @@ class WorkCoordinator:
             return False
         return None
 
-    def _register_actor(self, record: WorkSessionRecord) -> _SessionActor:
+    def _register_actor(
+        self,
+        record: WorkSessionRecord,
+        operations: tuple[WorkOperation, ...] = (),
+    ) -> _SessionActor:
         existing = self._actors.get(record.thread_id)
         if existing is not None:
             return existing
-        actor = _SessionActor(self, record)
+        actor = _SessionActor(self, record, operations)
         self._actors[record.thread_id] = actor
         self.update_snapshot(actor.state)
         return actor
 
-    def _publish_operation(self, operation: WorkOperation) -> None:
+    def publish_operation(self, operation: WorkOperation) -> None:
         self.events.publish(
             "operation.updated",
             _operation_payload(operation),
@@ -877,13 +906,38 @@ class WorkCoordinator:
 class _SessionActor:
     """Single FIFO owner for one registered Work session."""
 
-    def __init__(self, coordinator: WorkCoordinator, record: WorkSessionRecord) -> None:
+    def __init__(
+        self,
+        coordinator: WorkCoordinator,
+        record: WorkSessionRecord,
+        operations: tuple[WorkOperation, ...],
+    ) -> None:
         self.coordinator = coordinator
-        self.state = _SessionState(record=record)
+        self.state = _SessionState(
+            record=record,
+            operations={operation.operation_id: operation for operation in operations},
+        )
         self.queue: asyncio.Queue[_SessionMessage] = asyncio.Queue()
         self.task = asyncio.create_task(
             self._run(), name=f"fcc-work-session-{record.thread_id}"
         )
+
+    async def recover(self, operation: WorkOperation) -> None:
+        completed = asyncio.get_running_loop().create_future()
+        await self.queue.put(_Recover(operation, completed))
+        await completed
+
+    async def replace_operation(self, operation: WorkOperation) -> None:
+        completed = asyncio.get_running_loop().create_future()
+        await self.queue.put(_OperationChanged(operation, completed))
+        await completed
+
+    async def acknowledge_unknown(self) -> tuple[WorkOperation, ...]:
+        completed: asyncio.Future[tuple[WorkOperation, ...]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        await self.queue.put(_AcknowledgeUnknown(completed))
+        return await completed
 
     def interaction_response(
         self, interaction_id: str, value: JsonValue
@@ -900,6 +954,125 @@ class _SessionActor:
         )
         return response, canonical
 
+    def _active_operation(self, kind: WorkOperationKind) -> WorkOperation | None:
+        return next(
+            (
+                operation
+                for operation in self.state.operations.values()
+                if operation.kind is kind and operation.state in ACTIVE_OPERATION_STATES
+            ),
+            None,
+        )
+
+    def _remember_operation(self, operation: WorkOperation) -> None:
+        if operation.state.terminal:
+            self.state.operations.pop(operation.operation_id, None)
+        else:
+            self.state.operations[operation.operation_id] = operation
+
+    async def _settle(
+        self,
+        operation_id: str,
+        state: WorkOperationState,
+        *,
+        expected_states: tuple[WorkOperationState, ...] = (
+            WorkOperationState.EXECUTING,
+            WorkOperationState.UNKNOWN,
+        ),
+        native_thread_id: str | None = None,
+        native_turn_id: str | None = None,
+        native_connection_id: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> WorkOperation:
+        operation = await self.coordinator.settle(
+            operation_id,
+            state,
+            expected_states=expected_states,
+            native_thread_id=native_thread_id,
+            native_turn_id=native_turn_id,
+            native_connection_id=native_connection_id,
+            error_code=error_code,
+            error_message=error_message,
+        )
+        self._remember_operation(operation)
+        return operation
+
+    async def _record_evidence(
+        self,
+        operation_id: str,
+        *,
+        native_thread_id: str | None = None,
+        native_turn_id: str | None = None,
+        native_connection_id: str | None = None,
+    ) -> WorkOperation:
+        operation = await self.coordinator.store.record_operation_evidence(
+            operation_id,
+            native_thread_id=native_thread_id,
+            native_turn_id=native_turn_id,
+            native_connection_id=native_connection_id,
+        )
+        self._remember_operation(operation)
+        self.coordinator.publish_operation(operation)
+        return operation
+
+    async def _acknowledge_unknown(self) -> tuple[WorkOperation, ...]:
+        active = tuple(
+            operation
+            for operation in self.state.operations.values()
+            if operation.state in ACTIVE_OPERATION_STATES
+        )
+        if not active:
+            return ()
+        if any(
+            operation.state is not WorkOperationState.UNKNOWN for operation in active
+        ):
+            raise WorkConflictError(
+                "Wait for active Work operations before resolving uncertainty."
+            )
+        try:
+            native, page = await asyncio.gather(
+                self.coordinator.codex.read_thread(self.state.record.thread_id),
+                self.coordinator.codex.list_turns_page(
+                    thread_id=self.state.record.thread_id,
+                    cursor=None,
+                    limit=_NATIVE_PAGE_LIMIT,
+                ),
+            )
+        except (CodexUnavailableError, CodexConnectionError) as exc:
+            raise WorkConflictError(
+                "Codex must be reachable before resolving uncertainty."
+            ) from exc
+        except CodexRequestError as exc:
+            raise WorkConflictError(
+                "The native Codex session must be readable before resolving uncertainty."
+            ) from exc
+        latest = page.records[0] if page.records else None
+        if (
+            isinstance(latest, dict)
+            and optional_string(latest.get("status")) not in _TERMINAL_TURN_STATUSES
+        ):
+            raise WorkConflictError(
+                "Wait for Codex to become idle before resolving uncertainty."
+            )
+        abandoned = await self.coordinator.store.abandon_unknown_operations(
+            self.state.record.thread_id
+        )
+        self.state.native_thread = dict(native.thread)
+        self.state.projection = ProjectionState()
+        self.state.interactions.clear()
+        self.state.request_keys.clear()
+        self.state.active_turn_id = None
+        self.state.disconnected = False
+        self.state.native_status = (
+            turn_status(latest) if isinstance(latest, dict) else WorkStatus.READY
+        )
+        for operation in abandoned:
+            self._remember_operation(operation)
+            self.coordinator.publish_operation(operation)
+        self._changed("session.updated")
+        return abandoned
+
     async def _run(self) -> None:
         while True:
             message = await self.queue.get()
@@ -913,20 +1086,40 @@ class _SessionActor:
                     self.state.record.thread_id,
                     type(exc).__name__,
                 )
+            if self.state.retired:
+                return
 
     async def _handle(self, message: _SessionMessage) -> None:
         if isinstance(message, _Dispatch):
             await self._dispatch(message.operation_id)
         elif isinstance(message, _Recover):
-            await self._recover(message.operation)
+            try:
+                await self._recover(message.operation)
+            except BaseException as exc:
+                if message.completed is not None and not message.completed.done():
+                    message.completed.set_exception(exc)
+                raise
+            else:
+                if message.completed is not None and not message.completed.done():
+                    message.completed.set_result(None)
         elif isinstance(message, _RecordChanged):
             self.state.record = message.record
             self._changed("session.updated")
-        elif isinstance(message, _Abandoned):
-            if self.state.unknown_operation_id == message.operation.operation_id:
-                self.state.unknown_operation_id = None
-                self.state.status = WorkStatus.READY
-                self._changed("session.updated")
+        elif isinstance(message, _OperationChanged):
+            self._remember_operation(message.operation)
+            self._changed("session.updated")
+            if message.completed is not None and not message.completed.done():
+                message.completed.set_result(None)
+        elif isinstance(message, _AcknowledgeUnknown):
+            try:
+                operations = await self._acknowledge_unknown()
+            except BaseException as exc:
+                if not message.completed.done():
+                    message.completed.set_exception(exc)
+                raise
+            else:
+                if not message.completed.done():
+                    message.completed.set_result(operations)
         elif isinstance(message, _Native):
             await self._native(message.event)
         elif isinstance(message, _EffectDone):
@@ -936,7 +1129,8 @@ class _SessionActor:
         operation = await self.coordinator.store.claim_operation(operation_id)
         if operation is None:
             return
-        self.coordinator._publish_operation(operation)
+        self._remember_operation(operation)
+        self.coordinator.publish_operation(operation)
         if operation.kind is WorkOperationKind.SEND:
             await self._begin_send(operation)
         elif operation.kind is WorkOperationKind.STOP:
@@ -947,11 +1141,15 @@ class _SessionActor:
             await self._begin_response(operation)
 
     async def _begin_send(self, operation: WorkOperation) -> None:
+        other_active = tuple(
+            item
+            for item in self.state.operations.values()
+            if item.operation_id != operation.operation_id
+            and item.state in ACTIVE_OPERATION_STATES
+        )
         if (
-            self.state.active_send_id is not None
-            or self.state.stop_operation_id is not None
-            or self.state.unknown_operation_id is not None
-            or self.state.delete_operation_id is not None
+            other_active
+            or self.state.active_turn_id is not None
             or self.state.projection.items
         ):
             await self._fail(
@@ -966,8 +1164,6 @@ class _SessionActor:
         if text is None or model is None:
             await self._fail(operation, "invalid_payload", "Send payload is invalid.")
             return
-        self.state.active_send_id = operation.operation_id
-        self.state.status = WorkStatus.WORKING
         self._changed()
         self.coordinator.launch_effect(
             self.queue,
@@ -981,12 +1177,10 @@ class _SessionActor:
         )
 
     async def _begin_stop(self, operation: WorkOperation) -> None:
-        self.state.stop_operation_id = operation.operation_id
-        self.state.status = WorkStatus.STOPPING
         self._changed()
         if self.state.active_turn_id is not None:
             self._launch_interrupt(operation.operation_id)
-        elif self.state.active_send_id is None:
+        elif self._active_operation(WorkOperationKind.SEND) is None:
             self.coordinator.launch_effect(
                 self.queue,
                 operation_id=operation.operation_id,
@@ -1000,28 +1194,25 @@ class _SessionActor:
             )
 
     async def _begin_delete(self, operation: WorkOperation) -> None:
-        self.state.delete_operation_id = operation.operation_id
-        self.state.status = WorkStatus.DELETING
+        other_active = tuple(
+            item
+            for item in self.state.operations.values()
+            if item.operation_id != operation.operation_id
+            and item.state in ACTIVE_OPERATION_STATES
+        )
+        if (
+            other_active
+            or self.state.active_turn_id is not None
+            or self.state.interactions
+        ):
+            await self._fail(
+                operation,
+                "conflict",
+                "Stop active Codex work before deleting this session.",
+            )
+            return
         self._changed()
-        pending = tuple(self.state.interactions.values())
-        for interaction in pending:
-            if interaction.operation_id is None:
-                response = _safe_decline_response(interaction.request)
-                self.coordinator.launch_effect(
-                    self.queue,
-                    operation_id=operation.operation_id,
-                    phase=f"delete_decline:{interaction.public.interaction_id}",
-                    effect=partial(
-                        self.coordinator.codex.respond,
-                        connection_id=interaction.request.connection_id,
-                        request_id=interaction.request.request_id,
-                        response=response,
-                    ),
-                )
-        if self.state.active_turn_id is not None:
-            self._launch_interrupt(operation.operation_id, delete=True)
-        elif self.state.active_send_id is None:
-            self._launch_delete(operation.operation_id)
+        self._launch_delete(operation.operation_id)
 
     async def _begin_response(self, operation: WorkOperation) -> None:
         interaction_id = operation.interaction_id
@@ -1062,49 +1253,78 @@ class _SessionActor:
         )
 
     async def _recover(self, operation: WorkOperation) -> None:
-        if operation.kind is WorkOperationKind.SEND:
-            self.state.active_send_id = operation.operation_id
-            self.state.status = WorkStatus.WORKING
+        self._remember_operation(operation)
+        if (
+            operation.kind is WorkOperationKind.RESPOND
+            and operation.state is WorkOperationState.EXECUTING
+        ):
+            await self._settle(
+                operation.operation_id,
+                WorkOperationState.UNKNOWN,
+                error_code="interaction_outcome_unknown",
+                error_message=(
+                    "FCC restarted before it could confirm whether Codex accepted "
+                    "this response."
+                ),
+            )
+            self._changed("session.updated")
+            return
+        if operation.kind is WorkOperationKind.RESPOND:
             self._changed()
-            self.coordinator.launch_effect(
-                self.queue,
-                operation_id=operation.operation_id,
-                phase="send_reconcile",
-                effect=partial(
-                    self.coordinator.codex.list_turns_page,
+            return
+        if operation.kind is WorkOperationKind.SEND:
+            self._changed()
+            try:
+                page = await self.coordinator.codex.list_turns_page(
                     thread_id=self.state.record.thread_id,
                     cursor=None,
                     limit=_NATIVE_PAGE_LIMIT,
-                ),
-            )
+                )
+            except Exception as exc:
+                await self._send_reconciled(
+                    _EffectDone(operation.operation_id, "send_reconcile", error=exc)
+                )
+            else:
+                await self._send_reconciled(
+                    _EffectDone(operation.operation_id, "send_reconcile", value=page)
+                )
             return
         if operation.kind is WorkOperationKind.STOP:
-            self.state.stop_operation_id = operation.operation_id
             self.state.active_turn_id = operation.native_turn_id
-            self.state.status = WorkStatus.STOPPING
             self._changed()
-            self.coordinator.launch_effect(
-                self.queue,
-                operation_id=operation.operation_id,
-                phase="stop_recover",
-                effect=partial(
-                    self.coordinator.codex.list_turns_page,
+            try:
+                page = await self.coordinator.codex.list_turns_page(
                     thread_id=self.state.record.thread_id,
                     cursor=None,
                     limit=1,
-                ),
-            )
+                )
+            except Exception as exc:
+                await self._stop_recovered(
+                    _EffectDone(operation.operation_id, "stop_recover", error=exc)
+                )
+            else:
+                await self._stop_recovered(
+                    _EffectDone(operation.operation_id, "stop_recover", value=page)
+                )
             return
         if operation.kind is WorkOperationKind.DELETE:
-            self.state.delete_operation_id = operation.operation_id
-            self.coordinator.launch_effect(
-                self.queue,
-                operation_id=operation.operation_id,
-                phase="delete_reconcile",
-                effect=partial(
-                    self.coordinator.codex.read_thread, self.state.record.thread_id
-                ),
-            )
+            self._changed()
+            try:
+                snapshot = await self.coordinator.codex.read_thread(
+                    self.state.record.thread_id
+                )
+            except Exception as exc:
+                await self._delete_reconciled(
+                    _EffectDone(operation.operation_id, "delete_reconcile", error=exc)
+                )
+            else:
+                await self._delete_reconciled(
+                    _EffectDone(
+                        operation.operation_id,
+                        "delete_reconcile",
+                        value=snapshot,
+                    )
+                )
 
     async def _native(self, event: CodexAppServerEvent) -> None:
         if isinstance(event, CodexConnectionLost):
@@ -1134,11 +1354,7 @@ class _SessionActor:
             self._changed("session.updated")
             return
         if event.method == "thread/status/changed":
-            if (
-                self.state.delete_operation_id is None
-                and self.state.stop_operation_id is None
-            ):
-                self.state.status = native_status(params.get("status"))
+            self.state.native_status = native_status(params.get("status"))
             self._changed()
             return
         if event.method == "thread/deleted":
@@ -1166,27 +1382,20 @@ class _SessionActor:
         turn_id = optional_string(turn.get("id"))
         if turn_id is None:
             return
-        if self.state.active_send_id is not None:
+        active_send = self._active_operation(WorkOperationKind.SEND)
+        if active_send is not None:
             self.state.active_turn_id = turn_id
             if not self.state.projection.items:
                 self.state.projection = begin_turn(self.state.projection, turn_id)
-            await self.coordinator.store.record_operation_evidence(
-                self.state.active_send_id,
+            await self._record_evidence(
+                active_send.operation_id,
                 native_thread_id=self.state.record.thread_id,
                 native_turn_id=turn_id,
                 native_connection_id=optional_string(params.get("connectionId")),
             )
-            if self.state.stop_operation_id is not None:
-                self._launch_interrupt(self.state.stop_operation_id)
-            elif self.state.delete_operation_id is not None:
-                self._launch_interrupt(self.state.delete_operation_id, delete=True)
-        self.state.status = (
-            WorkStatus.DELETING
-            if self.state.delete_operation_id is not None
-            else WorkStatus.STOPPING
-            if self.state.stop_operation_id is not None
-            else WorkStatus.WORKING
-        )
+            if (stop := self._active_operation(WorkOperationKind.STOP)) is not None:
+                self._launch_interrupt(stop.operation_id)
+        self.state.native_status = WorkStatus.WORKING
         self._changed()
 
     async def _turn_completed(self, turn: JsonObject) -> None:
@@ -1194,15 +1403,15 @@ class _SessionActor:
         if turn_id is None:
             return
         status = turn_status(turn)
-        active_send = self.state.active_send_id
+        active_send = self._active_operation(WorkOperationKind.SEND)
         matches = self.state.active_turn_id == turn_id
         if active_send is not None and not matches:
             return
         if active_send is not None and matches:
             self.state.active_turn_id = turn_id
             self.state.projection = complete_turn(self.state.projection, turn_id)
-            await self.coordinator.settle(
-                active_send,
+            await self._settle(
+                active_send.operation_id,
                 (
                     WorkOperationState.FAILED
                     if status is WorkStatus.FAILED
@@ -1213,30 +1422,27 @@ class _SessionActor:
                 error_code="turn_failed" if status is WorkStatus.FAILED else None,
                 error_message=turn_error(turn) if status is WorkStatus.FAILED else None,
             )
-            self.state.active_send_id = None
-        if self.state.stop_operation_id is not None and matches:
-            await self.coordinator.settle(
-                self.state.stop_operation_id,
+        stop = self._active_operation(WorkOperationKind.STOP)
+        if stop is not None and matches:
+            await self._settle(
+                stop.operation_id,
                 WorkOperationState.SUCCEEDED,
                 native_thread_id=self.state.record.thread_id,
                 native_turn_id=turn_id,
             )
-            self.state.stop_operation_id = None
             self.state.interrupt_in_flight = False
         self.state.active_turn_id = None
-        self.state.status = (
-            WorkStatus.DELETING
-            if self.state.delete_operation_id is not None
-            else status
-        )
-        self._retire_turn_interactions(turn_id)
+        self.state.native_status = status
+        await self._retire_turn_interactions(turn_id)
         self._changed("session.updated")
-        if self.state.delete_operation_id is not None:
-            self._launch_delete(self.state.delete_operation_id)
-        elif self.state.projection.completed:
+        if self.state.projection.completed:
             self.coordinator.launch_effect(
                 self.queue,
-                operation_id=active_send or f"history-{turn_id}",
+                operation_id=(
+                    active_send.operation_id
+                    if active_send is not None
+                    else f"history-{turn_id}"
+                ),
                 phase=f"history:{turn_id}",
                 effect=partial(
                     self.coordinator.codex.list_turns_page,
@@ -1257,11 +1463,6 @@ class _SessionActor:
         )
         self.state.interactions[interaction_id] = pending
         self.state.request_keys[key] = interaction_id
-        self.state.status = (
-            WorkStatus.WAITING_FOR_INPUT
-            if request.kind is CodexInteractionKind.USER_INPUT
-            else WorkStatus.WAITING_FOR_APPROVAL
-        )
         self._changed()
         self.coordinator.events.publish(
             "interaction.created", _interaction_payload(pending.public)
@@ -1279,7 +1480,7 @@ class _SessionActor:
             return
         pending.resolved = True
         if pending.operation_id is not None and pending.response_written:
-            await self.coordinator.settle(
+            await self._settle(
                 pending.operation_id,
                 WorkOperationState.SUCCEEDED,
                 native_thread_id=self.state.record.thread_id,
@@ -1292,35 +1493,21 @@ class _SessionActor:
         self._changed()
 
     async def _connection_lost(self, event: CodexConnectionLost) -> None:
-        operation_ids = {
-            value
-            for value in (
-                self.state.active_send_id,
-                self.state.stop_operation_id,
-                self.state.delete_operation_id,
-                *(pending.operation_id for pending in self.state.interactions.values()),
-            )
-            if value is not None
-        }
-        for operation_id in operation_ids:
-            await self.coordinator.settle(
-                operation_id,
+        executing = tuple(
+            operation
+            for operation in self.state.operations.values()
+            if operation.state is WorkOperationState.EXECUTING
+        )
+        for operation in executing:
+            await self._settle(
+                operation.operation_id,
                 WorkOperationState.UNKNOWN,
                 error_code="connection_lost",
                 error_message=event.message,
             )
-            self.state.unknown_operation_id = operation_id
-        self.state.active_send_id = None
         self.state.active_turn_id = None
-        self.state.stop_operation_id = None
-        self.state.delete_operation_id = None
         self.state.interactions.clear()
         self.state.request_keys.clear()
-        self.state.status = (
-            WorkStatus.NEEDS_ATTENTION
-            if self.state.unknown_operation_id is not None
-            else WorkStatus.DISCONNECTED
-        )
         self.state.disconnected = True
         self._changed()
 
@@ -1337,9 +1524,7 @@ class _SessionActor:
             await self._stop_recovered(effect)
         elif effect.phase == "stop_confirm":
             await self._stop_confirmed(effect)
-        elif effect.phase == "delete_confirm":
-            await self._delete_confirmed(effect)
-        elif effect.phase in {"stop_interrupt", "delete_interrupt"}:
+        elif effect.phase == "stop_interrupt":
             await self._interrupt_done(effect)
         elif effect.phase == "delete_native":
             await self._delete_done(effect)
@@ -1349,11 +1534,10 @@ class _SessionActor:
             await self._response_done(effect)
         elif effect.phase.startswith("history:"):
             await self._history_done(effect)
-        elif effect.phase.startswith("delete_decline:"):
-            return
 
     async def _send_resumed(self, effect: _EffectDone) -> None:
-        if self.state.active_send_id != effect.operation_id:
+        active_send = self._active_operation(WorkOperationKind.SEND)
+        if active_send is None or active_send.operation_id != effect.operation_id:
             return
         if effect.error is not None:
             await self._settle_send_failure(effect, always_failed=True)
@@ -1383,7 +1567,8 @@ class _SessionActor:
         )
 
     async def _send_started(self, effect: _EffectDone) -> None:
-        if self.state.active_send_id != effect.operation_id:
+        active_send = self._active_operation(WorkOperationKind.SEND)
+        if active_send is None or active_send.operation_id != effect.operation_id:
             return
         if effect.error is not None:
             await self._settle_send_failure(effect, always_failed=False)
@@ -1398,16 +1583,14 @@ class _SessionActor:
         self.state.active_turn_id = handle.turn_id
         if not self.state.projection.items:
             self.state.projection = begin_turn(self.state.projection, handle.turn_id)
-        await self.coordinator.store.record_operation_evidence(
+        await self._record_evidence(
             effect.operation_id,
             native_thread_id=handle.thread_id,
             native_turn_id=handle.turn_id,
             native_connection_id=handle.connection_id,
         )
-        if self.state.stop_operation_id is not None:
-            self._launch_interrupt(self.state.stop_operation_id)
-        elif self.state.delete_operation_id is not None:
-            self._launch_interrupt(self.state.delete_operation_id, delete=True)
+        if (stop := self._active_operation(WorkOperationKind.STOP)) is not None:
+            self._launch_interrupt(stop.operation_id)
         self._changed()
 
     async def _settle_send_failure(
@@ -1415,7 +1598,7 @@ class _SessionActor:
     ) -> None:
         error = effect.error or WorkUnavailableError("Codex turn failed.")
         if always_failed or _mutation_failure_state(error) is WorkOperationState.FAILED:
-            await self.coordinator.settle(
+            await self._settle(
                 effect.operation_id,
                 WorkOperationState.FAILED,
                 error_code=_error_code(error),
@@ -1460,22 +1643,22 @@ class _SessionActor:
                 CodexProtocolError("Matching Codex turn has no ID."),
             )
             return
-        await self.coordinator.store.record_operation_evidence(
+        await self._record_evidence(
             effect.operation_id,
             native_thread_id=self.state.record.thread_id,
             native_turn_id=turn_id,
         )
-        self.state.active_send_id = effect.operation_id
         self.state.active_turn_id = turn_id
         native_turn_status = optional_string(turn.get("status"))
         if native_turn_status in _TERMINAL_TURN_STATUSES:
             await self._turn_completed(turn)
             return
-        self.state.status = WorkStatus.WORKING
+        self.state.native_status = WorkStatus.WORKING
         self._changed()
 
     async def _stop_discovered(self, effect: _EffectDone) -> None:
-        if self.state.stop_operation_id != effect.operation_id:
+        stop = self._active_operation(WorkOperationKind.STOP)
+        if stop is None or stop.operation_id != effect.operation_id:
             return
         if effect.error is not None:
             await self._mark_unknown(effect.operation_id, effect.error)
@@ -1491,17 +1674,17 @@ class _SessionActor:
                 self.state.active_turn_id = turn_id
                 self._launch_interrupt(effect.operation_id)
                 return
-        await self.coordinator.settle(
+        await self._settle(
             effect.operation_id,
             WorkOperationState.SUCCEEDED,
             native_thread_id=self.state.record.thread_id,
         )
-        self.state.stop_operation_id = None
-        self.state.status = WorkStatus.READY
+        self.state.native_status = WorkStatus.READY
         self._changed()
 
     async def _stop_recovered(self, effect: _EffectDone) -> None:
-        if self.state.stop_operation_id != effect.operation_id:
+        stop = self._active_operation(WorkOperationKind.STOP)
+        if stop is None or stop.operation_id != effect.operation_id:
             return
         if effect.error is not None:
             await self._mark_unknown(effect.operation_id, effect.error)
@@ -1519,7 +1702,7 @@ class _SessionActor:
             isinstance(latest, dict)
             and optional_string(latest.get("status")) not in _TERMINAL_TURN_STATUSES
         ):
-            await self.coordinator.settle(
+            await self._settle(
                 effect.operation_id,
                 WorkOperationState.FAILED,
                 native_thread_id=self.state.record.thread_id,
@@ -1527,8 +1710,7 @@ class _SessionActor:
                 error_code="turn_still_active",
                 error_message="Codex still reports an active turn; retry Stop.",
             )
-            self.state.stop_operation_id = None
-            self.state.status = WorkStatus.WORKING
+            self.state.native_status = WorkStatus.WORKING
             self._changed()
             return
         if self.state.active_turn_id is not None and target is None:
@@ -1537,17 +1719,20 @@ class _SessionActor:
                 WorkUnavailableError("Codex did not expose the interrupted turn."),
             )
             return
-        await self.coordinator.settle(
+        if target is not None:
+            await self._turn_completed(target)
+            return
+        await self._settle(
             effect.operation_id,
             WorkOperationState.SUCCEEDED,
             native_thread_id=self.state.record.thread_id,
         )
-        self.state.stop_operation_id = None
-        self.state.status = WorkStatus.READY
+        self.state.native_status = WorkStatus.READY
         self._changed()
 
     async def _stop_confirmed(self, effect: _EffectDone) -> None:
-        if self.state.stop_operation_id != effect.operation_id:
+        stop = self._active_operation(WorkOperationKind.STOP)
+        if stop is None or stop.operation_id != effect.operation_id:
             return
         if effect.error is not None:
             await self._mark_unknown(effect.operation_id, effect.error)
@@ -1567,7 +1752,7 @@ class _SessionActor:
             )
             return
         if optional_string(target.get("status")) not in _TERMINAL_TURN_STATUSES:
-            await self.coordinator.settle(
+            await self._settle(
                 effect.operation_id,
                 WorkOperationState.FAILED,
                 native_thread_id=self.state.record.thread_id,
@@ -1575,64 +1760,19 @@ class _SessionActor:
                 error_code="turn_still_active",
                 error_message="Codex still reports an active turn; retry Stop.",
             )
-            self.state.stop_operation_id = None
-            self.state.status = WorkStatus.WORKING
+            self.state.native_status = WorkStatus.WORKING
             self._changed()
             return
-        await self.coordinator.settle(
-            effect.operation_id,
-            WorkOperationState.SUCCEEDED,
-            native_thread_id=self.state.record.thread_id,
-        )
-        self.state.stop_operation_id = None
-        self.state.status = WorkStatus.READY
-        self._changed()
-
-    async def _delete_confirmed(self, effect: _EffectDone) -> None:
-        if (
-            self.state.delete_operation_id != effect.operation_id
-            or self.state.delete_in_flight
-        ):
-            return
-        if effect.error is not None:
-            await self._mark_unknown(effect.operation_id, effect.error)
-            return
-        records = getattr(effect.value, "records", None)
-        if not isinstance(records, tuple):
-            await self._mark_unknown(
-                effect.operation_id,
-                CodexProtocolError("Codex Delete confirmation failed."),
-            )
-            return
-        target = _turn_record(records, self.state.active_turn_id)
-        if target is None:
-            await self._mark_unknown(
-                effect.operation_id,
-                WorkUnavailableError("Codex did not expose the interrupted turn."),
-            )
-            return
-        if optional_string(target.get("status")) not in _TERMINAL_TURN_STATUSES:
-            await self.coordinator.settle(
-                effect.operation_id,
-                WorkOperationState.FAILED,
-                native_thread_id=self.state.record.thread_id,
-                native_turn_id=optional_string(target.get("id")),
-                error_code="turn_still_active",
-                error_message="Codex still reports an active turn; retry Delete.",
-            )
-            self.state.delete_operation_id = None
-            self.state.status = WorkStatus.WORKING
-            self._changed()
-            return
-        self._launch_delete(effect.operation_id)
+        await self._turn_completed(target)
 
     async def _interrupt_done(self, effect: _EffectDone) -> None:
         self.state.interrupt_in_flight = False
         if effect.error is None:
-            if (
-                effect.phase == "stop_interrupt"
-                and self.state.stop_operation_id == effect.operation_id
-            ):
+            if isinstance(effect.value, WorkOperation):
+                self._remember_operation(effect.value)
+                self.coordinator.publish_operation(effect.value)
+            stop = self._active_operation(WorkOperationKind.STOP)
+            if stop is not None and stop.operation_id == effect.operation_id:
                 self.coordinator.launch_effect(
                     self.queue,
                     operation_id=effect.operation_id,
@@ -1643,24 +1783,9 @@ class _SessionActor:
                         self.state.record.thread_id,
                     ),
                 )
-            elif (
-                effect.phase == "delete_interrupt"
-                and self.state.delete_operation_id == effect.operation_id
-                and not self.state.delete_in_flight
-            ):
-                self.coordinator.launch_effect(
-                    self.queue,
-                    operation_id=effect.operation_id,
-                    phase="delete_confirm",
-                    effect=partial(
-                        _delayed_turns_page,
-                        self.coordinator.codex,
-                        self.state.record.thread_id,
-                    ),
-                )
             return
         target = _mutation_failure_state(effect.error)
-        await self.coordinator.settle(
+        await self._settle(
             effect.operation_id,
             target,
             native_thread_id=self.state.record.thread_id,
@@ -1668,22 +1793,8 @@ class _SessionActor:
             error_code=_error_code(effect.error),
             error_message=_safe_error_message(effect.error),
         )
-        if target is WorkOperationState.UNKNOWN:
-            self.state.unknown_operation_id = effect.operation_id
-        if effect.phase == "stop_interrupt":
-            self.state.stop_operation_id = None
-            self.state.status = (
-                WorkStatus.NEEDS_ATTENTION
-                if target is WorkOperationState.UNKNOWN
-                else WorkStatus.WORKING
-            )
-        else:
-            self.state.delete_operation_id = None
-            self.state.status = (
-                WorkStatus.NEEDS_ATTENTION
-                if target is WorkOperationState.UNKNOWN
-                else WorkStatus.WORKING
-            )
+        if target is WorkOperationState.FAILED:
+            self.state.native_status = WorkStatus.WORKING
         self._changed()
 
     async def _delete_done(self, effect: _EffectDone) -> None:
@@ -1692,14 +1803,7 @@ class _SessionActor:
             isinstance(effect.error, CodexRequestError)
             and _is_native_not_found(effect.error)
         ):
-            completed = await self.coordinator.store.complete_delete(
-                effect.operation_id, self.state.record.thread_id
-            )
-            self.coordinator._publish_operation(completed)
-            self.coordinator.events.publish(
-                "session.deleted", {"thread_id": self.state.record.thread_id}
-            )
-            self.coordinator._snapshots.pop(self.state.record.thread_id, None)
+            await self._complete_delete(effect.operation_id)
             return
         if _mutation_failure_state(effect.error) is WorkOperationState.UNKNOWN:
             self.coordinator.launch_effect(
@@ -1711,15 +1815,14 @@ class _SessionActor:
                 ),
             )
             return
-        await self.coordinator.settle(
+        await self._settle(
             effect.operation_id,
             WorkOperationState.FAILED,
             native_thread_id=self.state.record.thread_id,
             error_code=_error_code(effect.error),
             error_message=_safe_error_message(effect.error),
         )
-        self.state.delete_operation_id = None
-        self.state.status = WorkStatus.READY
+        self.state.native_status = WorkStatus.READY
         self._changed()
 
     async def _delete_reconciled(self, effect: _EffectDone) -> None:
@@ -1727,27 +1830,31 @@ class _SessionActor:
             if isinstance(effect.error, CodexRequestError) and _is_native_not_found(
                 effect.error
             ):
-                completed = await self.coordinator.store.complete_delete(
-                    effect.operation_id, self.state.record.thread_id
-                )
-                self.coordinator._publish_operation(completed)
-                self.coordinator.events.publish(
-                    "session.deleted", {"thread_id": self.state.record.thread_id}
-                )
-                self.coordinator._snapshots.pop(self.state.record.thread_id, None)
+                await self._complete_delete(effect.operation_id)
                 return
             await self._mark_unknown(effect.operation_id, effect.error)
             return
-        await self.coordinator.settle(
+        await self._settle(
             effect.operation_id,
             WorkOperationState.FAILED,
             native_thread_id=self.state.record.thread_id,
             error_code="delete_not_confirmed",
             error_message="Codex still reports this session; retry Delete.",
         )
-        self.state.delete_operation_id = None
-        self.state.status = WorkStatus.READY
+        self.state.native_status = WorkStatus.READY
         self._changed()
+
+    async def _complete_delete(self, operation_id: str) -> None:
+        completed = await self.coordinator.store.complete_delete(
+            operation_id, self.state.record.thread_id
+        )
+        self._remember_operation(completed)
+        self.coordinator.publish_operation(completed)
+        self.coordinator.events.publish(
+            "session.deleted", {"thread_id": self.state.record.thread_id}
+        )
+        self.state.retired = True
+        self.coordinator.retire_actor(self.state.record.thread_id, self)
 
     async def _response_done(self, effect: _EffectDone) -> None:
         pending = next(
@@ -1762,7 +1869,7 @@ class _SessionActor:
             return
         if effect.error is not None:
             target = _mutation_failure_state(effect.error)
-            await self.coordinator.settle(
+            await self._settle(
                 effect.operation_id,
                 target,
                 native_thread_id=self.state.record.thread_id,
@@ -1771,14 +1878,12 @@ class _SessionActor:
                 error_code=_error_code(effect.error),
                 error_message=_safe_error_message(effect.error),
             )
-            if target is WorkOperationState.UNKNOWN:
-                self.state.unknown_operation_id = effect.operation_id
             self._retire_interaction(pending.public.interaction_id)
             self._changed()
             return
         pending.response_written = True
         if pending.resolved:
-            await self.coordinator.settle(
+            await self._settle(
                 effect.operation_id,
                 WorkOperationState.SUCCEEDED,
                 native_thread_id=self.state.record.thread_id,
@@ -1815,14 +1920,14 @@ class _SessionActor:
             ),
         )
 
-    def _launch_interrupt(self, operation_id: str, *, delete: bool = False) -> None:
+    def _launch_interrupt(self, operation_id: str) -> None:
         if self.state.interrupt_in_flight or self.state.active_turn_id is None:
             return
         self.state.interrupt_in_flight = True
         self.coordinator.launch_effect(
             self.queue,
             operation_id=operation_id,
-            phase="delete_interrupt" if delete else "stop_interrupt",
+            phase="stop_interrupt",
             effect=partial(
                 _interrupt_with_evidence,
                 self.coordinator.store,
@@ -1847,7 +1952,7 @@ class _SessionActor:
         )
 
     async def _fail(self, operation: WorkOperation, code: str, message: str) -> None:
-        await self.coordinator.settle(
+        await self._settle(
             operation.operation_id,
             WorkOperationState.FAILED,
             error_code=code,
@@ -1855,7 +1960,7 @@ class _SessionActor:
         )
 
     async def _mark_unknown(self, operation_id: str, error: Exception) -> None:
-        await self.coordinator.settle(
+        operation = await self._settle(
             operation_id,
             WorkOperationState.UNKNOWN,
             native_thread_id=self.state.record.thread_id,
@@ -1863,44 +1968,75 @@ class _SessionActor:
             error_code=_error_code(error),
             error_message=_safe_error_message(error),
         )
-        self.state.unknown_operation_id = operation_id
-        if self.state.active_send_id == operation_id:
-            self.state.active_send_id = None
-            self.state.active_turn_id = None
-        if self.state.stop_operation_id == operation_id:
-            self.state.stop_operation_id = None
+        if (
+            operation.kind is WorkOperationKind.SEND
+            and self.state.active_turn_id is None
+        ):
+            stop = self._active_operation(WorkOperationKind.STOP)
+            if stop is not None and stop.state in {
+                WorkOperationState.ACCEPTED,
+                WorkOperationState.EXECUTING,
+            }:
+                await self._settle(
+                    stop.operation_id,
+                    WorkOperationState.FAILED,
+                    expected_states=(
+                        WorkOperationState.ACCEPTED,
+                        WorkOperationState.EXECUTING,
+                    ),
+                    native_thread_id=self.state.record.thread_id,
+                    error_code="stop_not_attempted",
+                    error_message=(
+                        "FCC could not identify a turn to stop because the "
+                        "send outcome is uncertain."
+                    ),
+                )
+        if operation.kind is WorkOperationKind.STOP:
             self.state.interrupt_in_flight = False
-        if self.state.delete_operation_id == operation_id:
-            self.state.delete_operation_id = None
+        if operation.kind is WorkOperationKind.DELETE:
             self.state.delete_in_flight = False
-        self.state.status = WorkStatus.NEEDS_ATTENTION
         self._changed()
 
     async def _clear_failed_send(self) -> None:
-        self.state.active_send_id = None
         self.state.active_turn_id = None
-        stop_operation_id = self.state.stop_operation_id
-        self.state.stop_operation_id = None
         self.state.interrupt_in_flight = False
-        if stop_operation_id is not None:
-            await self.coordinator.settle(
-                stop_operation_id,
+        stop = self._active_operation(WorkOperationKind.STOP)
+        if stop is not None:
+            if stop.state is WorkOperationState.ACCEPTED:
+                claimed = await self.coordinator.store.claim_operation(
+                    stop.operation_id
+                )
+                if claimed is not None:
+                    stop = claimed
+                    self._remember_operation(claimed)
+                    self.coordinator.publish_operation(claimed)
+            await self._settle(
+                stop.operation_id,
                 WorkOperationState.SUCCEEDED,
                 native_thread_id=self.state.record.thread_id,
             )
-        if self.state.delete_operation_id is not None:
-            self.state.status = WorkStatus.DELETING
-        elif self.state.unknown_operation_id is None:
-            self.state.status = WorkStatus.FAILED
+        self.state.native_status = WorkStatus.FAILED
         self._changed()
-        if self.state.delete_operation_id is not None:
-            self._launch_delete(self.state.delete_operation_id)
 
-    def _retire_turn_interactions(self, turn_id: str) -> None:
+    async def _retire_turn_interactions(self, turn_id: str) -> None:
         for interaction_id in tuple(self.state.interactions):
             pending = self.state.interactions[interaction_id]
-            if pending.public.turn_id == turn_id:
+            if pending.public.turn_id != turn_id:
+                continue
+            if pending.operation_id is None:
                 self._retire_interaction(interaction_id)
+                continue
+            pending.resolved = True
+            if not pending.response_written:
+                continue
+            await self._settle(
+                pending.operation_id,
+                WorkOperationState.SUCCEEDED,
+                native_thread_id=self.state.record.thread_id,
+                native_turn_id=turn_id,
+                native_connection_id=pending.request.connection_id,
+            )
+            self._retire_interaction(interaction_id)
 
     def _retire_interaction(self, interaction_id: str) -> None:
         pending = self.state.interactions.pop(interaction_id, None)
@@ -2016,21 +2152,6 @@ def _interaction_response(
             raise WorkValidationError("Codex answers must be lists of text values.")
         normalized[question_id] = {"answers": answer}
     return CodexInteractionResponse(request.kind, {"answers": normalized})
-
-
-def _safe_decline_response(
-    request: CodexInteractionRequest,
-) -> CodexInteractionResponse:
-    if request.kind in {
-        CodexInteractionKind.COMMAND_APPROVAL,
-        CodexInteractionKind.FILE_CHANGE_APPROVAL,
-    }:
-        return CodexInteractionResponse(request.kind, {"decision": "decline"})
-    if request.kind is CodexInteractionKind.PERMISSION_APPROVAL:
-        return CodexInteractionResponse(
-            request.kind, {"permissions": {}, "scope": "turn"}
-        )
-    return CodexInteractionResponse(request.kind, {"answers": {}})
 
 
 def _find_operation_turn(
@@ -2191,13 +2312,14 @@ async def _interrupt_with_evidence(
     operation_id: str,
     thread_id: str,
     turn_id: str,
-) -> None:
-    await store.record_operation_evidence(
+) -> WorkOperation:
+    operation = await store.record_operation_evidence(
         operation_id,
         native_thread_id=thread_id,
         native_turn_id=turn_id,
     )
     await codex.interrupt_turn(thread_id=thread_id, turn_id=turn_id)
+    return operation
 
 
 async def _delayed_turns_page(

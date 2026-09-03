@@ -61,10 +61,12 @@ class _FakeCodex:
         self._respond_gate: asyncio.Event | None = None
         self._materialize_gate: asyncio.Event | None = None
         self._list_gate: asyncio.Event | None = None
+        self._list_turns_gate: asyncio.Event | None = None
         self.start_turn_seen = asyncio.Event()
         self.respond_seen = asyncio.Event()
         self.materialize_seen = asyncio.Event()
         self.list_seen = asyncio.Event()
+        self.list_turns_seen = asyncio.Event()
         self.unavailable = False
         self.complete_before_turn_response = False
         self.lose_start_response_after_event = False
@@ -178,7 +180,12 @@ class _FakeCodex:
         limit: int,
     ) -> CodexObjectPage:
         del cursor, limit
+        if self.unavailable:
+            raise CodexUnavailableError("Codex is unavailable")
         self._thread(thread_id)
+        self.list_turns_seen.set()
+        if self._list_turns_gate is not None:
+            await self._list_turns_gate.wait()
         return CodexObjectPage(tuple(self.turns.get(thread_id, ())), None, None)
 
     async def delete_thread(self, thread_id: str) -> None:
@@ -272,6 +279,10 @@ class _FakeCodex:
         self._list_gate = asyncio.Event()
         return self._list_gate
 
+    def gate_turn_history(self) -> asyncio.Event:
+        self._list_turns_gate = asyncio.Event()
+        return self._list_turns_gate
+
     def _thread(self, thread_id: str) -> JsonObject:
         try:
             return self.threads[thread_id]
@@ -339,6 +350,43 @@ def _interaction_count(service: WorkService, thread_id: str) -> int:
 def _snapshot_status(service: WorkService, thread_id: str) -> str | None:
     snapshot = service._coordinator.snapshot(thread_id)
     return None if snapshot is None else snapshot.status.value
+
+
+async def _persist_unknown_operation(
+    store: SQLiteWorkStore,
+    *,
+    kind: WorkOperationKind,
+    thread_id: str,
+    interaction_id: str | None = None,
+) -> str:
+    operation_id = _id()
+    payload: JsonObject = (
+        {"text": "uncertain send"}
+        if kind is WorkOperationKind.SEND
+        else (
+            {"kind": "command_approval", "result": {"decision": "accept"}}
+            if kind is WorkOperationKind.RESPOND
+            else {}
+        )
+    )
+    await store.admit_operation(
+        operation_id=operation_id,
+        kind=kind,
+        session_id=thread_id,
+        interaction_id=interaction_id,
+        intent_digest=operation_id.replace("-", "") * 2,
+        payload=payload,
+        expected_revision=1 if kind is WorkOperationKind.SEND else None,
+    )
+    assert await store.claim_operation(operation_id) is not None
+    await store.transition_operation(
+        operation_id,
+        expected_states=(WorkOperationState.EXECUTING,),
+        state=WorkOperationState.UNKNOWN,
+        error_code="connection_lost",
+        error_message="Outcome unknown.",
+    )
+    return operation_id
 
 
 @pytest.mark.asyncio
@@ -506,7 +554,7 @@ async def test_stop_is_settled_when_pending_send_is_definitely_rejected(
 
 
 @pytest.mark.asyncio
-async def test_delete_continues_when_pending_send_is_definitely_rejected(
+async def test_delete_waits_for_pending_send_to_settle_before_explicit_retry(
     tmp_path: Path,
 ) -> None:
     service, codex, store = await _service(tmp_path)
@@ -522,16 +570,59 @@ async def test_delete_continues_when_pending_send_is_definitely_rejected(
             text="Wait",
         )
         await asyncio.wait_for(codex.start_turn_seen.wait(), timeout=2)
-        delete_id = _id()
-        await service.delete(thread_id, operation_id=delete_id)
+        with pytest.raises(WorkConflictError, match="active turn"):
+            await service.delete(thread_id, operation_id=_id())
 
         release_turn.set()
+        await _eventually(
+            lambda: _operation_state(store, send_id) == WorkOperationState.FAILED.value
+        )
+        delete_id = _id()
+        await service.delete(thread_id, operation_id=delete_id)
         await _eventually(lambda: _session_count(store) == 0)
         assert _operation_state(store, send_id) == WorkOperationState.FAILED.value
         assert _operation_state(store, delete_id) == WorkOperationState.SUCCEEDED.value
         assert codex.deleted == [thread_id]
         assert codex.interrupts == []
     finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_cannot_overtake_stop_while_turn_discovery_is_delayed(
+    tmp_path: Path,
+) -> None:
+    service, codex, store = await _service(tmp_path)
+    release_history = asyncio.Event()
+    try:
+        thread_id, _create_id = await _create(service, store, tmp_path)
+        codex.turns[thread_id] = [
+            {"id": "turn-external", "status": "inProgress", "items": []}
+        ]
+        release_history = codex.gate_turn_history()
+        stop_id = _id()
+        await service.stop(thread_id, operation_id=stop_id)
+        await asyncio.wait_for(codex.list_turns_seen.wait(), timeout=2)
+
+        with pytest.raises(WorkConflictError, match="current Stop"):
+            await service.delete(thread_id, operation_id=_id())
+        assert codex.deleted == []
+
+        release_history.set()
+        await _eventually(lambda: codex.interrupts == [(thread_id, "turn-external")])
+        await codex.emit(
+            CodexNotification(
+                codex.connection_id,
+                "turn/completed",
+                {
+                    "threadId": thread_id,
+                    "turn": {"id": "turn-external", "status": "interrupted"},
+                },
+            )
+        )
+        await _eventually(lambda: _operation_state(store, stop_id) == "succeeded")
+    finally:
+        release_history.set()
         await service.close()
 
 
@@ -792,7 +883,7 @@ async def test_one_active_turn_per_session_does_not_serialize_other_sessions(
         assert first_send.state is WorkOperationState.ACCEPTED
         assert second_send.state is WorkOperationState.ACCEPTED
         assert {entry[0] for entry in codex.turn_starts} == {first, second}
-        with pytest.raises(WorkConflictError, match="active or uncertain turn"):
+        with pytest.raises(WorkConflictError, match="active turn"):
             await service.send(
                 first,
                 expected_revision=1,
@@ -839,6 +930,8 @@ async def test_delete_removes_native_and_registry_membership(tmp_path: Path) -> 
         assert codex.deleted == [thread_id]
         assert repeated.state is WorkOperationState.SUCCEEDED
         assert await store.list_sessions() == ()
+        assert service._coordinator.snapshot(thread_id) is None
+        assert thread_id not in service._coordinator._actors
         with closing(sqlite3.connect(tmp_path / "work.db")) as connection:
             rows = connection.execute(
                 "SELECT operation_id, state FROM work_operations WHERE kind = 'delete'"
@@ -1039,6 +1132,64 @@ async def test_interaction_resolution_before_write_completion_is_latched(
 
 
 @pytest.mark.asyncio
+async def test_turn_completion_before_response_write_completion_is_latched(
+    tmp_path: Path,
+) -> None:
+    service, codex, store = await _service(tmp_path)
+    release_response = codex.gate_next_response()
+    try:
+        thread_id, _create_id = await _create(service, store, tmp_path)
+        await codex.emit(
+            CodexInteractionRequest(
+                connection_id=codex.connection_id,
+                request_id="approval-terminal",
+                method="item/commandExecution/requestApproval",
+                thread_id=thread_id,
+                turn_id="turn-1",
+                kind=CodexInteractionKind.COMMAND_APPROVAL,
+                params={
+                    "threadId": thread_id,
+                    "turnId": "turn-1",
+                    "command": ["git", "status"],
+                    "availableDecisions": ["accept", "decline"],
+                },
+            )
+        )
+        await _eventually(lambda: _interaction_count(service, thread_id) == 1)
+        snapshot = service._coordinator.snapshot(thread_id)
+        assert snapshot is not None
+        interaction_id = snapshot.interactions[0].interaction_id
+        operation_id = _id()
+        await service.respond(
+            thread_id,
+            interaction_id,
+            operation_id=operation_id,
+            value={"decision": "accept"},
+        )
+        await asyncio.wait_for(codex.respond_seen.wait(), timeout=2)
+
+        await codex.emit(
+            CodexNotification(
+                codex.connection_id,
+                "turn/completed",
+                {
+                    "threadId": thread_id,
+                    "turn": {"id": "turn-1", "status": "completed"},
+                },
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert _operation_state(store, operation_id) == "executing"
+
+        release_response.set()
+        await _eventually(lambda: _operation_state(store, operation_id) == "succeeded")
+        assert _interaction_count(service, thread_id) == 0
+    finally:
+        release_response.set()
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_executing_send_is_reconciled_without_replaying_after_restart(
     tmp_path: Path,
 ) -> None:
@@ -1130,6 +1281,155 @@ async def test_early_thread_event_recovers_a_lost_create_response(
         sessions = await store.list_sessions()
         assert [session.thread_id for session in sessions] == ["thread-1"]
         assert len(codex.threads) == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_restart_projects_every_unknown_operation_before_accepting_work(
+    tmp_path: Path,
+) -> None:
+    service, codex, store = await _service(tmp_path)
+    first_thread, _first_create = await _create(service, store, tmp_path)
+    second_thread, _second_create = await _create(service, store, tmp_path)
+    native_threads = {key: dict(value) for key, value in codex.threads.items()}
+    await service.close()
+
+    setup_store = SQLiteWorkStore(tmp_path / "work.db", tmp_path / "work.lock")
+    await setup_store.start()
+    concurrent: tuple[tuple[WorkOperationKind, str | None, JsonObject], ...] = (
+        (WorkOperationKind.SEND, None, {"text": "uncertain send"}),
+        (WorkOperationKind.STOP, None, {}),
+        (
+            WorkOperationKind.RESPOND,
+            "interaction-uncertain",
+            {"kind": "command_approval", "result": {"decision": "accept"}},
+        ),
+    )
+    first_ids: list[str] = []
+    try:
+        for kind, interaction_id, payload in concurrent:
+            operation_id = _id()
+            first_ids.append(operation_id)
+            await setup_store.admit_operation(
+                operation_id=operation_id,
+                kind=kind,
+                session_id=first_thread,
+                interaction_id=interaction_id,
+                intent_digest=operation_id.replace("-", "") * 2,
+                payload=payload,
+                expected_revision=1 if kind is WorkOperationKind.SEND else None,
+            )
+        for operation_id in first_ids:
+            assert await setup_store.claim_operation(operation_id) is not None
+        for operation_id in first_ids:
+            await setup_store.transition_operation(
+                operation_id,
+                expected_states=(WorkOperationState.EXECUTING,),
+                state=WorkOperationState.UNKNOWN,
+                error_code="connection_lost",
+                error_message="Outcome unknown.",
+            )
+        delete_id = await _persist_unknown_operation(
+            setup_store,
+            kind=WorkOperationKind.DELETE,
+            thread_id=second_thread,
+        )
+    finally:
+        await setup_store.close()
+
+    recovered_codex = _FakeCodex()
+    recovered_codex.threads = native_threads
+    recovered_codex.unavailable = True
+    recovered_store = SQLiteWorkStore(tmp_path / "work.db", tmp_path / "work.lock")
+    recovered = WorkService(recovered_codex, recovered_store)
+    try:
+        await recovered.start()
+        first = await recovered.get_detail(first_thread)
+        second = await recovered.get_detail(second_thread)
+        assert first.summary.status.value == "needs_attention"
+        assert {operation.operation_id for operation in first.operations} == set(
+            first_ids
+        )
+        assert all(
+            operation.state is WorkOperationState.UNKNOWN
+            for operation in first.operations
+        )
+        assert [
+            (operation.operation_id, operation.kind, operation.state)
+            for operation in second.operations
+        ] == [(delete_id, WorkOperationKind.DELETE, WorkOperationState.UNKNOWN)]
+    finally:
+        await recovered.close()
+
+
+@pytest.mark.asyncio
+async def test_acknowledging_unknown_resyncs_projection_before_unlocking_send(
+    tmp_path: Path,
+) -> None:
+    service, codex, store = await _service(tmp_path)
+    try:
+        thread_id, _create_id = await _create(service, store, tmp_path)
+        send_id = _id()
+        await service.send(
+            thread_id,
+            expected_revision=1,
+            operation_id=send_id,
+            text="Uncertain turn",
+        )
+        await _eventually(lambda: len(codex.turn_starts) == 1)
+        await codex.emit(
+            CodexNotification(
+                codex.connection_id,
+                "item/agentMessage/delta",
+                {
+                    "threadId": thread_id,
+                    "turnId": "turn-1",
+                    "itemId": "partial-answer",
+                    "delta": "Partial text",
+                },
+            )
+        )
+        await _eventually(
+            lambda: bool(
+                (snapshot := service._coordinator.snapshot(thread_id))
+                and snapshot.projection.items
+            )
+        )
+        await codex.emit(CodexConnectionLost(codex.connection_id, "child stopped"))
+        await _eventually(lambda: _operation_state(store, send_id) == "unknown")
+        with pytest.raises(WorkConflictError, match="uncertain operation"):
+            await service.send(
+                thread_id,
+                expected_revision=1,
+                operation_id=_id(),
+                text="Blocked until resync",
+            )
+
+        codex.turns[thread_id] = [
+            {
+                "id": "turn-1",
+                "status": "completed",
+                "clientUserMessageId": send_id,
+                "items": [],
+            }
+        ]
+        abandoned = await service.acknowledge_unknown(thread_id)
+        assert [(item.operation_id, item.state) for item in abandoned] == [
+            (send_id, WorkOperationState.ABANDONED)
+        ]
+        snapshot = service._coordinator.snapshot(thread_id)
+        assert snapshot is not None
+        assert snapshot.projection.items == ()
+        assert snapshot.operations == ()
+
+        next_send = await service.send(
+            thread_id,
+            expected_revision=1,
+            operation_id=_id(),
+            text="Allowed after resync",
+        )
+        assert next_send.state is WorkOperationState.ACCEPTED
     finally:
         await service.close()
 

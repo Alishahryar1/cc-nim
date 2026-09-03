@@ -18,7 +18,6 @@
     eventBuffer: null,
     feedTimer: null,
     operations: new Map(),
-    unknownOperation: null,
     draft: "",
     draftSessionId: null,
     modelComboboxes: new Set(),
@@ -198,7 +197,6 @@
     state.interactions.clear();
     state.libraryItems = [];
     state.libraryCursor = null;
-    state.unknownOperation = null;
   }
 
   function applyEvent({ type, payload }) {
@@ -256,6 +254,10 @@
   }
 
   function applyOperation(payload) {
+    const currentId = state.detail?.summary?.thread_id;
+    const localRecord = state.operations.get(payload.operation_id);
+    const belongsToCurrent = Boolean(currentId && payload.thread_id === currentId);
+    let recoveryOffered = false;
     if (payload.kind === "create" && state.bootstrap) {
       const withoutCurrent = (state.bootstrap.unresolved_creates || []).filter(
         (operation) => operation.operation_id !== payload.operation_id,
@@ -265,40 +267,48 @@
         : [...withoutCurrent, payload];
       if (!state.detail && workIsVisible()) renderLibraryItems();
     }
-    const record = state.operations.get(payload.operation_id);
-    if (
-      record?.kind === "send" &&
-      payload.state === "succeeded" &&
-      record.payload.text === state.draft
-    ) {
-      state.draft = "";
-      saveDraft();
-      const textarea = document.getElementById("workComposer");
-      if (textarea) {
-        textarea.value = "";
-        resizeComposer(textarea);
-      }
+    if (belongsToCurrent && state.detail) {
+      const withoutCurrent = (state.detail.operations || []).filter(
+        (operation) => operation.operation_id !== payload.operation_id,
+      );
+      state.detail.operations = TERMINAL_OPERATION_STATES.has(payload.state)
+        ? withoutCurrent
+        : [...withoutCurrent, payload];
     }
-    if (record && TERMINAL_OPERATION_STATES.has(payload.state)) forgetOperation(record.operation_id);
+    if (localRecord?.kind === "send" && payload.turn_id) {
+      forgetOperation(localRecord.operation_id);
+    } else if (
+      localRecord?.kind === "send" &&
+      payload.state === "failed" &&
+      !payload.turn_id
+    ) {
+      recoveryOffered = recoverSubmittedText(localRecord.payload.text || "");
+      forgetOperation(localRecord.operation_id);
+    } else if (localRecord && TERMINAL_OPERATION_STATES.has(payload.state)) {
+      forgetOperation(localRecord.operation_id);
+    }
     if (payload.state === "unknown") {
-      state.unknownOperation = payload;
-      showUnknownOperation(payload);
+      if (belongsToCurrent) showUnknownOperations();
       return;
     }
-    if (state.unknownOperation?.operation_id === payload.operation_id) {
-      state.unknownOperation = null;
-      setNotice("");
-    }
-    if (payload.kind === "create" && payload.state === "succeeded" && payload.thread_id) {
+    if (
+      payload.kind === "create" &&
+      payload.state === "succeeded" &&
+      payload.thread_id &&
+      localRecord?.kind === "create"
+    ) {
       openSession(payload.thread_id);
       return;
     }
     if (payload.state === "failed") {
-      setNotice(payload.error_message || "The Work operation did not complete.", "error");
+      if (!recoveryOffered && (belongsToCurrent || localRecord?.kind === "create")) {
+        setNotice(payload.error_message || "The Work operation did not complete.", "error");
+      }
       return;
     }
-    if (payload.thread_id !== state.detail?.summary?.thread_id) return;
-    if (payload.state === "abandoned") setNotice("You can continue with a new command.", "warn");
+    if (!belongsToCurrent) return;
+    if (payload.state === "abandoned") setNotice("Uncertainty was acknowledged.", "warn");
+    showUnknownOperations();
   }
 
   function loadOperations() {
@@ -399,26 +409,58 @@
     };
   }
 
-  function showUnknownOperation(operation) {
+  function showUnknownOperations() {
     const notice = document.getElementById("workNotice");
-    if (!notice) return;
+    const threadId = state.detail?.summary?.thread_id;
+    if (!notice || !threadId) return;
+    const operations = (state.detail.operations || []).filter(
+      (operation) => operation.state === "unknown",
+    );
+    if (!operations.length) {
+      setNotice("");
+      return;
+    }
     notice.replaceChildren(
       node(
         "span",
         "",
-        operation.error_message || "FCC could not prove whether Codex completed this action.",
+        operations.length === 1
+          ? operations[0].error_message ||
+              "FCC could not prove whether Codex completed this action."
+          : `FCC could not confirm ${operations.length} actions in this session.`,
       ),
-      button("Continue anyway", "secondary-button", () => abandonOperation(operation)),
+      button("Acknowledge and resync", "secondary-button", () =>
+        acknowledgeUnknownOperations(threadId),
+      ),
     );
     notice.className = "work-notice warn";
     notice.hidden = false;
   }
 
-  async function abandonOperation(operation) {
-    if (!window.confirm("Continue even though this Codex action could not be confirmed?")) return;
+  async function acknowledgeUnknownOperations(threadId) {
+    if (!window.confirm("Reload native history and acknowledge all uncertain actions?")) return;
+    try {
+      const result = await state.api(
+        `/admin/api/work/sessions/${encodeURIComponent(threadId)}/acknowledge-unknown`,
+        { method: "POST", body: JSON.stringify({ confirm: true }) },
+      );
+      (result.operations || []).forEach(applyOperation);
+      await refresh(window.location.pathname);
+    } catch (error) {
+      setNotice(error.message, "error");
+    }
+  }
+
+  async function dismissUnknownCreate(operation) {
+    if (
+      !window.confirm(
+        "Dismiss this unresolved creation? Codex may contain an unregistered session.",
+      )
+    )
+      return;
     try {
       const acknowledgement = await state.api(
-        `/admin/api/work/operations/${encodeURIComponent(operation.operation_id)}/abandon`,
+        `/admin/api/work/operations/${encodeURIComponent(operation.operation_id)}/dismiss`,
         { method: "POST", body: JSON.stringify({ confirm: true }) },
       );
       applyOperation(acknowledgement);
@@ -503,6 +545,9 @@
     );
     const create = button("+ New session", "primary-button", showCreateDialog);
     create.dataset.testid = "work-new";
+    create.disabled = (state.bootstrap?.unresolved_creates || []).some(
+      (operation) => !TERMINAL_OPERATION_STATES.has(operation.state),
+    );
     header.append(copy, create);
     const search = node("input", "work-search");
     search.type = "search";
@@ -578,9 +623,13 @@
         node("span", `work-status ${operation.state}`, humanize(operation.state)),
       );
       if (operation.state === "unknown") {
-        card.appendChild(
-          button("Continue anyway", "secondary-button", () => abandonOperation(operation)),
-        );
+        if (!operation.thread_id) {
+          card.appendChild(
+            button("Dismiss unresolved creation", "secondary-button", () =>
+              dismissUnknownCreate(operation),
+            ),
+          );
+        }
       }
       list.appendChild(card);
     });
@@ -651,27 +700,34 @@
     const message = node("div", "work-notice");
     message.hidden = true;
     const actions = node("div", "work-dialog-actions");
-    actions.append(
-      button("Cancel", "secondary-button", () => dialog.close()),
-      button("Create", "primary-button", async () => {
-        message.hidden = true;
-        const record = operationRecord("create", "/admin/api/work/sessions", {
-          cwd: input.value,
-        });
-        try {
-          const acknowledgement = await submitOperation(record);
-          dialog.close();
-          setNotice("Creating Codex session…");
-          if (acknowledgement.state === "succeeded" && acknowledgement.thread_id) {
-            openSession(acknowledgement.thread_id);
-          }
-        } catch (error) {
-          message.textContent = error.message;
-          message.className = "work-notice error";
-          message.hidden = false;
+    let submitting = false;
+    const cancel = button("Cancel", "secondary-button", () => dialog.close());
+    const create = button("Create", "primary-button", async () => {
+      if (submitting) return;
+      submitting = true;
+      create.disabled = true;
+      cancel.disabled = true;
+      message.hidden = true;
+      const record = operationRecord("create", "/admin/api/work/sessions", {
+        cwd: input.value,
+      });
+      try {
+        const acknowledgement = await submitOperation(record);
+        dialog.close();
+        setNotice("Creating Codex session…");
+        if (acknowledgement.state === "succeeded" && acknowledgement.thread_id) {
+          openSession(acknowledgement.thread_id);
         }
-      }),
-    );
+      } catch (error) {
+        submitting = false;
+        create.disabled = false;
+        cancel.disabled = false;
+        message.textContent = error.message;
+        message.className = "work-notice error";
+        message.hidden = false;
+      }
+    });
+    actions.append(cancel, create);
     dialog.append(title, label, recent, message, actions);
     document.body.appendChild(dialog);
     dialog.addEventListener("close", () => dialog.remove(), { once: true });
@@ -709,6 +765,7 @@
       );
       loadDraft(threadId);
       renderDetail();
+      showUnknownOperations();
     } catch (error) {
       if (version !== state.routeVersion) return;
       renderUnavailable(error.message);
@@ -738,7 +795,9 @@
     const row = node("div", "work-header-row");
     row.appendChild(button("← Work", "work-back-button", goLibrary));
     const title = node("h2", "work-title", detail.summary.title);
-    row.append(title, button("Delete", "danger-button", deleteSession));
+    const remove = button("Delete", "danger-button", deleteSession);
+    remove.id = "workDelete";
+    row.append(title, remove);
     const meta = node("div", "work-session-meta");
     const status = node(
       "span",
@@ -914,17 +973,20 @@
     const textarea = document.getElementById("workComposer");
     const send = document.getElementById("workSend");
     const stop = document.getElementById("workStop");
+    const remove = document.getElementById("workDelete");
     const status = document.getElementById("workComposerStatus");
-    if (!detail || !textarea || !send || !stop || !status) return;
+    if (!detail || !textarea || !send || !stop || !remove || !status) return;
     const active = ACTIVE_STATUSES.has(detail.summary.status);
+    const uncertain = detail.summary.status === "needs_attention";
     const unavailable =
       !detail.summary.project_available || !detail.summary.session_available;
     textarea.disabled = unavailable || detail.summary.status === "deleting";
     send.hidden = active;
     stop.hidden = !active || detail.summary.status === "deleting";
     send.disabled =
-      state.feedStatus !== "live" || unavailable || !state.draft.trim();
+      state.feedStatus !== "live" || unavailable || uncertain || !state.draft.trim();
     stop.disabled = state.feedStatus !== "live" || detail.summary.status === "stopping";
+    remove.disabled = state.feedStatus !== "live" || unavailable || active || uncertain;
     status.textContent =
       state.feedStatus === "live"
         ? active
@@ -945,13 +1007,15 @@
           { expected_revision: state.detail.summary.revision, text },
         ),
       );
-      state.draft = "";
-      saveDraft();
-      if (textarea) {
-        textarea.value = "";
-        resizeComposer(textarea);
-        textarea.focus({ preventScroll: true });
+      if (state.draft === text) {
+        state.draft = "";
+        saveDraft();
+        if (textarea) {
+          textarea.value = "";
+          resizeComposer(textarea);
+        }
       }
+      textarea?.focus({ preventScroll: true });
       setCurrentStatus("working");
     } catch (error) {
       setNotice(error.message, "error");
@@ -1174,6 +1238,40 @@
     const key = `fcc.work.draft.${state.draftSessionId}`;
     if (state.draft) sessionStorage.setItem(key, state.draft);
     else sessionStorage.removeItem(key);
+  }
+
+  function recoverSubmittedText(text) {
+    if (!text || text === state.draft) return false;
+    const textarea = document.getElementById("workComposer");
+    if (!state.draft) {
+      state.draft = text;
+      saveDraft();
+      if (textarea) {
+        textarea.value = text;
+        resizeComposer(textarea);
+      }
+      return false;
+    }
+    const notice = document.getElementById("workNotice");
+    if (!notice) return false;
+    notice.replaceChildren(
+      node("span", "", "A failed message is available to restore."),
+      button("Restore", "secondary-button", () => {
+        state.draft = text;
+        saveDraft();
+        const current = document.getElementById("workComposer");
+        if (current) {
+          current.value = text;
+          resizeComposer(current);
+          current.focus({ preventScroll: true });
+        }
+        setNotice("");
+        refreshComposerState();
+      }),
+    );
+    notice.className = "work-notice warn";
+    notice.hidden = false;
+    return true;
   }
 
   function nearBottom(element) {

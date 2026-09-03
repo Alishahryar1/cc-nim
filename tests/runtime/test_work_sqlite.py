@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sqlite3
 import uuid
@@ -178,7 +179,7 @@ async def test_terminal_transition_erases_payload_and_cannot_regress(
 
 
 @pytest.mark.asyncio
-async def test_same_effect_stop_and_delete_are_coalesced_across_operation_ids(
+async def test_stop_and_delete_coalesce_without_overtaking_each_other(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -200,6 +201,21 @@ async def test_same_effect_stop_and_delete_are_coalesced_across_operation_ids(
             interaction_id=None,
             intent_digest="a" * 64,
             payload={},
+        )
+        with pytest.raises(WorkConflictError, match="Stop operation"):
+            await store.admit_operation(
+                operation_id=_id(),
+                kind=WorkOperationKind.DELETE,
+                session_id=record.thread_id,
+                interaction_id=None,
+                intent_digest="b" * 64,
+                payload={},
+            )
+        assert await store.claim_operation(first.operation_id) is not None
+        await store.transition_operation(
+            first.operation_id,
+            expected_states=(WorkOperationState.EXECUTING,),
+            state=WorkOperationState.SUCCEEDED,
         )
         delete, delete_created = await store.admit_operation(
             operation_id=_id(),
@@ -245,7 +261,7 @@ async def test_active_send_and_interaction_response_have_one_owner(
             payload={"text": "hello"},
             expected_revision=1,
         )
-        with pytest.raises(WorkConflictError, match="active or uncertain"):
+        with pytest.raises(WorkConflictError, match="active turn"):
             await store.admit_operation(
                 operation_id=_id(),
                 kind=WorkOperationKind.SEND,
@@ -302,7 +318,7 @@ async def test_active_stop_blocks_new_send_and_settings_change(tmp_path: Path) -
                 payload={"text": "too early"},
                 expected_revision=record.revision,
             )
-        with pytest.raises(WorkConflictError, match="current Work operation"):
+        with pytest.raises(WorkConflictError, match="current Stop operation"):
             await store.update_settings(
                 record.thread_id,
                 expected_revision=record.revision,
@@ -313,22 +329,207 @@ async def test_active_stop_blocks_new_send_and_settings_change(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_unknown_operation_is_a_complete_session_barrier_and_bulk_resolves(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        record = await _register(store, _record("thread-1", tmp_path))
+        operation_id = _id()
+        await store.admit_operation(
+            operation_id=operation_id,
+            kind=WorkOperationKind.SEND,
+            session_id=record.thread_id,
+            interaction_id=None,
+            intent_digest="a" * 64,
+            payload={"text": "uncertain"},
+            expected_revision=record.revision,
+        )
+        assert await store.claim_operation(operation_id) is not None
+        await store.transition_operation(
+            operation_id,
+            expected_states=(WorkOperationState.EXECUTING,),
+            state=WorkOperationState.UNKNOWN,
+        )
+
+        repeated, created = await store.admit_operation(
+            operation_id=operation_id,
+            kind=WorkOperationKind.SEND,
+            session_id=record.thread_id,
+            interaction_id=None,
+            intent_digest="a" * 64,
+            payload={"text": "not retained"},
+            expected_revision=record.revision,
+        )
+        assert repeated.state is WorkOperationState.UNKNOWN
+        assert created is False
+
+        for kind in (
+            WorkOperationKind.SEND,
+            WorkOperationKind.STOP,
+            WorkOperationKind.DELETE,
+            WorkOperationKind.RESPOND,
+        ):
+            with pytest.raises(WorkConflictError, match="uncertain operation"):
+                await store.admit_operation(
+                    operation_id=_id(),
+                    kind=kind,
+                    session_id=record.thread_id,
+                    interaction_id=(
+                        "interaction-1" if kind is WorkOperationKind.RESPOND else None
+                    ),
+                    intent_digest="b" * 64,
+                    payload=(
+                        {"kind": "user_input", "result": {}}
+                        if kind is WorkOperationKind.RESPOND
+                        else {"text": "blocked"}
+                        if kind is WorkOperationKind.SEND
+                        else {}
+                    ),
+                    expected_revision=(
+                        record.revision if kind is WorkOperationKind.SEND else None
+                    ),
+                )
+        with pytest.raises(WorkConflictError, match="uncertain operation"):
+            await store.update_settings(
+                record.thread_id,
+                expected_revision=record.revision,
+                settings=WorkSessionSettings("model-2", "high"),
+            )
+
+        abandoned = await store.abandon_unknown_operations(record.thread_id)
+        assert [operation.operation_id for operation in abandoned] == [operation_id]
+        assert abandoned[0].state is WorkOperationState.ABANDONED
+        admitted, created = await store.admit_operation(
+            operation_id=_id(),
+            kind=WorkOperationKind.SEND,
+            session_id=record.thread_id,
+            interaction_id=None,
+            intent_digest="c" * 64,
+            payload={"text": "safe now"},
+            expected_revision=record.revision,
+        )
+        assert admitted.state is WorkOperationState.ACCEPTED
+        assert created is True
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_create_admission_is_globally_serialized_through_unknown(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        first_id = _id()
+        await store.admit_operation(
+            operation_id=first_id,
+            kind=WorkOperationKind.CREATE,
+            session_id=None,
+            interaction_id=None,
+            intent_digest="a" * 64,
+            payload={"cwd": str(tmp_path), "cwd_key": str(tmp_path)},
+        )
+        with pytest.raises(WorkConflictError, match="already being created"):
+            await store.admit_operation(
+                operation_id=_id(),
+                kind=WorkOperationKind.CREATE,
+                session_id=None,
+                interaction_id=None,
+                intent_digest="b" * 64,
+                payload={"cwd": str(tmp_path), "cwd_key": str(tmp_path)},
+            )
+        assert await store.claim_operation(first_id) is not None
+        unknown = await store.transition_operation(
+            first_id,
+            expected_states=(WorkOperationState.EXECUTING,),
+            state=WorkOperationState.UNKNOWN,
+        )
+        assert unknown.payload is not None
+        with pytest.raises(WorkConflictError, match="already being created"):
+            await store.admit_operation(
+                operation_id=_id(),
+                kind=WorkOperationKind.CREATE,
+                session_id=None,
+                interaction_id=None,
+                intent_digest="c" * 64,
+                payload={"cwd": str(tmp_path), "cwd_key": str(tmp_path)},
+            )
+        await store.transition_operation(
+            first_id,
+            expected_states=(WorkOperationState.UNKNOWN,),
+            state=WorkOperationState.ABANDONED,
+        )
+        _, created = await store.admit_operation(
+            operation_id=_id(),
+            kind=WorkOperationKind.CREATE,
+            session_id=None,
+            interaction_id=None,
+            intent_digest="d" * 64,
+            payload={"cwd": str(tmp_path), "cwd_key": str(tmp_path)},
+        )
+        assert created is True
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_send_admission_has_one_transactional_winner(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        record = await _register(store, _record("thread-1", tmp_path))
+
+        async def admit(number: int) -> bool:
+            try:
+                await store.admit_operation(
+                    operation_id=_id(),
+                    kind=WorkOperationKind.SEND,
+                    session_id=record.thread_id,
+                    interaction_id=None,
+                    intent_digest=f"{number:064x}",
+                    payload={"text": str(number)},
+                    expected_revision=record.revision,
+                )
+            except WorkConflictError:
+                return False
+            return True
+
+        assert sorted(await asyncio.gather(admit(1), admit(2))) == [False, True]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_restart_preserves_accepted_and_executing_for_coordinator_recovery(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
     await store.start()
+    record = await _register(store, _record("thread-1", tmp_path))
     accepted_id = _id()
     executing_id = _id()
-    for operation_id, digest in ((accepted_id, "a" * 64), (executing_id, "b" * 64)):
-        await store.admit_operation(
-            operation_id=operation_id,
-            kind=WorkOperationKind.CREATE,
-            session_id=None,
-            interaction_id=None,
-            intent_digest=digest,
-            payload={"cwd": str(tmp_path), "cwd_key": str(tmp_path)},
-        )
+    await store.admit_operation(
+        operation_id=accepted_id,
+        kind=WorkOperationKind.SEND,
+        session_id=record.thread_id,
+        interaction_id=None,
+        intent_digest="a" * 64,
+        payload={"text": "hello"},
+        expected_revision=record.revision,
+    )
+    await store.admit_operation(
+        operation_id=executing_id,
+        kind=WorkOperationKind.STOP,
+        session_id=record.thread_id,
+        interaction_id=None,
+        intent_digest="b" * 64,
+        payload={},
+    )
     assert await store.claim_operation(executing_id) is not None
     await store.close()
 

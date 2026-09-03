@@ -60,7 +60,7 @@ class WorkInteractionPayload(BaseModel):
     value: JsonValue
 
 
-class WorkAbandonPayload(BaseModel):
+class WorkResolutionPayload(BaseModel):
     confirm: bool
 
 
@@ -271,17 +271,33 @@ async def get_work_operation(
     return _operation_payload(await _work(services).get_operation(operation_id))
 
 
-@router.post("/admin/api/work/operations/{operation_id}/abandon")
-async def abandon_work_operation(
-    operation_id: str,
-    payload: WorkAbandonPayload,
+@router.post("/admin/api/work/sessions/{thread_id}/acknowledge-unknown")
+async def acknowledge_unknown_work_operations(
+    thread_id: str,
+    payload: WorkResolutionPayload,
     request: Request,
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
     if not payload.confirm:
-        raise WorkValidationError("Confirm before continuing past uncertainty.")
-    return _operation_payload(await _work(services).abandon_operation(operation_id))
+        raise WorkValidationError("Confirm before resolving uncertain operations.")
+    operations = await _work(services).acknowledge_unknown(thread_id)
+    return {"operations": [_operation_payload(operation) for operation in operations]}
+
+
+@router.post("/admin/api/work/operations/{operation_id}/dismiss")
+async def dismiss_unknown_work_create(
+    operation_id: str,
+    payload: WorkResolutionPayload,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+) -> JsonObject:
+    require_loopback_admin(request)
+    if not payload.confirm:
+        raise WorkValidationError("Confirm before dismissing this unresolved creation.")
+    return _operation_payload(
+        await _work(services).dismiss_unknown_create(operation_id)
+    )
 
 
 def _work(services: ApiServices) -> WorkApplicationPort:
@@ -343,6 +359,9 @@ def _detail_payload(detail: WorkSessionDetail) -> JsonObject:
         "live_items": [_timeline_payload(item) for item in detail.live_items],
         "interactions": [
             _interaction_payload(interaction) for interaction in detail.interactions
+        ],
+        "operations": [
+            _operation_payload(operation) for operation in detail.operations
         ],
         "event_cursor": detail.event_cursor,
     }

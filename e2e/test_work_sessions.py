@@ -112,3 +112,62 @@ def test_work_send_reuses_browser_operation_after_lost_acknowledgement(
     page.wait_for_function(
         "JSON.parse(sessionStorage.getItem('fcc.work.operations.v1') || '[]').length === 0"
     )
+
+
+def test_work_create_is_latched_and_does_not_navigate_another_tab(
+    page: Page,
+    admin_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _open_work(page, admin_base_url)
+    other = page.context.new_page()
+    try:
+        other.goto(f"{admin_base_url}/admin/work")
+        expect(other.get_by_role("button", name="New session")).to_be_visible()
+        create_requests: list[str] = []
+        page.on(
+            "request",
+            lambda request: (
+                create_requests.append(request.url)
+                if request.method == "POST"
+                and request.url.endswith("/admin/api/work/sessions")
+                else None
+            ),
+        )
+
+        page.get_by_role("button", name="New session").click()
+        page.get_by_label("Absolute project folder path").fill(str(tmp_path))
+        page.get_by_role("button", name="Create", exact=True).dblclick()
+
+        expect(page).to_have_url(re.compile(r"/admin/work/thread-1$"))
+        expect(other).to_have_url(f"{admin_base_url}/admin/work")
+        expect(other.locator(".work-session-card")).to_have_count(1)
+        assert len(create_requests) == 1
+    finally:
+        other.close()
+
+
+def test_failed_pre_turn_send_restores_text_without_overwriting_a_newer_draft(
+    page: Page,
+    admin_base_url: str,
+    tmp_path: Path,
+) -> None:
+    _open_work(page, admin_base_url)
+    page.get_by_role("button", name="New session").click()
+    page.get_by_label("Absolute project folder path").fill(str(tmp_path))
+    page.get_by_role("button", name="Create", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/admin/work/thread-1$"))
+
+    composer = page.get_by_role("textbox", name="Work message")
+    composer.fill("[reject-turn] restore this draft")
+    composer.press("Enter")
+    composer.fill("newer private draft")
+
+    expect(composer).to_have_value("newer private draft")
+    restore = page.get_by_role("button", name="Restore", exact=True)
+    expect(restore).to_be_visible()
+    restore.click()
+    expect(composer).to_have_value("[reject-turn] restore this draft")
+    page.wait_for_function(
+        "JSON.parse(sessionStorage.getItem('fcc.work.operations.v1') || '[]').length === 0"
+    )

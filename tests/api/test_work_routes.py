@@ -148,6 +148,14 @@ class StubWork:
                     payload={"command": ["git", "status"]},
                 ),
             ),
+            operations=(
+                replace(
+                    self._operation(WorkOperationKind.STOP),
+                    state=WorkOperationState.UNKNOWN,
+                    error_code="connection_lost",
+                    error_message="Outcome unknown.",
+                ),
+            ),
             event_cursor=4,
         )
 
@@ -216,11 +224,23 @@ class StubWork:
         self.last_call = ("operation", operation_id)
         return self._operation(WorkOperationKind.SEND)
 
-    async def abandon_operation(
+    async def acknowledge_unknown(
+        self, thread_id: str
+    ) -> tuple[WorkOperationAcknowledgement, ...]:
+        self._raise()
+        self.last_call = ("acknowledge", thread_id)
+        return (
+            replace(
+                self._operation(WorkOperationKind.SEND),
+                state=WorkOperationState.ABANDONED,
+            ),
+        )
+
+    async def dismiss_unknown_create(
         self, operation_id: str
     ) -> WorkOperationAcknowledgement:
         self._raise()
-        self.last_call = ("abandon", operation_id)
+        self.last_call = ("dismiss", operation_id)
         return replace(
             self._operation(WorkOperationKind.SEND),
             state=WorkOperationState.ABANDONED,
@@ -274,6 +294,17 @@ def test_work_reads_serialize_native_state_without_exposing_private_ids() -> Non
     item = detail.json()["turns"]["items"][0]
     assert "<strong>safe</strong>" in item["html"]
     assert "<script>" not in item["html"]
+    assert detail.json()["operations"] == [
+        {
+            "operation_id": OPERATION_ID,
+            "kind": "stop",
+            "state": "unknown",
+            "thread_id": THREAD_ID,
+            "turn_id": None,
+            "error_code": "connection_lost",
+            "error_message": "Outcome unknown.",
+        }
+    ]
     assert "connection_id" not in detail.text
     assert "request_id" not in detail.text
     for response in (bootstrap, listed, detail):
@@ -355,9 +386,16 @@ def test_work_mutations_forward_explicit_revision_operation_and_answer_shapes() 
         ),
         (
             "post",
-            f"/admin/api/work/operations/{OPERATION_ID}/abandon",
+            f"/admin/api/work/sessions/{THREAD_ID}/acknowledge-unknown",
             {"confirm": True},
-            ("abandon", OPERATION_ID),
+            ("acknowledge", THREAD_ID),
+            200,
+        ),
+        (
+            "post",
+            f"/admin/api/work/operations/{OPERATION_ID}/dismiss",
+            {"confirm": True},
+            ("dismiss", OPERATION_ID),
             200,
         ),
     )

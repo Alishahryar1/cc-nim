@@ -119,6 +119,7 @@ class WorkSessionDetail:
     turns: WorkTurnPage
     live_items: tuple[WorkTimelineItem, ...]
     interactions: tuple[WorkInteraction, ...]
+    operations: tuple[WorkOperationAcknowledgement, ...]
     event_cursor: int
 
 

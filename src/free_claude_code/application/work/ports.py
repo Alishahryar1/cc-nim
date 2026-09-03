@@ -90,6 +90,10 @@ class WorkStorePort(Protocol):
         error_message: str | None = None,
     ) -> WorkOperation: ...
 
+    async def abandon_unknown_operations(
+        self, session_id: str
+    ) -> tuple[WorkOperation, ...]: ...
+
     async def recent_projects(self, *, limit: int) -> tuple[str, ...]: ...
 
 
@@ -160,6 +164,10 @@ class WorkApplicationPort(Protocol):
         self, operation_id: str
     ) -> WorkOperationAcknowledgement: ...
 
-    async def abandon_operation(
+    async def acknowledge_unknown(
+        self, thread_id: str
+    ) -> tuple[WorkOperationAcknowledgement, ...]: ...
+
+    async def dismiss_unknown_create(
         self, operation_id: str
     ) -> WorkOperationAcknowledgement: ...
