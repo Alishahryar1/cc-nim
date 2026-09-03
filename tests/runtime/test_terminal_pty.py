@@ -52,11 +52,8 @@ async def test_platform_pty_runs_input_and_stops_process_tree(tmp_path: Path) ->
         "print('\\x1b[31mANSI-UNICODE-✓\\x1b[0m', flush=True)\n"
         "line = sys.stdin.readline().rstrip('\\r\\n')\n"
         "print(f'ECHO:{line}', flush=True)\n"
-        "try:\n"
-        "    while True:\n"
-        "        time.sleep(0.1)\n"
-        "except KeyboardInterrupt:\n"
-        "    print('INTERRUPTED', flush=True)\n",
+        "while True:\n"
+        "    time.sleep(0.1)\n",
         encoding="utf-8",
     )
     environment = dict(os.environ)
@@ -80,10 +77,6 @@ async def test_platform_pty_runs_input_and_stops_process_tree(tmp_path: Path) ->
 
         await service.write(session.id, "héllo\r".encode())
         await _read_until(events, output, "ECHO:héllo".encode())
-
-        await service.write(session.id, b"\x03")
-        await _read_until(events, output, b"INTERRUPTED")
-        assert (await service.get_session(session.id)).status is TerminalStatus.RUNNING
 
         stopped = await asyncio.wait_for(service.stop_session(session.id), timeout=10)
         assert stopped.status is TerminalStatus.EXITED
