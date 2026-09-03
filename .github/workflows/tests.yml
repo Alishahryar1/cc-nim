@@ -156,14 +156,18 @@ jobs:
             pty-package: "pywinpty>=3.0.5,<4"
     env:
       PYTHONPATH: src
-      UV_CACHE_DIR: ${{ runner.temp }}/.uv-cache
-      UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           fetch-depth: 1
+
+      - name: Configure uv paths
+        shell: bash
+        run: |
+          echo "UV_CACHE_DIR=$RUNNER_TEMP/.uv-cache" >> "$GITHUB_ENV"
+          echo "UV_PYTHON_INSTALL_DIR=$RUNNER_TEMP/uv-python" >> "$GITHUB_ENV"
 
       - name: Read Python version
         id: python
