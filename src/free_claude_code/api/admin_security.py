@@ -3,7 +3,8 @@
 import ipaddress
 from urllib.parse import urlsplit
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, WebSocket, WebSocketException
+from starlette.requests import HTTPConnection
 
 
 def _is_loopback_host(host: str | None) -> bool:
@@ -58,10 +59,21 @@ def _authority_is_local(authority: str | None) -> bool:
 def require_loopback_admin(request: Request) -> None:
     """Allow Admin access only from the local machine."""
 
-    client_host = request.client.host if request.client else None
+    if not _is_loopback_admin_connection(request):
+        raise HTTPException(status_code=403, detail="Admin UI is local-only")
+
+
+def require_loopback_admin_websocket(websocket: WebSocket) -> None:
+    """Apply the same local Admin boundary before accepting a WebSocket."""
+
+    if not _is_loopback_admin_connection(websocket):
+        raise WebSocketException(code=1008, reason="Admin UI is local-only")
+
+
+def _is_loopback_admin_connection(connection: HTTPConnection) -> bool:
+    client_host = connection.client.host if connection.client else None
     if not _is_loopback_host(client_host):
-        raise HTTPException(status_code=403, detail="Admin UI is local-only")
-    if not _authority_is_local(request.headers.get("host")):
-        raise HTTPException(status_code=403, detail="Admin UI is local-only")
-    if not _origin_is_local(request.headers.get("origin")):
-        raise HTTPException(status_code=403, detail="Admin UI is local-only")
+        return False
+    if not _authority_is_local(connection.headers.get("host")):
+        return False
+    return _origin_is_local(connection.headers.get("origin"))

@@ -22,6 +22,7 @@ from free_claude_code.application.connected_accounts import (
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import StopResult
+from free_claude_code.application.terminal import TerminalService
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
     commit_prepared_admin_update,
@@ -104,11 +105,13 @@ class ApplicationRuntime:
         *,
         transcriber: Transcriber | None,
         chat_service: ChatService | None = None,
+        terminal_service: TerminalService | None = None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
     ) -> None:
         self.provider_manager = provider_manager
         self._chat_service = chat_service
+        self._terminal_service = terminal_service
         self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._connected_accounts = dict(connected_accounts or {})
@@ -145,6 +148,8 @@ class ApplicationRuntime:
         try:
             await self.provider_manager.warm_referenced_model_cache()
             self.provider_manager.start_model_list_refresh()
+            if self._terminal_service is not None:
+                await self._terminal_service.start()
             if self._chat_service is not None:
                 await self._chat_service.start()
             await self._start_messaging_if_configured()
@@ -442,6 +447,12 @@ class ApplicationRuntime:
         if not await self._cleanup_messaging():
             return False
         verbose = self.settings.log_api_error_tracebacks
+        if self._terminal_service is not None and not await best_effort(
+            "terminal_service.close",
+            self._terminal_service.close(),
+            log_verbose_errors=verbose,
+        ):
+            return False
         if self._chat_service is not None and not await best_effort(
             "chat_service.close",
             self._chat_service.close(),

@@ -8,6 +8,7 @@ from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.application.chat import ChatApplicationPort
 from free_claude_code.application.connected_accounts import ConnectedAccountPort
+from free_claude_code.application.terminal import TerminalApplicationPort
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
@@ -22,6 +23,7 @@ def create_test_app(
     restart_callback: RestartCallback | None = None,
     connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
     chat: ChatApplicationPort | None = None,
+    terminal: TerminalApplicationPort | None = None,
 ) -> FastAPI:
     """Build an API app with explicit in-memory runtime services."""
     settings = settings or Settings()
@@ -60,6 +62,7 @@ def create_test_app(
             admin=runtime,
             tasks=runtime,
             chat=chat,
+            terminal=terminal,
         )
     )
 

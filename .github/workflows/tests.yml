@@ -134,3 +134,62 @@ jobs:
           path: test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  terminal-pty:
+    name: terminal-pty (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux
+            runner: ubuntu-latest
+            pty-package: "ptyprocess>=0.7,<1"
+          - platform: macOS
+            runner: macos-latest
+            pty-package: "ptyprocess>=0.7,<1"
+          - platform: Windows
+            runner: windows-latest
+            pty-package: "pywinpty>=3.0.5,<4"
+    env:
+      PYTHONPATH: src
+      UV_CACHE_DIR: ${{ runner.temp }}/.uv-cache
+      UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/uv-python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          fetch-depth: 1
+
+      - name: Read Python version
+        id: python
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < .python-version)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: ${{ env.CI_UV_VERSION }}
+          enable-cache: false
+
+      - name: Install Python
+        run: uv python install "${{ steps.python.outputs.version }}"
+
+      - name: Verify native PTY lifecycle
+        shell: bash
+        run: >-
+          uv run --no-project
+          --python "${{ steps.python.outputs.version }}"
+          --with "pytest>=9.1.1"
+          --with "pytest-asyncio>=1.4.0"
+          --with "loguru>=0.7.0"
+          --with "${{ matrix.pty-package }}"
+          pytest -o addopts='' tests/runtime/test_terminal_pty.py -v --tb=short

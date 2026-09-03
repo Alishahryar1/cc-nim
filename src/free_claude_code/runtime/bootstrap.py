@@ -7,6 +7,7 @@ from pathlib import Path
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.application.chat import ChatService
+from free_claude_code.application.terminal import TerminalService
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import (
     chat_database_path,
@@ -31,6 +32,7 @@ from .asgi import RuntimeASGIApp
 from .chat_sqlite import SQLiteChatStore
 from .codex_catalog import CodexModelCatalogPublisher
 from .provider_manager import ProviderRuntimeManager
+from .terminal_pty import create_terminal_process_factory
 
 
 def build_asgi_app(
@@ -64,9 +66,11 @@ def build_asgi_app(
         provider_manager,
         SQLiteChatStore(chat_database_path(), chat_lock_path()),
     )
+    terminal_service = TerminalService(create_terminal_process_factory())
     runtime = ApplicationRuntime(
         provider_manager,
         chat_service=chat_service,
+        terminal_service=terminal_service,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth},
@@ -76,6 +80,7 @@ def build_asgi_app(
         admin=runtime,
         tasks=runtime,
         chat=chat_service,
+        terminal=terminal_service,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

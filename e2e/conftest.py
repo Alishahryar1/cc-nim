@@ -4,7 +4,7 @@ import asyncio
 import socket
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -22,6 +22,7 @@ from free_claude_code.application.chat import (
     ChatSessionPage,
 )
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.terminal import TerminalProcessPort, TerminalService
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
 from free_claude_code.config.loader import clear_settings_cache, get_settings
@@ -220,6 +221,66 @@ class _ModelListingProvider(BaseProvider):
             yield ""
 
 
+class _EchoTerminalProcess(TerminalProcessPort):
+    """Deterministic in-process PTY boundary for rendered browser contracts."""
+
+    def __init__(self, pid: int) -> None:
+        self._pid = pid
+        self._output: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._output.put_nowait(b"FCC browser-test terminal\r\n$ ")
+        self._exited = asyncio.Event()
+        self._exit_code: int | None = None
+
+    @property
+    def pid(self) -> int:
+        return self._pid
+
+    @property
+    def alive(self) -> bool:
+        return not self._exited.is_set()
+
+    async def read(self) -> bytes:
+        return (await self._output.get()) or b""
+
+    async def write(self, data: bytes) -> None:
+        if self.alive:
+            self._output.put_nowait(data)
+
+    async def resize(self, rows: int, columns: int) -> None:
+        del rows, columns
+
+    async def wait(self) -> int | None:
+        await self._exited.wait()
+        return self._exit_code
+
+    async def terminate_tree(self) -> None:
+        if not self.alive:
+            return
+        self._exit_code = 0
+        self._exited.set()
+        self._output.put_nowait(None)
+
+    async def close(self) -> None:
+        return None
+
+
+class _EchoTerminalFactory:
+    def __init__(self) -> None:
+        self._next_pid = 10_000
+
+    async def spawn(
+        self,
+        *,
+        cwd: Path,
+        env: Mapping[str, str],
+        rows: int,
+        columns: int,
+    ) -> _EchoTerminalProcess:
+        del cwd, env, rows, columns
+        self._next_pid += 1
+        return _EchoTerminalProcess(self._next_pid)
+
+
 @pytest.fixture
 def admin_base_url(
     request: pytest.FixtureRequest,
@@ -384,7 +445,13 @@ def admin_base_url(
         return result
 
     monkeypatch.setattr(chat_store, "begin_send", begin_send_with_delayed_ack)
-    runtime = ApplicationRuntime(manager, transcriber=None, chat_service=chat)
+    terminal = TerminalService(_EchoTerminalFactory(), home=tmp_path)
+    runtime = ApplicationRuntime(
+        manager,
+        transcriber=None,
+        chat_service=chat,
+        terminal_service=terminal,
+    )
     app = RuntimeASGIApp(
         create_app(
             ApiServices(
@@ -392,6 +459,7 @@ def admin_base_url(
                 admin=runtime,
                 tasks=runtime,
                 chat=chat,
+                terminal=terminal,
             )
         ),
         runtime,

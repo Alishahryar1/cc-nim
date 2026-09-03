@@ -41,6 +41,11 @@ _ADMIN_ASSET_FILENAMES = frozenset(
         "chat_sessions.css",
         "chat_sessions.js",
         "model_combobox.js",
+        "terminal_sessions.css",
+        "terminal_sessions.js",
+        "xterm-addon-fit.js",
+        "xterm.css",
+        "xterm.js",
     }
 )
 LOCAL_PROVIDER_PATHS = {

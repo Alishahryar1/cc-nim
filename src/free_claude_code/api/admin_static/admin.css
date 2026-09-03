@@ -208,6 +208,18 @@ textarea:focus-visible,
   padding-bottom: calc(40px + 96px); /* Fixed action bar clearance */
 }
 
+.main.immersive-main {
+  height: 100vh;
+  overflow: hidden;
+  padding: 0;
+}
+
+.immersive-main .admin-views,
+.immersive-main .admin-view {
+  height: 100%;
+  min-height: 0;
+}
+
 .topbar {
   margin-bottom: 32px;
 }
@@ -432,6 +444,22 @@ textarea:focus-visible,
   border-color: var(--line);
   background: var(--panel-strong);
   color: var(--muted);
+}
+
+.danger-button {
+  min-height: 38px;
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-sm);
+  background: var(--error-bg);
+  padding: 8px 13px;
+  color: var(--error);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .ghost-button {
@@ -850,6 +878,22 @@ textarea:focus-visible,
     flex: 1;
     min-height: 44px; /* Better touch target on mobile */
   }
+
+  .app-shell.immersive-active {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-shell.immersive-active .sidebar {
+    flex: 0 0 auto;
+  }
+
+  .main.immersive-main {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+  }
 }
 
 /* Mobile Layout Optimization */
@@ -897,6 +941,35 @@ textarea:focus-visible,
     flex-direction: column;
     align-items: stretch;
     gap: 2px;
+  }
+
+  .app-shell.immersive-active .sidebar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .app-shell.immersive-active .brand {
+    flex-direction: row;
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .app-shell.immersive-active .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .app-shell.immersive-active .section-nav {
+    grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+    gap: 4px;
+  }
+
+  .app-shell.immersive-active .nav-link {
+    justify-content: center;
+    min-height: 34px;
+    padding: 6px 4px;
+    text-align: center;
+    font-size: 11px;
   }
 
   .action-meta span {

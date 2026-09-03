@@ -4,7 +4,7 @@ const state = {
   modelOptions: [],
   modelComboboxes: new Set(),
   authPollers: new Map(),
-  activeView: window.location.pathname.startsWith("/admin/chat") ? "chat" : "providers",
+  activeView: viewFromPath(window.location.pathname),
 };
 
 const MASKED_SECRET = "********";
@@ -37,8 +37,25 @@ const VIEW_GROUPS = [
     title: "Chat Sessions",
     sections: [],
     containerId: "chatRoot",
+    path: "/admin/chat",
+    pathPrefix: "/admin/chat",
+  },
+  {
+    id: "terminal",
+    label: "Terminal Sessions",
+    title: "Terminal Sessions",
+    sections: [],
+    containerId: "terminalRoot",
+    path: "/admin/terminal",
+    pathPrefix: "/admin/terminal",
   },
 ];
+
+function viewFromPath(path) {
+  if (path.startsWith("/admin/terminal")) return "terminal";
+  if (path.startsWith("/admin/chat")) return "chat";
+  return "providers";
+}
 
 const byId = (id) => document.getElementById(id);
 
@@ -105,6 +122,9 @@ async function load() {
     hydrateModelOptions(),
     refreshLocalStatus(),
     window.ChatSessions ? window.ChatSessions.initialize(api) : Promise.resolve(),
+    window.TerminalSessions
+      ? window.TerminalSessions.initialize(api)
+      : Promise.resolve(),
   ]);
   updateDirtyState();
   showMessage("");
@@ -136,10 +156,16 @@ function setActiveView(viewId, { scroll = false } = {}) {
   state.activeView = activeView.id;
   byId("pageTitle").textContent = activeView.title;
   const chatActive = activeView.id === "chat";
-  document.querySelector(".app-shell").classList.toggle("chat-active", chatActive);
-  document.querySelector(".main").classList.toggle("chat-main", chatActive);
-  document.querySelector(".topbar").hidden = chatActive;
-  document.querySelector(".action-bar").hidden = chatActive;
+  const terminalActive = activeView.id === "terminal";
+  const immersiveActive = chatActive || terminalActive;
+  document
+    .querySelector(".app-shell")
+    .classList.toggle("immersive-active", immersiveActive);
+  document
+    .querySelector(".main")
+    .classList.toggle("immersive-main", immersiveActive);
+  document.querySelector(".topbar").hidden = immersiveActive;
+  document.querySelector(".action-bar").hidden = immersiveActive;
 
   document.querySelectorAll(".nav-link").forEach((link) => {
     const selected = link.dataset.view === activeView.id;
@@ -163,14 +189,20 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (chatActive && window.ChatSessions) {
     window.ChatSessions.activate(window.location.pathname);
   }
+  if (terminalActive && window.TerminalSessions) {
+    window.TerminalSessions.activate(window.location.pathname);
+  } else if (window.TerminalSessions) {
+    window.TerminalSessions.deactivate();
+  }
 }
 
 function navigateToView(viewId) {
-  if (viewId === "chat") {
-    if (window.location.pathname !== "/admin/chat") {
-      window.history.pushState({}, "", "/admin/chat");
+  const target = VIEW_GROUPS.find((view) => view.id === viewId);
+  if (target?.path) {
+    if (window.location.pathname !== target.path) {
+      window.history.pushState({}, "", target.path);
     }
-  } else if (window.location.pathname.startsWith("/admin/chat")) {
+  } else if (viewFromPath(window.location.pathname) !== "providers") {
     window.history.pushState({}, "", "/admin");
   }
   setActiveView(viewId, { scroll: true });
@@ -1051,10 +1083,7 @@ document.addEventListener("pointerdown", (event) => {
 });
 
 window.addEventListener("popstate", () => {
-  const viewId = window.location.pathname.startsWith("/admin/chat")
-    ? "chat"
-    : "providers";
-  setActiveView(viewId, { scroll: false });
+  setActiveView(viewFromPath(window.location.pathname), { scroll: false });
 });
 
 load().catch((error) => {

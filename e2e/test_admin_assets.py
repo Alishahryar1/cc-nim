@@ -39,12 +39,22 @@ def test_admin_loads_current_release_assets_before_rendering_dynamic_content(
     assert f"{versioned_root}/app-icon.svg" in requested_paths
     assert f"{versioned_root}/admin.css" in requested_paths
     assert f"{versioned_root}/chat_sessions.css" in requested_paths
+    assert f"{versioned_root}/xterm.css" in requested_paths
+    assert f"{versioned_root}/terminal_sessions.css" in requested_paths
     assert f"{versioned_root}/model_combobox.js" in requested_paths
     assert f"{versioned_root}/chat_sessions.js" in requested_paths
+    assert f"{versioned_root}/xterm.js" in requested_paths
+    assert f"{versioned_root}/xterm-addon-fit.js" in requested_paths
+    assert f"{versioned_root}/terminal_sessions.js" in requested_paths
     assert f"{versioned_root}/admin.js" in requested_paths
     assert "/admin/assets/admin.css" not in requested_paths
     assert "/admin/assets/chat_sessions.css" not in requested_paths
+    assert "/admin/assets/xterm.css" not in requested_paths
+    assert "/admin/assets/terminal_sessions.css" not in requested_paths
     assert "/admin/assets/model_combobox.js" not in requested_paths
     assert "/admin/assets/chat_sessions.js" not in requested_paths
+    assert "/admin/assets/xterm.js" not in requested_paths
+    assert "/admin/assets/xterm-addon-fit.js" not in requested_paths
+    assert "/admin/assets/terminal_sessions.js" not in requested_paths
     assert "/admin/assets/admin.js" not in requested_paths
     assert page_errors == []

@@ -1,0 +1,242 @@
+.terminal-root {
+  height: 100%;
+  min-height: 0;
+  padding: 28px clamp(16px, 2.5vw, 36px) 20px;
+}
+
+.terminal-library,
+.terminal-session-shell {
+  height: 100%;
+  min-height: 0;
+}
+
+.terminal-library {
+  overflow-y: auto;
+}
+
+.terminal-library-content {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.terminal-library-header,
+.terminal-detail-header,
+.terminal-detail-actions,
+.terminal-card-heading {
+  display: flex;
+  align-items: center;
+}
+
+.terminal-library-header,
+.terminal-detail-header,
+.terminal-card-heading {
+  justify-content: space-between;
+}
+
+.terminal-library-header {
+  gap: 24px;
+  margin-bottom: 22px;
+}
+
+.terminal-library-header h2,
+.terminal-empty h3 {
+  margin: 0;
+}
+
+.terminal-library-header h2 {
+  font-size: 30px;
+}
+
+.terminal-library-header p,
+.terminal-card p,
+.terminal-empty p {
+  color: var(--muted);
+}
+
+.terminal-library-header p {
+  margin: 7px 0 0;
+}
+
+.terminal-session-list {
+  display: grid;
+  gap: 10px;
+}
+
+.terminal-card {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  padding: 17px 19px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.terminal-card:hover {
+  border-color: var(--accent-border);
+  background: var(--card-hover);
+}
+
+.terminal-card strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-card p {
+  overflow: hidden;
+  margin: 0;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-status {
+  flex: 0 0 auto;
+  border: 1px solid var(--neutral-border);
+  border-radius: var(--radius-full);
+  background: var(--neutral-bg);
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+.terminal-status.running {
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.terminal-status.stopping {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.terminal-empty {
+  display: grid;
+  min-height: 260px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.terminal-empty p {
+  margin: 0;
+}
+
+.terminal-session-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.terminal-detail-header {
+  min-width: 0;
+  gap: 14px;
+}
+
+.terminal-detail-identity {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.terminal-name {
+  min-width: 100px;
+  width: min(420px, 100%);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 7px 9px;
+  color: var(--text-strong);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.terminal-name:hover,
+.terminal-name:focus {
+  border-color: var(--line-strong);
+  background: var(--input);
+  outline: none;
+}
+
+.terminal-detail-actions {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.terminal-notice {
+  min-height: 20px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.terminal-notice:empty {
+  display: none;
+}
+
+.terminal-notice.error {
+  color: var(--error);
+}
+
+.terminal-notice.warn {
+  color: var(--warn);
+}
+
+.terminal-stage {
+  min-height: 240px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: #050608;
+  padding: 12px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.terminal-stage .xterm {
+  height: 100%;
+}
+
+.terminal-stage .xterm-viewport {
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 900px) {
+  .terminal-root {
+    padding: 20px 16px 12px;
+  }
+}
+
+@media (max-width: 650px) {
+  .terminal-library-header,
+  .terminal-detail-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .terminal-library-header .primary-button {
+    width: 100%;
+  }
+
+  .terminal-detail-actions {
+    justify-content: flex-end;
+  }
+
+  .terminal-detail-identity {
+    width: 100%;
+  }
+}

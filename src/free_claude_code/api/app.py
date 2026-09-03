@@ -14,6 +14,13 @@ from free_claude_code.application.chat import (
     ChatValidationError,
 )
 from free_claude_code.application.errors import ApplicationError
+from free_claude_code.application.terminal import (
+    TerminalConflictError,
+    TerminalError,
+    TerminalNotFoundError,
+    TerminalUnavailableError,
+    TerminalValidationError,
+)
 from free_claude_code.core.anthropic import anthropic_error_payload
 from free_claude_code.core.diagnostics import (
     redacted_exception_traceback,
@@ -38,6 +45,7 @@ from .request_ids import (
 )
 from .request_lifetime import InferenceRequestLifetimeMiddleware
 from .routes import router
+from .terminal_routes import router as terminal_router
 from .validation_log import summarize_request_validation_body
 
 
@@ -51,6 +59,7 @@ def create_app(services: ApiServices) -> FastAPI:
 
     app.include_router(admin_router)
     app.include_router(chat_router)
+    app.include_router(terminal_router)
     app.include_router(router)
 
     @app.exception_handler(ChatError)
@@ -64,6 +73,27 @@ def create_app(services: ApiServices) -> FastAPI:
         elif isinstance(exc, ChatValidationError):
             status_code = 400
         elif isinstance(exc, ChatUnavailableError):
+            status_code = 503
+        else:
+            status_code = 500
+        response = JSONResponse(
+            status_code=status_code,
+            content={"detail": str(exc), "code": type(exc).__name__},
+        )
+        attach_admin_no_store(response, path=request.url.path)
+        return response
+
+    @app.exception_handler(TerminalError)
+    async def terminal_error_handler(request: Request, exc: TerminalError):
+        """Serialize Terminal application failures for the local Admin client."""
+
+        if isinstance(exc, TerminalNotFoundError):
+            status_code = 404
+        elif isinstance(exc, TerminalConflictError):
+            status_code = 409
+        elif isinstance(exc, TerminalValidationError):
+            status_code = 400
+        elif isinstance(exc, TerminalUnavailableError):
             status_code = 503
         else:
             status_code = 500

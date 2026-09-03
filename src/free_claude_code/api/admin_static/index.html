@@ -7,6 +7,8 @@
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/admin/assets/__FCC_VERSION__/admin.css" />
     <link rel="stylesheet" href="/admin/assets/__FCC_VERSION__/chat_sessions.css" />
+    <link rel="stylesheet" href="/admin/assets/__FCC_VERSION__/xterm.css" />
+    <link rel="stylesheet" href="/admin/assets/__FCC_VERSION__/terminal_sessions.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -84,6 +86,10 @@
           <section id="view-chat" class="admin-view" data-view="chat" hidden>
             <div id="chatRoot" class="chat-root" aria-live="off"></div>
           </section>
+
+          <section id="view-terminal" class="admin-view" data-view="terminal" hidden>
+            <div id="terminalRoot" class="terminal-root" aria-live="off"></div>
+          </section>
         </div>
       </main>
 
@@ -100,6 +106,9 @@
     </div>
     <script src="/admin/assets/__FCC_VERSION__/model_combobox.js"></script>
     <script src="/admin/assets/__FCC_VERSION__/chat_sessions.js"></script>
+    <script src="/admin/assets/__FCC_VERSION__/xterm.js"></script>
+    <script src="/admin/assets/__FCC_VERSION__/xterm-addon-fit.js"></script>
+    <script src="/admin/assets/__FCC_VERSION__/terminal_sessions.js"></script>
     <script src="/admin/assets/__FCC_VERSION__/admin.js"></script>
   </body>
 </html>

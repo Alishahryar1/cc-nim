@@ -113,8 +113,13 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
     assert 'src="/admin/assets/9.8.7/app-icon.svg"' in response.text
     assert 'href="/admin/assets/9.8.7/admin.css"' in response.text
     assert 'href="/admin/assets/9.8.7/chat_sessions.css"' in response.text
+    assert 'href="/admin/assets/9.8.7/xterm.css"' in response.text
+    assert 'href="/admin/assets/9.8.7/terminal_sessions.css"' in response.text
     assert 'src="/admin/assets/9.8.7/model_combobox.js"' in response.text
     assert 'src="/admin/assets/9.8.7/chat_sessions.js"' in response.text
+    assert 'src="/admin/assets/9.8.7/xterm.js"' in response.text
+    assert 'src="/admin/assets/9.8.7/xterm-addon-fit.js"' in response.text
+    assert 'src="/admin/assets/9.8.7/terminal_sessions.js"' in response.text
     assert 'src="/admin/assets/9.8.7/admin.js"' in response.text
     assert 'href="/admin/assets/admin.css"' not in response.text
     assert 'href="/admin/assets/chat_sessions.css"' not in response.text
@@ -130,6 +135,11 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
         ("chat_sessions.css", "text/css"),
         ("chat_sessions.js", "text/javascript"),
         ("model_combobox.js", "text/javascript"),
+        ("terminal_sessions.css", "text/css"),
+        ("terminal_sessions.js", "text/javascript"),
+        ("xterm-addon-fit.js", "text/javascript"),
+        ("xterm.css", "text/css"),
+        ("xterm.js", "text/javascript"),
     ),
 )
 def test_admin_versioned_assets_serve_packaged_files(
@@ -184,6 +194,11 @@ def test_admin_versioned_logo_reuses_packaged_app_icon(monkeypatch, tmp_path):
         f"/admin/assets/{package_version()}/chat_sessions.css",
         f"/admin/assets/{package_version()}/chat_sessions.js",
         f"/admin/assets/{package_version()}/model_combobox.js",
+        f"/admin/assets/{package_version()}/terminal_sessions.css",
+        f"/admin/assets/{package_version()}/terminal_sessions.js",
+        f"/admin/assets/{package_version()}/xterm-addon-fit.js",
+        f"/admin/assets/{package_version()}/xterm.css",
+        f"/admin/assets/{package_version()}/xterm.js",
         "/admin/api/config",
     ),
 )
