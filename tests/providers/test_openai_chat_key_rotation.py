@@ -14,6 +14,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
 )
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import immediate_admission
 
@@ -36,7 +37,7 @@ class _TestOpenAIChatProvider(OpenAIChatProvider):
         profile = OpenAIChatProfile(
             OpenAIChatRequestPolicy(
                 provider_name="TEST",
-                reasoning_replay=None,
+                reasoning_replay=ReasoningReplayMode.DISABLED,
             ),
             NO_REASONING,
         )

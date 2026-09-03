@@ -197,10 +197,25 @@ def secret_env_keys() -> frozenset[str]:
         if name.endswith(("_api_key", "_proxy", "_token"))
     }
     secret_attrs.update({"telegram_proxy_url", "proxy_auth_token"})
-    return frozenset(
-        _get_validation_alias_str(Settings.model_fields[name].validation_alias)
-        for name in secret_attrs
-    )
+
+    result = set()
+    for name in secret_attrs:
+        alias = Settings.model_fields[name].validation_alias
+        # Handle AliasChoices objects by adding all choices
+        if hasattr(alias, "choices"):
+            if alias.choices:
+                for choice in alias.choices:
+                    result.add(str(choice))
+            else:
+                # Fallback to field name if no choices
+                result.add(str(name))
+        elif isinstance(alias, str):
+            result.add(alias)
+        else:
+            # For other types, convert to string
+            result.add(str(alias))
+
+    return frozenset(result)
 
 
 def consolidate_managed_config(

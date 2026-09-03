@@ -68,9 +68,6 @@ class BaseProvider(ABC):
             return
 
         self._current_key_index = (self._current_key_index + 1) % len(api_keys)
-        # Reset failure count for the new key to give it a fresh start
-        if self._current_key_index in self._key_failure_count:
-            del self._key_failure_count[self._current_key_index]
 
     def _mark_key_failed(self) -> None:
         """Mark the current key as failed and increment its failure count."""

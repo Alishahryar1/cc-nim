@@ -34,7 +34,7 @@ from free_claude_code.core.anthropic.streaming import (
     tool_schemas_by_name,
 )
 from free_claude_code.core.anthropic.usage import anthropic_input_usage_fields
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesRequest,
@@ -816,15 +816,16 @@ class OpenAIChatProvider(BaseProvider):
             if self._config.api_keys and len(self._config.api_keys) > 1:
                 if not self._attempt_with_key_rotation():
                     # All keys are exhausted, raise an error
-                    from free_claude_code.core.failures import ExecutionFailure
-
                     raise ExecutionFailure(
-                        False,
+                        FailureKind.RATE_LIMIT,
+                        429,
                         f"All API keys for {self._provider_name} are exhausted",
                         retryable=False,
                     )
                 # Update client with current API key
-                self._client.api_key = self._get_current_api_key()
+                key = self._get_current_api_key()
+                assert key is not None, "Expected API key to be set"
+                self._client.api_key = key
 
             attempt = await execution.open_attempt(operation_kind)
             stream: Any | None = None
@@ -848,7 +849,9 @@ class OpenAIChatProvider(BaseProvider):
                     if self._config.api_keys and len(self._config.api_keys) > 1:
                         self._rotate_api_key()
                         # Update client with new API key
-                        self._client.api_key = self._get_current_api_key()
+                        key = self._get_current_api_key()
+                        assert key is not None, "Expected API key to be set"
+                        self._client.api_key = key
                         # Continue to retry with new key
                         continue
 

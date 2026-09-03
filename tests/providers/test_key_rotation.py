@@ -221,34 +221,33 @@ def test_attempt_with_key_rotation():
     # Exhaust current key
     provider._key_failure_count[0] = 3
     # When we attempt rotation, it will find key 1 usable (not exhausted)
-    # AND it will reset the failure count for key 1 when rotating to it
+    # Failure counts should NOT be reset during rotation (preserves exhaustion detection)
     assert provider._attempt_with_key_rotation()  # Should find key 1
     assert provider._current_key_index == 1  # Should have rotated
-    # Key 1's failure count should have been reset when rotated to it
-    assert 1 not in provider._key_failure_count
+    # Key 0 should still be exhausted (failure count preserved)
+    assert provider._key_failure_count[0] == 3
 
     # Exhaust the new current key (key 1)
     provider._key_failure_count[1] = 3
     # When we attempt rotation, it will find key 2 usable (not exhausted)
-    # AND it will reset the failure count for key 2 when rotating to it
+    # Failure counts should NOT be reset during rotation
     assert provider._attempt_with_key_rotation()  # Should find key 2
     assert provider._current_key_index == 2  # Should have rotated
-    # Key 2's failure count should have been reset when rotated to it
-    assert 2 not in provider._key_failure_count
+    # Keys 0 and 1 should still be exhausted (failure counts preserved)
+    assert provider._key_failure_count[0] == 3
+    assert provider._key_failure_count[1] == 3
 
     # Exhaust the new current key (key 2)
     provider._key_failure_count[2] = 3
-    # When we attempt rotation, it will find key 0 usable (not exhausted,
-    # because its failure count was never set to threshold in this sequence)
-    # AND it will reset the failure count for key 0 when rotating to it
-    assert provider._attempt_with_key_rotation()  # Should find key 0
-    assert provider._current_key_index == 0  # Should have rotated
-    # Key 0's failure count should have been reset when rotated to it
-    assert 0 not in provider._key_failure_count
-
-    # With all keys having been rotated to and had their counts reset,
-    # we should still be able to find a usable key
-    assert provider._attempt_with_key_rotation()
+    # When we attempt rotation, all keys are exhausted, so no usable key should be found
+    assert not provider._attempt_with_key_rotation()  # Should NOT find any usable key
+    assert (
+        provider._current_key_index == 2
+    )  # Should have rotated through all keys and ended at key 2
+    # All keys should be exhausted (failure counts preserved)
+    assert provider._key_failure_count[0] == 3
+    assert provider._key_failure_count[1] == 3
+    assert provider._key_failure_count[2] == 3
 
     # Only when there are no keys should it return False
     config_no_keys = ProviderConfig(

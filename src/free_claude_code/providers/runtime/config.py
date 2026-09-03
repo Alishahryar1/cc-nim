@@ -14,13 +14,41 @@ def string_setting(settings: Settings, attr_name: str | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def list_setting(settings: Settings, attr_name: str | None) -> list[str] | None:
+    """Return an optional validated list setting (for API keys)."""
+    if attr_name is None:
+        return None
+    value = getattr(settings, attr_name, None)
+    # Handle both string (comma-separated) and list formats
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        # Split by comma and filter out empty strings after stripping
+        keys = [key.strip() for key in value.split(",") if key.strip()]
+        return keys if keys else None
+    elif isinstance(value, list):
+        # Filter out any empty strings
+        filtered = [key.strip() for key in value if key.strip()]
+        return filtered if filtered else None
+    return None
+
+
 def provider_credential(
     descriptor: ProviderDescriptor, settings: Settings
-) -> str | None:
-    """Return the configured credential for a provider descriptor."""
+) -> str | list[str] | None:
+    """Return the configured credential(s) for a provider descriptor.
+
+    Returns either a single credential (str) or list of credentials (list[str])
+    for backward compatibility and multi-key support.
+    """
     if descriptor.static_credential is not None:
         return descriptor.static_credential
     if descriptor.credential_attr:
+        # First try to get as a list (for multi-key support)
+        credential_list = list_setting(settings, descriptor.credential_attr)
+        if credential_list is not None:
+            return credential_list
+        # Fall back to single credential for backward compatibility
         return string_setting(settings, descriptor.credential_attr)
     return None
 
@@ -36,7 +64,7 @@ def has_provider_configuration(
 
 
 def require_provider_credential(
-    descriptor: ProviderDescriptor, credential: str | None
+    descriptor: ProviderDescriptor, credential: str | list[str] | None
 ) -> None:
     """Raise a user-facing configuration error when a required key is missing."""
     if descriptor.credential_env is None:
@@ -76,8 +104,12 @@ def build_provider_config(
             f"{env_name} is not set. Add it in the Admin UI."
         )
     proxy = string_setting(settings, descriptor.proxy_attr)
-    # Convert single credential to list for api_keys field (None if no credential)
-    api_keys = [credential] if credential is not None else None
+    # api_keys is already a list (or None) from provider_credential
+    api_keys = (
+        credential
+        if isinstance(credential, list)
+        else ([credential] if credential is not None else None)
+    )
     return ProviderConfig(
         api_keys=api_keys,
         base_url=resolved_base_url,

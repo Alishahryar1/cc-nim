@@ -201,9 +201,9 @@ def test_provider_runtime_config_e2e() -> None:
         config = build_provider_config(descriptor, settings)
         assert config.base_url
         if descriptor.credential_attr is not None or descriptor.static_credential:
-            assert config.api_key
+            assert config.api_keys
         else:
-            assert config.api_key is None
+            assert config.api_keys is None
 
 
 def _settings_init_key(field_name: str) -> str:
