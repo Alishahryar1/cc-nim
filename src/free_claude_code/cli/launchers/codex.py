@@ -71,18 +71,19 @@ def launch(argv: Sequence[str] | None = None) -> None:
         install_hint=_INSTALL_HINT,
     )
     catalog = codex_model_catalog_plan(proxy_root_url, settings)
-    plan = build_codex_launcher_plan(
-        binary_path=binary_path,
-        argv=args,
-        settings=settings,
-        proxy_root_url=proxy_root_url,
-        catalog_config_args=catalog.config_args,
-        catalog_models=catalog.models,
-        base_env=os.environ,
-    )
     run_client_process(
-        command=list(plan.command),
-        env=plan.env,
+        command=build_codex_launcher_command(
+            binary_path=binary_path,
+            argv=args,
+            settings=settings,
+            proxy_root_url=proxy_root_url,
+            catalog_config_args=catalog.config_args,
+            catalog_models=catalog.models,
+        ),
+        env=build_codex_launcher_env(
+            proxy_root_url=proxy_root_url,
+            base_env=os.environ,
+        ),
         binary_name=binary_name,
         display_name=_DISPLAY_NAME,
         install_hint=_INSTALL_HINT,
@@ -97,48 +98,10 @@ class CodexModelCatalogPlan:
     models: tuple[ClientModel, ...] = ()
 
 
-@dataclass(frozen=True, slots=True)
-class CodexLauncherPlan:
-    """One process invocation configured to route Codex through FCC."""
-
-    command: tuple[str, ...]
-    env: dict[str, str]
-
-
 def codex_binary_name() -> str:
     """Return the Codex CLI binary name."""
 
     return _DEFAULT_BINARY
-
-
-def build_codex_launcher_plan(
-    *,
-    binary_path: str,
-    argv: Sequence[str],
-    settings: Settings,
-    proxy_root_url: str,
-    catalog_config_args: Sequence[str] = (),
-    catalog_models: Sequence[ClientModel] = (),
-    base_env: Mapping[str, str],
-) -> CodexLauncherPlan:
-    """Return the complete process plan shared by CLI and Direct mode."""
-
-    return CodexLauncherPlan(
-        command=tuple(
-            build_codex_launcher_command(
-                binary_path=binary_path,
-                argv=argv,
-                settings=settings,
-                proxy_root_url=proxy_root_url,
-                catalog_config_args=catalog_config_args,
-                catalog_models=catalog_models,
-            )
-        ),
-        env=build_codex_launcher_env(
-            proxy_root_url=proxy_root_url,
-            base_env=base_env,
-        ),
-    )
 
 
 def build_codex_launcher_command(
