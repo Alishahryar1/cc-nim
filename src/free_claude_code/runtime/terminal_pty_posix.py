@@ -5,7 +5,7 @@ import os
 import signal
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
 
@@ -105,13 +105,13 @@ class PosixTerminalProcessFactory:
         return PosixTerminalProcess(process)
 
 
-def _posix_shell_argv(env: Mapping[str, str]) -> Sequence[str]:
+def _posix_shell_argv(env: Mapping[str, str]) -> list[str]:
     configured = env.get("SHELL")
     if configured:
         shell = Path(configured).expanduser()
         if shell.is_file() and os.access(shell, os.X_OK):
-            return (str(shell),)
+            return [str(shell)]
     fallback = Path("/bin/sh")
     if fallback.is_file() and os.access(fallback, os.X_OK):
-        return (str(fallback),)
+        return [str(fallback)]
     raise FileNotFoundError("No supported POSIX system shell was found.")

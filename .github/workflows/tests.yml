@@ -147,13 +147,10 @@ jobs:
         include:
           - platform: Linux
             runner: ubuntu-latest
-            pty-package: "ptyprocess>=0.7,<1"
           - platform: macOS
             runner: macos-latest
-            pty-package: "ptyprocess>=0.7,<1"
           - platform: Windows
             runner: windows-latest
-            pty-package: "pywinpty>=3.0.5,<4"
     env:
       PYTHONPATH: src
     steps:
@@ -190,10 +187,5 @@ jobs:
       - name: Verify native PTY lifecycle
         shell: bash
         run: >-
-          uv run --no-project
-          --python "${{ steps.python.outputs.version }}"
-          --with "pytest>=9.1.1"
-          --with "pytest-asyncio>=1.4.0"
-          --with "loguru>=0.7.0"
-          --with "${{ matrix.pty-package }}"
+          uv run --locked
           pytest -o addopts='' tests/runtime/test_terminal_pty.py -v --tb=short

@@ -14,6 +14,7 @@ from free_claude_code.application.terminal import TerminalProcessPort
 from free_claude_code.cli.process_registry import register_pid, unregister_pid
 
 _READ_SIZE = 16 * 1024
+_TERMINATE_GRACE_SECONDS = 1.0
 
 
 class WindowsTerminalProcess(TerminalProcessPort):
@@ -69,7 +70,10 @@ class WindowsTerminalProcess(TerminalProcessPort):
                 stderr=subprocess.DEVNULL,
                 check=False,
             )
-        self._close_sync(True)
+            deadline = time.monotonic() + _TERMINATE_GRACE_SECONDS
+            while self.alive and time.monotonic() < deadline:
+                time.sleep(0.05)
+        self._close_sync(self.alive)
 
     def _close_sync(self, force: bool) -> None:
         with self._close_lock:
