@@ -257,6 +257,9 @@
     const stage = document.createElement("div");
     stage.className = "terminal-stage";
     stage.setAttribute("aria-label", `${session.name} terminal`);
+    const terminalHost = document.createElement("div");
+    terminalHost.className = "terminal-host";
+    stage.appendChild(terminalHost);
     shell.append(header, notice, stage);
     container.appendChild(shell);
 
@@ -272,7 +275,7 @@
     name.addEventListener("change", () => void renameSession(name));
 
     updateSession(session);
-    openTerminal(stage, session);
+    openTerminal(terminalHost, session);
   }
 
   async function renameSession(input) {
@@ -299,7 +302,7 @@
     }
   }
 
-  function openTerminal(stage, session) {
+  function openTerminal(host, session) {
     if (!window.Terminal || !window.FitAddon?.FitAddon) {
       setNotice("The terminal emulator could not be loaded.", "error");
       return;
@@ -321,7 +324,7 @@
     });
     const fitAddon = new window.FitAddon.FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.open(stage);
+    terminal.open(host);
     state.terminal = terminal;
     state.fitAddon = fitAddon;
 
@@ -342,12 +345,12 @@
       fitTerminal();
       sendResize(terminal.rows, terminal.cols);
     };
-    stage.addEventListener("focusin", focusAndResize);
+    host.addEventListener("focusin", focusAndResize);
     window.addEventListener("focus", focusAndResize);
     document.addEventListener("visibilitychange", focusAndResize);
     state.disposables.push({
       dispose: () => {
-        stage.removeEventListener("focusin", focusAndResize);
+        host.removeEventListener("focusin", focusAndResize);
         window.removeEventListener("focus", focusAndResize);
         document.removeEventListener("visibilitychange", focusAndResize);
       },
@@ -356,7 +359,7 @@
       window.clearTimeout(state.resizeTimer);
       state.resizeTimer = window.setTimeout(fitTerminal, 50);
     });
-    state.resizeObserver.observe(stage);
+    state.resizeObserver.observe(host);
 
     fitTerminal();
     terminal.focus();
@@ -366,8 +369,8 @@
 
   function fitTerminal() {
     if (!state.terminal || !state.fitAddon || !state.active) return;
-    const stage = root()?.querySelector(".terminal-stage");
-    if (!stage || stage.clientWidth === 0 || stage.clientHeight === 0) return;
+    const host = root()?.querySelector(".terminal-host");
+    if (!host || host.clientWidth === 0 || host.clientHeight === 0) return;
     try {
       state.fitAddon.fit();
     } catch {

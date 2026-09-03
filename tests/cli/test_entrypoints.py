@@ -369,6 +369,39 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
     kill_all.assert_called_once()
 
 
+def test_serve_keeps_uvicorn_protocol_frames_out_of_console_logs() -> None:
+    from free_claude_code.cli import commands
+
+    settings = _launcher_settings()
+    config_kwargs: dict[str, object] = {}
+
+    def fake_config(app, **kwargs):
+        config_kwargs.update(kwargs)
+        return SimpleNamespace(app=app)
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+            self.should_exit = False
+
+        def run(self):
+            return None
+
+    app = SimpleNamespace(runtime=SimpleNamespace(is_closed=True))
+    with (
+        patch.object(commands, "build_asgi_app", return_value=app),
+        patch.object(commands.uvicorn, "Config", side_effect=fake_config),
+        patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
+    ):
+        commands.ServerSupervisor()._run_once(
+            settings,
+            open_admin_browser=False,
+            restart_generation=0,
+        )
+
+    assert config_kwargs["log_level"] == "info"
+
+
 def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
     from free_claude_code.cli import commands
 

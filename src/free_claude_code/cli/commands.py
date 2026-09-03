@@ -156,7 +156,7 @@ class ServerSupervisor:
             asgi_app,
             host=settings.host,
             port=settings.port,
-            log_level="debug",
+            log_level="info",
             log_config=(
                 uvicorn.config.LOGGING_CONFIG if self._console_logging else None
             ),
