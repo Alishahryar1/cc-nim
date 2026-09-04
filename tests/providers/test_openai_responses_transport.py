@@ -16,7 +16,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.openai_responses import OpenAIResponsesTransport
@@ -330,6 +330,94 @@ async def test_native_response_failed_retries_before_public_commitment() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["messages", "responses"])
+async def test_context_failure_event_is_canonical_and_not_retried(
+    wire_api: str,
+) -> None:
+    attempts = 0
+    failed = {
+        "type": "response.failed",
+        "sequence_number": 0,
+        "response": {
+            **_completed_response(),
+            "status": "failed",
+            "error": {
+                "message": "maximum context reached",
+                "type": "invalid_request_error",
+                "code": " Context_Length_Exceeded ",
+            },
+        },
+    }
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(failed),
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(ExecutionFailure) as exc_info:
+            if wire_api == "messages":
+                await _collect(_transport(client, max_attempts=2))
+            else:
+                await _collect_native(
+                    _transport(client, max_attempts=2),
+                    OpenAIResponsesRequest(model="upstream-model", input="hello"),
+                )
+    finally:
+        await client.close()
+
+    assert attempts == 1
+    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["messages", "responses"])
+async def test_top_level_context_error_is_canonical_and_not_retried(
+    wire_api: str,
+) -> None:
+    attempts = 0
+    failed = {
+        "type": "error",
+        "sequence_number": 0,
+        "code": "context_length_exceeded",
+        "message": "maximum context reached",
+        "param": None,
+    }
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(failed),
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(ExecutionFailure) as exc_info:
+            if wire_api == "messages":
+                await _collect(_transport(client, max_attempts=2))
+            else:
+                await _collect_native(
+                    _transport(client, max_attempts=2),
+                    OpenAIResponsesRequest(model="upstream-model", input="hello"),
+                )
+    finally:
+        await client.close()
+
+    assert attempts == 1
+    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
 async def test_native_committed_truncation_emits_one_failed_terminal() -> None:
     attempts = 0
     committed = "x" * 70_000
@@ -395,6 +483,47 @@ async def test_native_response_incomplete_is_a_normal_terminal() -> None:
 
     events = parse_sse_text("".join(chunks))
     assert [event.event for event in events] == ["response.incomplete"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["messages", "responses"])
+async def test_context_incomplete_reason_is_canonical_failure(wire_api: str) -> None:
+    attempts = 0
+    incomplete = {
+        "type": "response.incomplete",
+        "sequence_number": 0,
+        "response": {
+            **_completed_response(),
+            "status": "incomplete",
+            "incomplete_details": {"reason": "model_context_window_exceeded"},
+        },
+    }
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(incomplete),
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(ExecutionFailure) as exc_info:
+            if wire_api == "messages":
+                await _collect(_transport(client, max_attempts=2))
+            else:
+                await _collect_native(
+                    _transport(client, max_attempts=2),
+                    OpenAIResponsesRequest(model="upstream-model", input="hello"),
+                )
+    finally:
+        await client.close()
+
+    assert attempts == 1
+    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert exc_info.value.retryable is False
 
 
 @pytest.mark.asyncio

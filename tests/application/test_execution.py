@@ -239,6 +239,21 @@ class ApplicationErrorPreflightProvider(FakeProvider):
         raise self._error
 
 
+class ExecutionFailurePreflightProvider(FakeProvider):
+    def __init__(self, failure: ExecutionFailure) -> None:
+        super().__init__()
+        self._failure = failure
+
+    def preflight_messages(
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+    ) -> None:
+        super().preflight_messages(request, reasoning=reasoning)
+        raise self._failure
+
+
 class FailingStreamConstructionProvider(FakeProvider):
     def stream_messages(
         self,
@@ -782,6 +797,36 @@ async def test_nonretryable_provider_failure_selects_fallback_before_first_frame
     )
     assert fallback_started["failure_kind"] == failure_kind.value
     assert fallback_started["provider_retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_primary_canonical_preflight_failure_selects_fallback() -> None:
+    primary_failure = ExecutionFailure(
+        kind=FailureKind.CONTEXT_WINDOW_EXCEEDED,
+        status_code=400,
+        message="primary context exceeded",
+        retryable=False,
+    )
+    primary = ExecutionFailurePreflightProvider(primary_failure)
+    fallback = ControlledProvider(["fallback-frame"])
+    providers = {"provider": primary, "fallback": fallback}
+    failures: list[ExecutionFailure] = []
+    executor = ProviderExecutor(
+        providers.__getitem__,
+        progress_timeout_seconds=60.0,
+    )
+
+    stream = executor.stream_messages(
+        _routed_request(_target("fallback", "fallback-model")),
+        raw_log_payload={},
+        request_id="req_preflight_fallback",
+        candidate_failed=failures.append,
+    )
+
+    assert [chunk async for chunk in stream] == ["fallback-frame"]
+    assert failures == [primary_failure]
+    assert primary.stream_calls == []
+    assert fallback.preflight_calls[0][0].model == "fallback-model"
 
 
 @pytest.mark.asyncio

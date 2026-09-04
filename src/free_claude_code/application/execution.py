@@ -44,6 +44,7 @@ ResponsesTokenCounter = Callable[[OpenAIResponsesRequest], int]
 WireApi = Literal["messages", "responses"]
 CandidateStreamOpener = Callable[[int, ProviderModelTarget], AsyncIterator[str]]
 CandidateSelected = Callable[[ProviderModelTarget], Awaitable[None] | None]
+CandidateFailed = Callable[[ExecutionFailure], None]
 
 
 class ProviderExecutor:
@@ -163,16 +164,21 @@ class ProviderExecutor:
         raw_log_payload: object,
         request_id: str,
         candidate_selected: CandidateSelected | None = None,
+        candidate_failed: CandidateFailed | None = None,
     ) -> AsyncIterator[str]:
         """Preflight and execute one Anthropic Messages request."""
 
         primary = routed.resolved.primary
         primary_provider = self._provider_resolver(primary.provider_id)
         primary_request = routed.request.model_copy(deep=True)
-        primary_provider.preflight_messages(
-            primary_request,
-            reasoning=routed.reasoning,
-        )
+        primary_failure: ExecutionFailure | None = None
+        try:
+            primary_provider.preflight_messages(
+                primary_request,
+                reasoning=routed.reasoning,
+            )
+        except ExecutionFailure as failure:
+            primary_failure = failure
         input_tokens = self._token_counter(
             routed.request.messages,
             routed.request.system,
@@ -196,6 +202,8 @@ class ProviderExecutor:
                     deep=True,
                 )
             )
+            if index == 0 and primary_failure is not None:
+                raise primary_failure
             if index > 0:
                 provider.preflight_messages(request, reasoning=routed.reasoning)
             return provider.stream_messages(
@@ -218,6 +226,7 @@ class ProviderExecutor:
             request_id=request_id,
             open_candidate=open_candidate,
             candidate_selected=candidate_selected,
+            candidate_failed=candidate_failed,
         )
 
     def stream_responses(
@@ -232,10 +241,14 @@ class ProviderExecutor:
         primary = routed.resolved.primary
         primary_provider = self._provider_resolver(primary.provider_id)
         primary_request = routed.request.model_copy(deep=True)
-        primary_provider.preflight_responses(
-            primary_request,
-            reasoning=routed.reasoning,
-        )
+        primary_failure: ExecutionFailure | None = None
+        try:
+            primary_provider.preflight_responses(
+                primary_request,
+                reasoning=routed.reasoning,
+            )
+        except ExecutionFailure as failure:
+            primary_failure = failure
         input_tokens = self._responses_token_counter(routed.request)
 
         def open_candidate(
@@ -255,6 +268,8 @@ class ProviderExecutor:
                     deep=True,
                 )
             )
+            if index == 0 and primary_failure is not None:
+                raise primary_failure
             if index > 0:
                 provider.preflight_responses(request, reasoning=routed.reasoning)
             return provider.stream_responses(
@@ -287,6 +302,7 @@ class ProviderExecutor:
             request_id=request_id,
             open_candidate=open_candidate,
             candidate_selected=None,
+            candidate_failed=None,
         )
 
     def _stream_candidates(
@@ -303,6 +319,7 @@ class ProviderExecutor:
         request_id: str,
         open_candidate: CandidateStreamOpener,
         candidate_selected: CandidateSelected | None,
+        candidate_failed: CandidateFailed | None,
     ) -> AsyncIterator[str]:
         """Run one protocol-blind candidate lifecycle after eager preflight."""
 
@@ -447,6 +464,8 @@ class ProviderExecutor:
                         if inspect.isawaitable(selected_result):
                             await selected_result
                     return
+                if candidate_failed is not None:
+                    candidate_failed(candidate_failure)
                 if candidate_committed or index + 1 >= len(candidates):
                     raise candidate_failure
                 next_target = candidates[index + 1]
