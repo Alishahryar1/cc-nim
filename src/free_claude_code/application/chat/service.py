@@ -1004,8 +1004,11 @@ class ChatService:
                 )
             ):
                 raise
+            context_failure = exc
 
         transcript = await self._store.get_transcript(active.session_id)
+        if not builder.can_compact(transcript):
+            raise context_failure
         await self._compact_transcript(
             active,
             builder=builder,

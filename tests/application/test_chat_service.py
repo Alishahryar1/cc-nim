@@ -2182,6 +2182,38 @@ async def test_second_context_failure_finishes_as_one_failed_generation(
 
 
 @pytest.mark.asyncio
+async def test_uncompactable_context_failure_keeps_canonical_error(
+    tmp_path: Path,
+) -> None:
+    provider = ContextRecoveryProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await service.create_session()
+        provider.generation_failures = 1
+        operation = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000125",
+            text="one oversized turn",
+        )
+        events = await _drain(operation)
+
+        transcript = await store.get_transcript(session.id)
+        generation = transcript.turns[-1].generation
+        assert events.count("compaction.started") == 0
+        assert events[-1] == "turn.failed"
+        assert transcript.compaction is None
+        assert generation.error_code == FailureKind.CONTEXT_WINDOW_EXCEEDED.value
+        assert generation.error_message == (
+            "Provider input exceeds the model context window."
+        )
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
 async def test_stop_during_reactive_compaction_stops_the_original_generation(
     tmp_path: Path,
 ) -> None:

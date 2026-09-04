@@ -1860,6 +1860,39 @@ class TestStreamingExceptionHandling:
         assert stream.closed is True
 
     @pytest.mark.asyncio
+    async def test_context_exhaustion_during_recovery_remains_terminal(self):
+        """A recovery request cannot turn context exhaustion into success."""
+        original = ClosableAsyncStreamMock(
+            [_make_chunk(content="partial" + ("x" * 70_000))]
+        )
+        recovery = ClosableAsyncStreamMock(
+            [
+                _make_chunk(content="continued"),
+                _make_chunk(finish_reason="model_context_window_exceeded"),
+            ]
+        )
+        provider = _make_provider()
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[original, recovery],
+        ):
+            events, failure = await _collect_stream_and_error(
+                provider,
+                _make_request(),
+            )
+
+        assert failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+        assert failure.retryable is False
+        assert not any(
+            event.event == "message_stop" for event in parse_sse_text("".join(events))
+        )
+        assert original.closed is True
+        assert recovery.closed is True
+
+    @pytest.mark.asyncio
     async def test_recovery_close_failure_preserves_completed_output(self):
         """A failed stream close cannot replace completed recovery output."""
         stream = ClosableAsyncStreamMock(

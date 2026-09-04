@@ -34,7 +34,7 @@ from free_claude_code.core.anthropic.streaming import (
     tool_schemas_by_name,
 )
 from free_claude_code.core.anthropic.usage import anthropic_input_usage_fields
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesRequest,
@@ -1225,6 +1225,11 @@ class _OpenAIChatStreamRunner:
                     request_id=self._request_id,
                     exc_type=type(recovery_error).__name__,
                 )
+                if (
+                    isinstance(recovery_error, ExecutionFailure)
+                    and recovery_error.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+                ):
+                    error = recovery_error
                 recovery_events = None
             if recovery_events is not None:
                 return _OpenAIChatFailureResolution(
@@ -1330,7 +1335,10 @@ class _OpenAIChatStreamRunner:
                     if not getattr(chunk, "choices", None):
                         continue
                     choice = chunk.choices[0]
-                    if choice.finish_reason is not None:
+                    finish_reason = choice.finish_reason
+                    if is_context_window_finish_reason(finish_reason):
+                        raise context_window_exceeded_provider_failure()
+                    if finish_reason is not None:
                         terminal_seen = True
                     delta = choice.delta
                     if delta is None:

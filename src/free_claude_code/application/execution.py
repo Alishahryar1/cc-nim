@@ -171,10 +171,14 @@ class ProviderExecutor:
         primary = routed.resolved.primary
         primary_provider = self._provider_resolver(primary.provider_id)
         primary_request = routed.request.model_copy(deep=True)
-        primary_provider.preflight_messages(
-            primary_request,
-            reasoning=routed.reasoning,
-        )
+        primary_failure: ExecutionFailure | None = None
+        try:
+            primary_provider.preflight_messages(
+                primary_request,
+                reasoning=routed.reasoning,
+            )
+        except ExecutionFailure as failure:
+            primary_failure = failure
         input_tokens = self._token_counter(
             routed.request.messages,
             routed.request.system,
@@ -198,6 +202,8 @@ class ProviderExecutor:
                     deep=True,
                 )
             )
+            if index == 0 and primary_failure is not None:
+                raise primary_failure
             if index > 0:
                 provider.preflight_messages(request, reasoning=routed.reasoning)
             return provider.stream_messages(
@@ -235,10 +241,14 @@ class ProviderExecutor:
         primary = routed.resolved.primary
         primary_provider = self._provider_resolver(primary.provider_id)
         primary_request = routed.request.model_copy(deep=True)
-        primary_provider.preflight_responses(
-            primary_request,
-            reasoning=routed.reasoning,
-        )
+        primary_failure: ExecutionFailure | None = None
+        try:
+            primary_provider.preflight_responses(
+                primary_request,
+                reasoning=routed.reasoning,
+            )
+        except ExecutionFailure as failure:
+            primary_failure = failure
         input_tokens = self._responses_token_counter(routed.request)
 
         def open_candidate(
@@ -258,6 +268,8 @@ class ProviderExecutor:
                     deep=True,
                 )
             )
+            if index == 0 and primary_failure is not None:
+                raise primary_failure
             if index > 0:
                 provider.preflight_responses(request, reasoning=routed.reasoning)
             return provider.stream_responses(
