@@ -16,7 +16,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
 )
 from free_claude_code.core.diagnostics import ERROR_DETAIL_DISPLAY_CAP_BYTES
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
@@ -1122,4 +1122,84 @@ async def test_stream_failure_redacts_credentials_from_customer_diagnostic() -> 
 
     assert "sk-this-must-never-be-returned" not in exc_info.value.message
     assert "Authorization: <redacted>" in exc_info.value.message
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["messages", "responses"])
+@pytest.mark.parametrize(
+    ("event_type", "response_fields"),
+    [
+        (
+            "response.failed",
+            {
+                "status": "failed",
+                "error": {
+                    "code": "context_length_exceeded",
+                    "message": "maximum context length exceeded",
+                },
+            },
+        ),
+        (
+            "response.incomplete",
+            {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "model_context_window_exceeded"},
+                "usage": {"input_tokens": 10, "output_tokens": 0},
+            },
+        ),
+    ],
+)
+async def test_context_terminals_have_canonical_failure_semantics(
+    wire_api: str,
+    event_type: str,
+    response_fields: dict[str, Any],
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            text=_sse(
+                (
+                    event_type,
+                    {
+                        "type": event_type,
+                        "response": {"id": "resp_context", **response_fields},
+                    },
+                )
+            ),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+
+    stream = (
+        provider.stream_messages(
+            _request(),
+            request_id=f"req_context_{wire_api}",
+            response_model="claude-opus-4",
+        )
+        if wire_api == "messages"
+        else provider.stream_responses(
+            _responses_request(),
+            request_id=f"req_context_{wire_api}",
+            response_model="openai/gpt-test",
+        )
+    )
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await _collect(stream)
+
+    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert exc_info.value.retryable is False
+    assert calls == 1
     await client.aclose()

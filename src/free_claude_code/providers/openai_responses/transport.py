@@ -37,8 +37,8 @@ from free_claude_code.providers.failure_policy import (
     classify_provider_failure,
     context_window_exceeded_provider_failure,
     is_context_window_error_code,
-    is_context_window_finish_reason,
     is_retryable_stream_error,
+    reports_context_window_incomplete,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
 from free_claude_code.providers.stream_recovery import (
@@ -285,7 +285,7 @@ class OpenAIResponsesTransport:
                             upstream_event.type,
                             payload,
                         )
-                    if _reports_context_window_incomplete(
+                    if reports_context_window_incomplete(
                         upstream_event.type,
                         payload,
                     ):
@@ -422,21 +422,6 @@ def _effective_error(error: Exception) -> Exception:
         marker in code for marker in ("server", "internal", "unavailable", "timeout")
     )
     return ExecutionFailure(FailureKind.UPSTREAM, 502, message, retryable)
-
-
-def _reports_context_window_incomplete(
-    event_type: str,
-    payload: JsonObject,
-) -> bool:
-    if event_type != "response.incomplete":
-        return False
-    response = payload.get("response")
-    if not isinstance(response, dict):
-        return False
-    details = response.get("incomplete_details")
-    return isinstance(details, dict) and is_context_window_finish_reason(
-        details.get("reason")
-    )
 
 
 def _trace_early_retry(

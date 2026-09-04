@@ -665,6 +665,7 @@ class ChatService:
                 builder=builder,
                 lease=lease,
                 prompt=prompt,
+                excluded_generation_id=generation_id,
             )
         finally:
             await lease.release()
@@ -739,6 +740,7 @@ class ChatService:
                 builder=builder,
                 lease=lease,
                 prompt=prompt,
+                excluded_generation_id=generation_id,
             )
         finally:
             await lease.release()
@@ -816,6 +818,7 @@ class ChatService:
                 builder=builder,
                 lease=lease,
                 prompt=prompt,
+                excluded_generation_id=latest.generation.id,
             )
         finally:
             await lease.release()
@@ -854,6 +857,7 @@ class ChatService:
         *,
         prepared: PreparedChatRequest,
         lease: RequestRuntimeLease,
+        candidate_failures: list[FailureKind] | None = None,
     ) -> None:
         generation_id = active.generation_id
         if generation_id is None:
@@ -871,11 +875,16 @@ class ChatService:
                 generation_id, target_model.provider_model_ref
             )
 
+        def failed(failure: ExecutionFailure) -> None:
+            if candidate_failures is not None:
+                candidate_failures.append(failure.kind)
+
         stream = executor.stream_messages(
             prepared.routed,
             raw_log_payload=prepared.routed.request.model_dump(mode="json"),
             request_id=active.operation_id,
             candidate_selected=selected,
+            candidate_failed=failed if candidate_failures is not None else None,
         )
         decoder = AnthropicSSEDecoder()
         block_segments: dict[int, int] = {}
@@ -973,12 +982,27 @@ class ChatService:
         builder: ChatContextBuilder,
         lease: RequestRuntimeLease,
         prompt: str,
+        excluded_generation_id: str,
     ) -> None:
+        candidate_failures: list[FailureKind] = []
         try:
-            await self._execute_generation(active, prepared=prepared, lease=lease)
+            await self._execute_generation(
+                active,
+                prepared=prepared,
+                lease=lease,
+                candidate_failures=candidate_failures,
+            )
             return
         except ExecutionFailure as exc:
-            if exc.kind is not FailureKind.CONTEXT_WINDOW_EXCEEDED or active.segments:
+            if (
+                exc.kind is not FailureKind.CONTEXT_WINDOW_EXCEEDED
+                or active.segments
+                or not candidate_failures
+                or any(
+                    kind is not FailureKind.CONTEXT_WINDOW_EXCEEDED
+                    for kind in candidate_failures
+                )
+            ):
                 raise
 
         transcript = await self._store.get_transcript(active.session_id)
@@ -989,13 +1013,13 @@ class ChatService:
             transcript=transcript,
             prompt=prompt,
             pending_draft=None,
-            excluded_generation_id=active.generation_id,
+            excluded_generation_id=excluded_generation_id,
         )
         transcript = await self._store.get_transcript(active.session_id)
         prepared = builder.prepare(
             transcript,
             system_prompt=prompt,
-            exclude_generation_id=active.generation_id,
+            exclude_generation_id=excluded_generation_id,
         )
         _require_request_fits(prepared.estimate)
         await self._execute_generation(active, prepared=prepared, lease=lease)

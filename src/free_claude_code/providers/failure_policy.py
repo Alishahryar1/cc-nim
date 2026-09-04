@@ -126,6 +126,22 @@ def is_context_window_finish_reason(value: object) -> bool:
     )
 
 
+def reports_context_window_incomplete(
+    event_type: str,
+    payload: Mapping[str, object],
+) -> bool:
+    """Return whether one Responses incomplete terminal reports context exhaustion."""
+    if event_type != "response.incomplete":
+        return False
+    response = payload.get("response")
+    if not isinstance(response, Mapping):
+        return False
+    details = response.get("incomplete_details")
+    return isinstance(details, Mapping) and is_context_window_finish_reason(
+        details.get("reason")
+    )
+
+
 def retryable_transient_status(exc: BaseException) -> int | None:
     """Infer a retryable HTTP-like status from one upstream exception."""
     if isinstance(exc, ProviderRecoveryExhausted):

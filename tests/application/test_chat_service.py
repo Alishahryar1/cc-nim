@@ -222,6 +222,41 @@ class ContextRecoveryProvider(FakeChatProvider):
             yield frame
 
 
+class MixedFallbackFailureProvider(ContextRecoveryProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_candidates = False
+
+    async def stream_messages(
+        self,
+        request: MessagesRequest,
+        *,
+        input_tokens: int,
+        request_id: str,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        if self.fail_candidates and not str(request.system).startswith("Summarize"):
+            if request.model == "model":
+                raise ExecutionFailure(
+                    kind=FailureKind.PERMISSION,
+                    status_code=403,
+                    message="primary denied access",
+                    retryable=False,
+                )
+            if request.model == "fallback":
+                raise _context_failure()
+            raise AssertionError(f"Unexpected fallback model: {request.model}")
+        async for frame in super().stream_messages(
+            request,
+            input_tokens=input_tokens,
+            request_id=request_id,
+            response_model=response_model,
+            reasoning=reasoning,
+        ):
+            yield frame
+
+
 class BackpressuredCompletionProvider(FakeChatProvider):
     async def stream_messages(
         self,
@@ -2003,6 +2038,53 @@ async def test_context_failure_compacts_once_and_retries_same_operation(
         else:
             assert len(transcript.turns) == 2
             assert generation.id != prior_generation_id
+            generation_requests = [
+                request
+                for request in provider.requests
+                if not str(request.system).startswith("Summarize")
+            ]
+            retried_messages = generation_requests[-1].messages
+            assert all(message.role != "assistant" for message in retried_messages)
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_mixed_fallback_failures_do_not_trigger_context_recovery(
+    tmp_path: Path,
+) -> None:
+    provider = MixedFallbackFailureProvider()
+    service, runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await _seed_completed_turns(
+            service,
+            await service.create_session(),
+            count=2,
+        )
+        runtime.settings = runtime.settings.model_copy(
+            update={"model_fallbacks": ("groq/fallback",)}
+        )
+        provider.fail_candidates = True
+        provider.summary_batch_sizes.clear()
+
+        operation = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000105",
+            text="do not compact for mixed failures",
+        )
+        events = await _drain(operation)
+
+        transcript = await store.get_transcript(session.id)
+        generation = transcript.turns[-1].generation
+        assert events.count("compaction.started") == 0
+        assert events[-1] == "turn.failed"
+        assert transcript.compaction is None
+        assert provider.summary_batch_sizes == []
+        assert generation.status is GenerationStatus.FAILED
+        assert generation.error_code == FailureKind.CONTEXT_WINDOW_EXCEEDED.value
     finally:
         await service.close()
 
