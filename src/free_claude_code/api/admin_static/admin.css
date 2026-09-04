@@ -903,3 +903,15 @@ textarea:focus-visible,
     text-align: left;
   }
 }
+.field-error {
+  color: var(--danger, #ef4444);
+  font-size: 13px;
+}
+
+.field [aria-invalid="true"] {
+  border-color: var(--danger, #ef4444);
+}
+
+#messageArea {
+  white-space: pre-line;
+}

@@ -31,6 +31,15 @@ def _local_client(app):
     )
 
 
+@pytest.fixture(autouse=True)
+def _offline_credential_checks(monkeypatch):
+    """These tests exercise config persistence; probe HTTP has its own suite."""
+    monkeypatch.setattr(
+        "free_claude_code.runtime.application.check_credentials",
+        AsyncMock(return_value=()),
+    )
+
+
 def _set_home(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))

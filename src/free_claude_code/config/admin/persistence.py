@@ -39,6 +39,7 @@ class PreparedAdminUpdate:
     errors: tuple[str, ...]
     pending_fields: tuple[str, ...]
     path: Path
+    changed_keys: tuple[str, ...] = ()
 
     @property
     def valid(self) -> bool:
@@ -152,12 +153,25 @@ def prepare_admin_update(
         if settings is not None and not errors
         else ()
     )
+    state = load_value_state()
+    changed_keys = tuple(
+        key
+        for key, submitted in updates.items()
+        if key in FIELD_BY_KEY
+        and not is_locked_source(state[key].source)
+        and (value := normalize_for_env(submitted))
+        and value != MASKED_SECRET
+        and value != state[key].value
+        and key in target_values
+        and target_values[key] == value
+    )
     return PreparedAdminUpdate(
         target_values=target_values,
         settings=settings,
         errors=errors,
         pending_fields=pending_fields,
         path=managed_env_path(),
+        changed_keys=changed_keys,
     )
 
 

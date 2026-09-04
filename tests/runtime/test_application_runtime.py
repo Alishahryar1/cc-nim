@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,6 +28,10 @@ from free_claude_code.messaging.platforms.ports import (
 from free_claude_code.messaging.session import SessionStore
 from free_claude_code.messaging.workflow import MessagingWorkflow
 from free_claude_code.providers.base import BaseProvider
+from free_claude_code.providers.credential_validation import (
+    CredentialCheck,
+    CredentialStatus,
+)
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
@@ -492,6 +497,81 @@ async def test_restart_required_apply_commits_without_hot_publication(tmp_path) 
     restart.assert_not_awaited()
     await runtime.request_restart()
     restart.assert_awaited_once()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending", [(), ("PORT",)])
+@pytest.mark.parametrize("status", list(CredentialStatus))
+async def test_credential_checks_gate_both_apply_paths(tmp_path, pending, status):
+    factory = TrackingFactory()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/old"), runtime_factory=factory
+    )
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    prepared = replace(
+        _prepared(_settings("nvidia_nim/new"), tmp_path, pending_fields=pending),
+        changed_keys=("GROQ_API_KEY",),
+    )
+    checks = (
+        CredentialCheck("GROQ_API_KEY", status, "Safe result"),
+        CredentialCheck("OPENROUTER_API_KEY", CredentialStatus.VERIFIED, "Accepted"),
+    )
+    with (
+        patch(
+            "free_claude_code.runtime.application.prepare_admin_update",
+            return_value=prepared,
+        ),
+        patch(
+            "free_claude_code.runtime.application.check_credentials",
+            AsyncMock(return_value=checks),
+        ) as check,
+        patch(
+            "free_claude_code.runtime.application.commit_prepared_admin_update",
+            return_value=_applied_response(pending),
+        ) as commit,
+    ):
+        result = await runtime.apply_admin_config({"GROQ_API_KEY": "new"})
+    check.assert_awaited_once_with(prepared.settings, prepared.changed_keys)
+    assert result["credential_checks"] == [
+        {"key": check.key, "status": check.status.value, "message": check.message}
+        for check in checks
+    ]
+    if status == CredentialStatus.REJECTED:
+        commit.assert_not_called()
+        assert result["applied"] is False
+        assert manager.current_generation_id == 1
+    else:
+        commit.assert_called_once_with(prepared)
+        assert result["applied"] is True
+        assert manager.current_generation_id == (1 if pending else 2)
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_credential_check_never_commits(tmp_path):
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/old"))
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    prepared = replace(
+        _prepared(_settings("nvidia_nim/new"), tmp_path), changed_keys=("GROQ_API_KEY",)
+    )
+    with (
+        patch(
+            "free_claude_code.runtime.application.prepare_admin_update",
+            return_value=prepared,
+        ),
+        patch(
+            "free_claude_code.runtime.application.check_credentials",
+            AsyncMock(side_effect=asyncio.CancelledError),
+        ),
+        patch(
+            "free_claude_code.runtime.application.commit_prepared_admin_update"
+        ) as commit,
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await runtime.apply_admin_config({"GROQ_API_KEY": "new"})
+    commit.assert_not_called()
+    assert manager.current_generation_id == 1
     await manager.close()
 
 

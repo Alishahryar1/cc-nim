@@ -1,5 +1,6 @@
 const state = {
   config: null,
+  applying: false,
   fields: new Map(),
   modelOptions: [],
   modelComboboxes: new Set(),
@@ -604,6 +605,7 @@ function renderField(field) {
   input.addEventListener("change", updateDirtyState);
   input.addEventListener("input", () => {
     input.dataset.remove = "false";
+    clearCredentialError(input);
   });
   if (field.type === "optional_model") {
     input.addEventListener("blur", () => {
@@ -633,6 +635,7 @@ function renderField(field) {
       input.dataset.remove = removing ? "true" : "false";
       input.readOnly = removing;
       removeButton.textContent = removing ? "Undo removal" : "Remove";
+      clearCredentialError(input);
       updateDirtyState();
     });
     wrapper.appendChild(removeButton);
@@ -885,35 +888,106 @@ function updateDirtyState() {
   const count = Object.keys(changedValues()).length;
   byId("dirtyState").textContent =
     count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
-  byId("applyButton").disabled = count === 0;
+  byId("applyButton").disabled = state.applying || count === 0;
+}
+
+function clearCredentialError(input) {
+  byId(`${input.id}-error`)?.remove();
+  input.removeAttribute("aria-invalid");
+  input.removeAttribute("aria-describedby");
+}
+
+function showCredentialErrors(checks) {
+  let first = null;
+  checks.forEach((check) => {
+    const input = byId(`field-${check.key}`);
+    if (!input) return;
+    clearCredentialError(input);
+    if (check.status !== "rejected") return;
+    const error = document.createElement("div");
+    error.id = `${input.id}-error`;
+    error.className = "field-error";
+    error.textContent = check.message;
+    input.closest(".field").appendChild(error);
+    input.setAttribute("aria-invalid", "true");
+    input.setAttribute("aria-describedby", error.id);
+    first ||= input;
+  });
+  return first;
+}
+
+function setApplying(applying) {
+  state.applying = applying;
+  VIEW_GROUPS.filter((view) => view.id !== "chat").forEach((view) => {
+    byId(`view-${view.id}`).inert = applying;
+  });
+  if (applying) state.modelComboboxes.forEach((combobox) => combobox.close());
+  byId("applyButton").textContent = applying ? "Applying…" : "Apply";
+  updateDirtyState();
 }
 
 async function apply() {
-  const result = await api("/admin/api/config/apply", {
-    method: "POST",
-    body: JSON.stringify({ values: changedValues() }),
+  if (state.applying) return;
+  const values = changedValues();
+  if (!Object.keys(values).length) return;
+  const checkingKeys = Object.keys(values).some((key) => {
+    const field = state.fields.get(key);
+    return field?.secret && field.section === "providers" && values[key] !== null;
   });
-  if (!result.applied) {
-    showMessage(result.errors.join("; "), "error");
-    return;
-  }
-  const restart = result.restart || {};
-  if (restart.required && restart.automatic) {
-    showMessage("Applied. Restarting server...", "ok");
-    byId("applyButton").disabled = true;
-    setTimeout(() => {
-      window.location.href = restart.admin_url || "/admin";
-    }, 1600);
-    return;
-  }
-  const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
-  await load();
-  showMessage(
-    pending.length
+  let rejectedField = null;
+  let applied = false;
+  let restarting = false;
+  setApplying(true);
+  showMessage(checkingKeys ? "Checking API keys…" : "Applying…");
+  try {
+    const result = await api("/admin/api/config/apply", {
+      method: "POST",
+      body: JSON.stringify({ values }),
+    });
+    const checks = result.credential_checks || [];
+    if (!result.applied) {
+      rejectedField = showCredentialErrors(checks);
+      showMessage(rejectedField ? "Not applied. Check the highlighted API keys." : result.errors.join("; "), "error");
+      return;
+    }
+    applied = true;
+    const warnings = checks.filter((check) => check.status === "unverified").map((check) =>
+      `${state.fields.get(check.key)?.label || check.key}: ${check.message}`
+    );
+    const restart = result.restart || {};
+    if (restart.required && restart.automatic) {
+      restarting = true;
+      showMessage(["Applied. Restarting server…", ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+      if (warnings.length) {
+        const link = document.createElement("a");
+        link.href = restart.admin_url || "/admin";
+        link.textContent = "Open Admin";
+        byId("messageArea").append(document.createElement("br"), link);
+      } else {
+        setTimeout(() => {
+          window.location.href = restart.admin_url || "/admin";
+        }, 1600);
+      }
+      return;
+    }
+    const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
+    await load();
+    const message = pending.length
       ? `Applied. Restart fcc-server to use: ${pending.join(", ")}`
-      : "Applied",
-    "ok",
-  );
+      : "Applied";
+    showMessage([message, ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+  } catch (error) {
+    showMessage(applied ? `Applied, but could not reload settings: ${error.message}` : `Could not apply settings: ${error.message}`, "error");
+  } finally {
+    // Keep the old page read-only while its server restarts.
+    setApplying(restarting);
+    if (rejectedField) {
+      navigateToView("providers");
+      rejectedField.closest(".settings-section")?.classList.add("show-advanced");
+      rejectedField.scrollIntoView({ block: "center", behavior: "instant" });
+      rejectedField.focus();
+    }
+  }
 }
 
 async function refreshLocalStatus() {
