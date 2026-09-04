@@ -41,6 +41,8 @@ _INVALID_REQUEST_MESSAGE = "Invalid request sent to provider."
 _REQUEST_TOO_LARGE_MESSAGE = "Provider rejected the request as too large."
 _CONTEXT_WINDOW_EXCEEDED_MESSAGE = "Provider input exceeds the model context window."
 _OVERLOADED_MESSAGE = "Provider is currently overloaded. Please retry."
+_CONTEXT_WINDOW_ERROR_CODE = "context_length_exceeded"
+_CONTEXT_WINDOW_FINISH_REASON = "model_context_window_exceeded"
 
 
 class ProviderRecoveryExhausted(RuntimeError):
@@ -108,6 +110,22 @@ def context_window_exceeded_provider_failure(
     return _failure(FailureKind.CONTEXT_WINDOW_EXCEEDED, 400, message, False)
 
 
+def is_context_window_error_code(value: object) -> bool:
+    """Return whether one structured provider discriminator means context exhaustion."""
+    return (
+        isinstance(value, str)
+        and value.strip().casefold() == _CONTEXT_WINDOW_ERROR_CODE
+    )
+
+
+def is_context_window_finish_reason(value: object) -> bool:
+    """Return whether one terminal provider reason means context exhaustion."""
+    return (
+        isinstance(value, str)
+        and value.strip().casefold() == _CONTEXT_WINDOW_FINISH_REASON
+    )
+
+
 def retryable_transient_status(exc: BaseException) -> int | None:
     """Infer a retryable HTTP-like status from one upstream exception."""
     if isinstance(exc, ProviderRecoveryExhausted):
@@ -115,6 +133,8 @@ def retryable_transient_status(exc: BaseException) -> int | None:
     if isinstance(exc, ExecutionFailure):
         status = exc.status_code
         return status if exc.retryable and _is_retryable_status(status) else None
+    if _reports_context_window_exceeded(exc):
+        return None
     if _reported_status(exc) == 413:
         return None
     if isinstance(exc, openai.RateLimitError):
@@ -267,6 +287,9 @@ def _classify_provider_failure(
     if isinstance(exc, ExecutionFailure):
         return exc
 
+    if _reports_context_window_exceeded(exc):
+        return context_window_exceeded_provider_failure()
+
     if _reported_status(exc) == 413:
         return _failure(
             FailureKind.INVALID_REQUEST,
@@ -397,6 +420,26 @@ def _reported_status(exc: BaseException) -> int | None:
     if isinstance(response_status, int):
         return response_status
     return _status_from_body(getattr(exc, "body", None))
+
+
+def _reports_context_window_exceeded(exc: BaseException) -> bool:
+    if is_context_window_error_code(getattr(exc, "code", None)):
+        return True
+
+    bodies = [getattr(exc, "body", None)]
+    response = getattr(exc, "response", None)
+    if response is not None:
+        with suppress(Exception):
+            bodies.append(response.content)
+    for body in bodies:
+        for item in _body_candidates(body):
+            if not isinstance(item, Mapping):
+                continue
+            if any(
+                is_context_window_error_code(item.get(key)) for key in ("code", "type")
+            ):
+                return True
+    return False
 
 
 def _status_from_body(body: Any) -> int | None:

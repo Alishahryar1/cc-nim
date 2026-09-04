@@ -35,6 +35,9 @@ from free_claude_code.providers.admission import (
 from free_claude_code.providers.failure_policy import (
     RetryableProviderProtocolError,
     classify_provider_failure,
+    context_window_exceeded_provider_failure,
+    is_context_window_error_code,
+    is_context_window_finish_reason,
     is_retryable_stream_error,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
@@ -282,6 +285,11 @@ class OpenAIResponsesTransport:
                             upstream_event.type,
                             payload,
                         )
+                    if _reports_context_window_incomplete(
+                        upstream_event.type,
+                        payload,
+                    ):
+                        raise context_window_exceeded_provider_failure()
                     for event in presenter.feed(upstream_event.type, payload):
                         for held in recovery.push(event):
                             yield held
@@ -403,6 +411,8 @@ def _effective_error(error: Exception) -> Exception:
         extract_upstream_error_detail(error).exception_text
         or "Provider response failed."
     )
+    if is_context_window_error_code(error.code):
+        return context_window_exceeded_provider_failure()
     code = (error.code or "").lower()
     if "rate" in code or "429" in code:
         return ExecutionFailure(FailureKind.RATE_LIMIT, 429, message, True)
@@ -412,6 +422,21 @@ def _effective_error(error: Exception) -> Exception:
         marker in code for marker in ("server", "internal", "unavailable", "timeout")
     )
     return ExecutionFailure(FailureKind.UPSTREAM, 502, message, retryable)
+
+
+def _reports_context_window_incomplete(
+    event_type: str,
+    payload: JsonObject,
+) -> bool:
+    if event_type != "response.incomplete":
+        return False
+    response = payload.get("response")
+    if not isinstance(response, dict):
+        return False
+    details = response.get("incomplete_details")
+    return isinstance(details, dict) and is_context_window_finish_reason(
+        details.get("reason")
+    )
 
 
 def _trace_early_retry(

@@ -13,6 +13,7 @@ from free_claude_code.application.chat import (
     ChatOperationAcknowledgement,
     ChatOperationKind,
     ChatService,
+    ChatSession,
     ChatUnavailableError,
     GenerationStatus,
 )
@@ -21,6 +22,7 @@ from free_claude_code.application.ports import ProviderPort, RequestRuntimeLease
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
@@ -144,6 +146,82 @@ class FakeChatProvider:
         yield ""
 
 
+def _context_failure() -> ExecutionFailure:
+    return ExecutionFailure(
+        kind=FailureKind.CONTEXT_WINDOW_EXCEEDED,
+        status_code=400,
+        message="Provider input exceeds the model context window.",
+        retryable=False,
+    )
+
+
+class ContextRecoveryProvider(FakeChatProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.generation_failures = 0
+        self.generation_failure_after_segment = False
+        self.generation_attempts = 0
+        self.summary_batch_limit: int | None = None
+        self.summary_failure: ExecutionFailure | None = None
+        self.summary_batch_sizes: list[int] = []
+        self.block_summary = False
+        self.summary_started = asyncio.Event()
+
+    async def stream_messages(
+        self,
+        request: MessagesRequest,
+        *,
+        input_tokens: int,
+        request_id: str,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        is_summary = str(request.system).startswith("Summarize")
+        if is_summary:
+            source = request.messages[0].content
+            if not isinstance(source, str):
+                raise AssertionError("Compaction source must be text.")
+            batch_size = source.count("USER\n")
+            self.summary_batch_sizes.append(batch_size)
+            self.summary_started.set()
+            if self.block_summary:
+                await asyncio.Event().wait()
+            if self.summary_failure is not None:
+                raise self.summary_failure
+            if (
+                self.summary_batch_limit is not None
+                and batch_size > self.summary_batch_limit
+            ):
+                raise _context_failure()
+        else:
+            self.generation_attempts += 1
+            if self.generation_failures > 0:
+                self.generation_failures -= 1
+                if self.generation_failure_after_segment:
+                    yield format_sse_event(
+                        "message_start",
+                        {"type": "message_start", "message": {"content": []}},
+                    )
+                    yield format_sse_event(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                    )
+                raise _context_failure()
+
+        async for frame in super().stream_messages(
+            request,
+            input_tokens=input_tokens,
+            request_id=request_id,
+            response_model=response_model,
+            reasoning=reasoning,
+        ):
+            yield frame
+
+
 class BackpressuredCompletionProvider(FakeChatProvider):
     async def stream_messages(
         self,
@@ -222,7 +300,7 @@ class FakeRuntime:
         self,
         provider: FakeChatProvider,
         *,
-        context_window_tokens: int = 100_000,
+        context_window_tokens: int | None = 100_000,
     ) -> None:
         self.settings = Settings().model_copy(
             update={
@@ -339,6 +417,28 @@ async def _drain(operation: _ObservedOperation) -> list[str]:
     finally:
         await operation.aclose()
     return events
+
+
+async def _seed_completed_turns(
+    service: ChatService,
+    session: ChatSession,
+    *,
+    count: int,
+    operation_offset: int = 1,
+) -> ChatSession:
+    current = session
+    for index in range(operation_offset, operation_offset + count):
+        operation = await _observe_call(
+            service,
+            service.send,
+            current.id,
+            expected_revision=current.revision,
+            operation_id=f"00000000-0000-4000-8000-{index:012d}",
+            text=f"turn {index}",
+        )
+        assert (await _drain(operation))[-1] == "turn.completed"
+        current = await service.get_session(current.id)
+    return current
 
 
 @pytest.mark.asyncio
@@ -1843,6 +1943,302 @@ async def test_disconnect_after_durable_completion_cannot_downgrade_status(
         generation = (await store.get_transcript(session.id)).turns[0].generation
         assert generation.status is GenerationStatus.COMPLETED
         assert generation.stop_reason == "end_turn"
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation_kind", ["send", "regenerate"])
+async def test_context_failure_compacts_once_and_retries_same_operation(
+    tmp_path: Path,
+    operation_kind: str,
+) -> None:
+    provider = ContextRecoveryProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await _seed_completed_turns(
+            service,
+            await service.create_session(),
+            count=2,
+        )
+        prior_generation_id = (
+            (await store.get_transcript(session.id)).turns[-1].generation.id
+        )
+        provider.generation_attempts = 0
+        provider.summary_batch_sizes.clear()
+        provider.generation_failures = 1
+
+        if operation_kind == "send":
+            operation = await _observe_call(
+                service,
+                service.send,
+                session.id,
+                expected_revision=session.revision,
+                operation_id="00000000-0000-4000-8000-000000000100",
+                text="recover this send",
+            )
+        else:
+            operation = await _observe_call(
+                service,
+                service.regenerate,
+                session.id,
+                expected_revision=session.revision,
+                operation_id="00000000-0000-4000-8000-000000000101",
+            )
+        events = await _drain(operation)
+
+        transcript = await store.get_transcript(session.id)
+        generation = transcript.turns[-1].generation
+        assert events.count("turn.started") == 1
+        assert events.count("compaction.started") == 1
+        assert events.count("compaction.completed") == 1
+        assert events[-1] == "turn.completed"
+        assert "turn.failed" not in events
+        assert provider.generation_attempts == 2
+        assert provider.summary_batch_sizes == [1]
+        assert transcript.compaction is not None
+        assert generation.status is GenerationStatus.COMPLETED
+        if operation_kind == "send":
+            assert len(transcript.turns) == 3
+        else:
+            assert len(transcript.turns) == 2
+            assert generation.id != prior_generation_id
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_retry_context_failure_reuses_failed_generation_after_compaction(
+    tmp_path: Path,
+) -> None:
+    provider = ContextRecoveryProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await _seed_completed_turns(
+            service,
+            await service.create_session(),
+            count=1,
+        )
+        provider.generation_failures = 1
+        provider.generation_failure_after_segment = True
+        failed = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000110",
+            text="fail after output starts",
+        )
+        assert (await _drain(failed))[-1] == "turn.failed"
+        transcript = await store.get_transcript(session.id)
+        failed_generation_id = transcript.turns[-1].generation.id
+        assert transcript.compaction is None
+
+        session = transcript.session
+        provider.generation_attempts = 0
+        provider.summary_batch_sizes.clear()
+        provider.generation_failure_after_segment = False
+        provider.generation_failures = 1
+        retry = await _observe_call(
+            service,
+            service.retry,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000111",
+        )
+        events = await _drain(retry)
+
+        transcript = await store.get_transcript(session.id)
+        generation = transcript.turns[-1].generation
+        assert events.count("turn.started") == 1
+        assert events.count("compaction.started") == 1
+        assert events.count("compaction.completed") == 1
+        assert events[-1] == "turn.completed"
+        assert generation.id == failed_generation_id
+        assert generation.status is GenerationStatus.COMPLETED
+        assert provider.generation_attempts == 2
+        assert provider.summary_batch_sizes == [1]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_second_context_failure_finishes_as_one_failed_generation(
+    tmp_path: Path,
+) -> None:
+    provider = ContextRecoveryProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await _seed_completed_turns(
+            service,
+            await service.create_session(),
+            count=2,
+        )
+        provider.generation_attempts = 0
+        provider.generation_failures = 2
+        operation = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000120",
+            text="still too large after compaction",
+        )
+        events = await _drain(operation)
+
+        transcript = await store.get_transcript(session.id)
+        generation = transcript.turns[-1].generation
+        assert events.count("turn.started") == 1
+        assert events.count("compaction.started") == 1
+        assert events.count("compaction.completed") == 1
+        assert events.count("turn.failed") == 1
+        assert provider.generation_attempts == 2
+        assert generation.status is GenerationStatus.FAILED
+        assert generation.error_code == FailureKind.CONTEXT_WINDOW_EXCEEDED.value
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_during_reactive_compaction_stops_the_original_generation(
+    tmp_path: Path,
+) -> None:
+    provider = ContextRecoveryProvider()
+    service, _runtime, store = await _service(tmp_path, provider)
+    try:
+        session = await _seed_completed_turns(
+            service,
+            await service.create_session(),
+            count=2,
+        )
+        provider.generation_failures = 1
+        provider.block_summary = True
+        provider.summary_started.clear()
+        operation = await _observe_call(
+            service,
+            service.send,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000130",
+            text="stop while compacting",
+        )
+        await asyncio.wait_for(provider.summary_started.wait(), timeout=1)
+
+        assert await service.stop(
+            session.id,
+            operation_id=operation.acknowledgement.operation_id,
+        )
+        events = await _drain(operation)
+
+        transcript = await store.get_transcript(session.id)
+        assert events.count("compaction.started") == 1
+        assert events[-1] == "turn.stopped"
+        assert transcript.compaction is None
+        assert transcript.turns[-1].generation.status is GenerationStatus.STOPPED
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_unknown_context_compaction_halves_only_whole_exchange_batches(
+    tmp_path: Path,
+) -> None:
+    provider = ContextRecoveryProvider()
+    runtime = FakeRuntime(provider, context_window_tokens=None)
+    store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    service = ChatService(runtime, store)
+    await service.start()
+    try:
+        session = await _seed_completed_turns(
+            service,
+            await service.create_session(),
+            count=8,
+        )
+        provider.summary_batch_limit = 2
+        provider.summary_batch_sizes.clear()
+        compact = await _observe_call(
+            service,
+            service.compact,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000140",
+        )
+
+        assert (await _drain(compact))[-1] == "compaction.completed"
+        assert provider.summary_batch_sizes == [4, 2, 2]
+        transcript = await store.get_transcript(session.id)
+        assert transcript.compaction is not None
+        assert transcript.compaction.covered_through_sequence == 4
+        assert len(transcript.turns) == 8
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_unknown_context_single_exchange_failure_is_actionable(
+    tmp_path: Path,
+) -> None:
+    provider = ContextRecoveryProvider()
+    runtime = FakeRuntime(provider, context_window_tokens=None)
+    store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    service = ChatService(runtime, store)
+    await service.start()
+    try:
+        session = await _seed_completed_turns(
+            service,
+            await service.create_session(),
+            count=2,
+        )
+        provider.summary_batch_limit = 0
+        provider.summary_batch_sizes.clear()
+        compact = await _observe_call(
+            service,
+            service.compact,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000150",
+        )
+
+        assert (await _drain(compact))[-1] == "compaction.failed"
+        assert provider.summary_batch_sizes == [1]
+        assert (await store.get_transcript(session.id)).compaction is None
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_unknown_context_non_context_summary_failure_is_not_resized(
+    tmp_path: Path,
+) -> None:
+    provider = ContextRecoveryProvider()
+    runtime = FakeRuntime(provider, context_window_tokens=None)
+    store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    service = ChatService(runtime, store)
+    await service.start()
+    try:
+        session = await _seed_completed_turns(
+            service,
+            await service.create_session(),
+            count=6,
+        )
+        provider.summary_failure = ExecutionFailure(
+            kind=FailureKind.UPSTREAM,
+            status_code=502,
+            message="provider failed",
+            retryable=False,
+        )
+        provider.summary_batch_sizes.clear()
+        compact = await _observe_call(
+            service,
+            service.compact,
+            session.id,
+            expected_revision=session.revision,
+            operation_id="00000000-0000-4000-8000-000000000160",
+        )
+
+        assert (await _drain(compact))[-1] == "compaction.failed"
+        assert provider.summary_batch_sizes == [2]
+        assert (await store.get_transcript(session.id)).compaction is None
     finally:
         await service.close()
 

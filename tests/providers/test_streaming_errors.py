@@ -19,7 +19,7 @@ from free_claude_code.core.anthropic.streaming import (
     make_text_recovery_body,
     tool_schemas_by_name,
 )
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
@@ -349,6 +349,42 @@ class TestStreamingExceptionHandling:
             error = await _collect_stream_error(provider, request)
 
         assert "API failed" in error.message
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wire_api", ["messages", "responses"])
+    async def test_context_finish_reason_is_terminal_before_output(
+        self,
+        wire_api: str,
+    ) -> None:
+        provider = _make_provider()
+        stream = AsyncStreamMock(
+            [_make_chunk(finish_reason=" Model_Context_Window_Exceeded ")]
+        )
+
+        with (
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                return_value=stream,
+            ) as create,
+            pytest.raises(ExecutionFailure) as exc_info,
+        ):
+            if wire_api == "messages":
+                await _collect_stream(provider, _make_request())
+            else:
+                [
+                    event
+                    async for event in provider.stream_responses(
+                        OpenAIResponsesRequest(model="test-model", input="hello"),
+                        request_id="req_context",
+                        response_model="public-model",
+                    )
+                ]
+
+        assert create.await_count == 1
+        assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+        assert exc_info.value.retryable is False
 
     @pytest.mark.asyncio
     async def test_read_timeout_with_empty_message_raises_fallback(self):

@@ -59,6 +59,8 @@ from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import (
     RetryableToolProtocolError,
     classify_provider_failure,
+    context_window_exceeded_provider_failure,
+    is_context_window_finish_reason,
     is_retryable_stream_error,
     underlying_provider_error,
 )
@@ -382,6 +384,8 @@ class _OpenAIChatStreamAssembler:
             raise TruncatedProviderStreamError(
                 "Provider stream ended without finish_reason."
             )
+        if is_context_window_finish_reason(self._finish_reason):
+            raise context_window_exceeded_provider_failure()
         if any(
             not self._tool_names.is_unchanged_name(name)
             for name in self._tool_name_buffers.values()

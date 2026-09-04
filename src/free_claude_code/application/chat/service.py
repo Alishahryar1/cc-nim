@@ -659,7 +659,13 @@ class ChatService:
                     "revision": transcript.session.revision + 1,
                 },
             )
-            await self._execute_generation(active, prepared=prepared, lease=lease)
+            await self._execute_generation_with_context_recovery(
+                active,
+                prepared=prepared,
+                builder=builder,
+                lease=lease,
+                prompt=prompt,
+            )
         finally:
             await lease.release()
 
@@ -727,7 +733,13 @@ class ChatService:
                     "revision": transcript.session.revision + 1,
                 },
             )
-            await self._execute_generation(active, prepared=prepared, lease=lease)
+            await self._execute_generation_with_context_recovery(
+                active,
+                prepared=prepared,
+                builder=builder,
+                lease=lease,
+                prompt=prompt,
+            )
         finally:
             await lease.release()
 
@@ -798,7 +810,13 @@ class ChatService:
                     "regeneration": True,
                 },
             )
-            await self._execute_generation(active, prepared=prepared, lease=lease)
+            await self._execute_generation_with_context_recovery(
+                active,
+                prepared=prepared,
+                builder=builder,
+                lease=lease,
+                prompt=prompt,
+            )
         finally:
             await lease.release()
 
@@ -946,6 +964,41 @@ class ChatService:
             },
             publish_summary=True,
         )
+
+    async def _execute_generation_with_context_recovery(
+        self,
+        active: _ActiveOperation,
+        *,
+        prepared: PreparedChatRequest,
+        builder: ChatContextBuilder,
+        lease: RequestRuntimeLease,
+        prompt: str,
+    ) -> None:
+        try:
+            await self._execute_generation(active, prepared=prepared, lease=lease)
+            return
+        except ExecutionFailure as exc:
+            if exc.kind is not FailureKind.CONTEXT_WINDOW_EXCEEDED or active.segments:
+                raise
+
+        transcript = await self._store.get_transcript(active.session_id)
+        await self._compact_transcript(
+            active,
+            builder=builder,
+            lease=lease,
+            transcript=transcript,
+            prompt=prompt,
+            pending_draft=None,
+            excluded_generation_id=active.generation_id,
+        )
+        transcript = await self._store.get_transcript(active.session_id)
+        prepared = builder.prepare(
+            transcript,
+            system_prompt=prompt,
+            exclude_generation_id=active.generation_id,
+        )
+        _require_request_fits(prepared.estimate)
+        await self._execute_generation(active, prepared=prepared, lease=lease)
 
     async def _handle_sse_event(
         self,
@@ -1221,15 +1274,28 @@ class ChatService:
                     take = candidate_count
                 if take == 0:
                     take = 1
-            source = builder.compaction_source(summary, tuple(pending[:take]))
-            summary, actual_model = await self._execute_summary(
-                active,
-                builder=builder,
-                lease=lease,
-                model_ref=model_ref,
-                source=source,
-                output_tokens=output_tokens,
-            )
+            while True:
+                source = builder.compaction_source(summary, tuple(pending[:take]))
+                try:
+                    summary, actual_model = await self._execute_summary(
+                        active,
+                        builder=builder,
+                        lease=lease,
+                        model_ref=model_ref,
+                        source=source,
+                        output_tokens=output_tokens,
+                    )
+                    break
+                except ExecutionFailure as exc:
+                    if exc.kind is not FailureKind.CONTEXT_WINDOW_EXCEEDED:
+                        raise
+                    if take == 1:
+                        raise ChatValidationError(
+                            "The newest exchange cannot fit this model. Shorten the "
+                            "system prompt, lower thinking, or choose a larger-context "
+                            "model."
+                        ) from exc
+                    take = max(1, take // 2)
             del pending[:take]
         if summary is None:
             raise ChatValidationError("Compaction produced no summary.")
