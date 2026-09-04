@@ -36,7 +36,7 @@ def make_provider_config(
     """Build a complete resolved config for isolated provider tests."""
 
     return ProviderConfig(
-        api_key=api_key,
+        api_keys=[api_key] if api_key is not None else None,
         base_url=base_url,
         rate_limit=rate_limit,
         rate_window=rate_window,
