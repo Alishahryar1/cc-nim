@@ -34,7 +34,7 @@ from free_claude_code.core.anthropic.streaming import (
     tool_schemas_by_name,
 )
 from free_claude_code.core.anthropic.usage import anthropic_input_usage_fields
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesRequest,
@@ -59,6 +59,8 @@ from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import (
     RetryableToolProtocolError,
     classify_provider_failure,
+    context_window_exceeded_provider_failure,
+    is_context_window_finish_reason,
     is_retryable_stream_error,
     underlying_provider_error,
 )
@@ -382,6 +384,8 @@ class _OpenAIChatStreamAssembler:
             raise TruncatedProviderStreamError(
                 "Provider stream ended without finish_reason."
             )
+        if is_context_window_finish_reason(self._finish_reason):
+            raise context_window_exceeded_provider_failure()
         if any(
             not self._tool_names.is_unchanged_name(name)
             for name in self._tool_name_buffers.values()
@@ -1240,6 +1244,17 @@ class _OpenAIChatStreamRunner:
                     request_id=self._request_id,
                     exc_type=type(recovery_error).__name__,
                 )
+                recovery_failure = classify_provider_failure(
+                    underlying_provider_error(recovery_error),
+                    provider_name=tag,
+                    read_timeout_s=self._provider._config.http_read_timeout,
+                    request_id=self._request_id,
+                    provider_failure_override=(
+                        self._provider._provider_failure_override
+                    ),
+                )
+                if recovery_failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED:
+                    error = recovery_failure
                 recovery_events = None
             if recovery_events is not None:
                 return _OpenAIChatFailureResolution(
@@ -1345,7 +1360,10 @@ class _OpenAIChatStreamRunner:
                     if not getattr(chunk, "choices", None):
                         continue
                     choice = chunk.choices[0]
-                    if choice.finish_reason is not None:
+                    finish_reason = choice.finish_reason
+                    if is_context_window_finish_reason(finish_reason):
+                        raise context_window_exceeded_provider_failure()
+                    if finish_reason is not None:
                         terminal_seen = True
                     delta = choice.delta
                     if delta is None:
