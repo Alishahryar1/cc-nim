@@ -1668,6 +1668,7 @@ def test_admin_apply_restart_required_reports_automatic_restart(monkeypatch, tmp
         callbacks.append("restart")
 
     app = create_test_app(restart_callback=restart_callback)
+    instance_id = _local_client(app).get("/admin/api/status").json()["instance_id"]
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -1683,8 +1684,33 @@ def test_admin_apply_restart_required_reports_automatic_restart(monkeypatch, tmp
         "automatic": True,
         "admin_url": "http://127.0.0.1:9090/admin",
         "fields": ["PORT"],
+        "instance_id": instance_id,
     }
     assert callbacks == ["restart"]
+
+
+@pytest.mark.parametrize("origin", ["http://127.0.0.1:8082", "http://localhost:9090"])
+def test_admin_restart_status_can_be_read_from_another_local_address(origin):
+    app = create_test_app()
+    response = _local_client(app).get("/admin/api/status", headers={"Origin": origin})
+    assert response.status_code == 200
+    assert response.headers["Access-Control-Allow-Origin"] == origin
+    assert response.headers["Vary"] == "Origin"
+    initial = response.json()
+    assert initial["status"] == "running"
+    assert isinstance(initial["instance_id"], str) and initial["instance_id"]
+    runtime_for_app(app).begin_shutdown()
+    stopping = _local_client(app).get("/admin/api/status").json()
+    assert stopping["status"] == "stopping"
+    assert stopping["instance_id"] == initial["instance_id"]
+
+
+def test_admin_restart_status_does_not_allow_a_remote_web_origin():
+    response = _local_client(create_test_app()).get(
+        "/admin/api/status", headers={"Origin": "https://example.com"}
+    )
+    assert response.status_code == 403
+    assert "Access-Control-Allow-Origin" not in response.headers
 
 
 def test_admin_apply_restart_required_reports_manual_fallback(monkeypatch, tmp_path):

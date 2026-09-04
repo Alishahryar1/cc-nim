@@ -5,6 +5,7 @@ import inspect
 import logging
 import os
 import traceback
+import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 
@@ -128,6 +129,8 @@ class ApplicationRuntime:
         )
         self._cli_manager: cli_managed.ManagedClaudeSessionManager | None = None
         self._started = False
+        self._instance_id = uuid.uuid4().hex
+        self._draining = False
         self._closed = False
         self._provider_manager_closed = False
         self._connected_accounts_closed = False
@@ -167,6 +170,12 @@ class ApplicationRuntime:
             )
             await self.close()
             raise
+
+    def begin_shutdown(self) -> None:
+        """Finish indefinite observer responses before the server drains HTTP."""
+        self._draining = True
+        if self._chat_service is not None:
+            self._chat_service.begin_shutdown()
 
     async def close(self) -> bool:
         async with self._close_lock:
@@ -246,7 +255,8 @@ class ApplicationRuntime:
     def admin_status(self) -> JsonObject:
         settings = self.settings
         return {
-            "status": "running",
+            "status": "stopping" if self._draining else "running",
+            "instance_id": self._instance_id,
             "host": settings.host,
             "port": settings.port,
             "model": settings.model,
@@ -362,12 +372,15 @@ class ApplicationRuntime:
         settings: Settings,
     ) -> JsonObject:
         automatic = bool(fields and self._restart_callback is not None)
-        return {
+        result: JsonObject = {
             "required": bool(fields),
             "automatic": automatic,
             "admin_url": local_admin_url(settings) if automatic else None,
             "fields": list(fields),
         }
+        if automatic:
+            result["instance_id"] = self._instance_id
+        return result
 
     async def _start_messaging_if_configured(self) -> None:
         try:

@@ -333,12 +333,14 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
 
     def build_asgi_app(_settings: Settings, restart_callback: Callable[[], None]):
         restart_callbacks.append(restart_callback)
-        app = SimpleNamespace(runtime=SimpleNamespace(is_closed=False))
+        app = SimpleNamespace(
+            runtime=SimpleNamespace(is_closed=False, begin_shutdown=lambda: None)
+        )
         apps.append(app)
         return app
 
     class FakeServer:
-        def __init__(self, config):
+        def __init__(self, config, *, begin_shutdown):
             self.config = config
             self.should_exit = False
             servers.append(self)
@@ -355,7 +357,7 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
     with (
         patch.object(commands, "get_settings", get_settings),
         patch.object(commands.uvicorn, "Config", side_effect=fake_config),
-        patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
+        patch.object(commands, "RuntimeServer", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
         patch.object(commands, "schedule_open_admin_browser") as schedule_open_admin,
         patch.object(commands, "clear_settings_cache") as clear_settings_cache,
@@ -379,10 +381,12 @@ def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
 
     def build_asgi_app(_settings: Settings, restart_callback: Callable[[], None]):
         restart_callbacks.append(restart_callback)
-        return SimpleNamespace(runtime=SimpleNamespace(is_closed=False))
+        return SimpleNamespace(
+            runtime=SimpleNamespace(is_closed=False, begin_shutdown=lambda: None)
+        )
 
     class FakeServer:
-        def __init__(self, config):
+        def __init__(self, config, *, begin_shutdown):
             self.config = config
             self.should_exit = False
             servers.append(self)
@@ -397,7 +401,7 @@ def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
     with (
         patch.object(commands, "get_settings", get_settings),
         patch.object(commands.uvicorn, "Config", side_effect=fake_config),
-        patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
+        patch.object(commands, "RuntimeServer", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
         patch.object(commands, "schedule_open_admin_browser"),
         patch.object(commands, "clear_settings_cache") as clear_settings_cache,

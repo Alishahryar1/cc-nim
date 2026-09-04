@@ -1,6 +1,7 @@
 const state = {
   config: null,
   applying: false,
+  restart: null,
   fields: new Map(),
   modelOptions: [],
   modelComboboxes: new Set(),
@@ -887,8 +888,8 @@ function changedValues() {
 function updateDirtyState() {
   const count = Object.keys(changedValues()).length;
   byId("dirtyState").textContent =
-    count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
-  byId("applyButton").disabled = state.applying || count === 0;
+    state.restart ? "Changes saved" : count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
+  byId("applyButton").disabled = state.applying || (!state.restart && count === 0);
 }
 
 function clearCredentialError(input) {
@@ -919,15 +920,93 @@ function showCredentialErrors(checks) {
 function setApplying(applying) {
   state.applying = applying;
   VIEW_GROUPS.filter((view) => view.id !== "chat").forEach((view) => {
-    byId(`view-${view.id}`).inert = applying;
+    byId(`view-${view.id}`).inert = applying || !!state.restart;
   });
   if (applying) state.modelComboboxes.forEach((combobox) => combobox.close());
-  byId("applyButton").textContent = applying ? "Applying…" : "Apply";
+  byId("applyButton").textContent = state.restart
+    ? applying ? "Reconnecting…" : "Reconnect"
+    : applying ? "Applying…" : "Apply";
   updateDirtyState();
+}
+
+async function waitForRestart(restart, target) {
+  const deadline = performance.now() + 30_000;
+  const statusUrl = new URL("/admin/api/status", target);
+  while (performance.now() < deadline) {
+    try {
+      const response = await fetch(statusUrl, {
+        cache: "no-store",
+        credentials: "omit",
+        signal: AbortSignal.timeout(1500),
+      });
+      if (response.ok) {
+        const status = await response.json();
+        if (status.status === "running" && typeof status.instance_id === "string"
+          && status.instance_id !== restart.instance_id) return;
+      }
+    } catch {
+      // Closing listeners and unfinished startup are expected during a restart.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("The server has not reconnected yet.");
+}
+
+function appendAdminLink(target) {
+  const link = document.createElement("a");
+  link.href = target.href;
+  link.textContent = "Open Admin";
+  byId("messageArea").append(document.createElement("br"), link);
+}
+
+async function reconnectAfterRestart() {
+  const { restart, warnings } = state.restart;
+  const target = new URL(restart.admin_url || "/admin", window.location.href);
+  setApplying(true);
+  showMessage(["Applied. Reconnecting to the server…", ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+  try {
+    await waitForRestart(restart, target);
+    if (target.origin !== window.location.origin) {
+      // Carry only the safe warning text across an address change, never edits.
+      target.hash = new URLSearchParams({ "fcc-applied": JSON.stringify(warnings) }).toString();
+      window.location.replace(target.href);
+      return;
+    }
+    await load();
+    state.restart = null;
+    showMessage(["Applied", ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+  } catch (error) {
+    showMessage([`Settings were saved. ${error.message} Use Reconnect to try again.`, ...warnings].join("\n"), "warn");
+    appendAdminLink(target);
+  } finally {
+    setApplying(false);
+  }
+}
+
+function showRestartNotice() {
+  const url = new URL(window.location.href);
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  const notice = fragment.get("fcc-applied");
+  if (notice === null) return;
+  fragment.delete("fcc-applied");
+  url.hash = fragment.toString();
+  window.history.replaceState(window.history.state, "", url);
+  try {
+    const warnings = JSON.parse(notice);
+    if (Array.isArray(warnings) && warnings.every((warning) => typeof warning === "string")) {
+      showMessage(["Applied", ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+    }
+  } catch {
+    // A malformed navigation notice must not prevent normal Admin use.
+  }
 }
 
 async function apply() {
   if (state.applying) return;
+  if (state.restart) {
+    await reconnectAfterRestart();
+    return;
+  }
   const values = changedValues();
   if (!Object.keys(values).length) return;
   const checkingKeys = Object.keys(values).some((key) => {
@@ -936,7 +1015,6 @@ async function apply() {
   });
   let rejectedField = null;
   let applied = false;
-  let restarting = false;
   setApplying(true);
   showMessage(checkingKeys ? "Checking API keys…" : "Applying…");
   try {
@@ -956,18 +1034,8 @@ async function apply() {
     );
     const restart = result.restart || {};
     if (restart.required && restart.automatic) {
-      restarting = true;
-      showMessage(["Applied. Restarting server…", ...warnings].join("\n"), warnings.length ? "warn" : "ok");
-      if (warnings.length) {
-        const link = document.createElement("a");
-        link.href = restart.admin_url || "/admin";
-        link.textContent = "Open Admin";
-        byId("messageArea").append(document.createElement("br"), link);
-      } else {
-        setTimeout(() => {
-          window.location.href = restart.admin_url || "/admin";
-        }, 1600);
-      }
+      state.restart = { restart, warnings };
+      await reconnectAfterRestart();
       return;
     }
     const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
@@ -979,8 +1047,7 @@ async function apply() {
   } catch (error) {
     showMessage(applied ? `Applied, but could not reload settings: ${error.message}` : `Could not apply settings: ${error.message}`, "error");
   } finally {
-    // Keep the old page read-only while its server restarts.
-    setApplying(restarting);
+    setApplying(false);
     if (rejectedField) {
       navigateToView("providers");
       rejectedField.closest(".settings-section")?.classList.add("show-advanced");
@@ -1131,6 +1198,6 @@ window.addEventListener("popstate", () => {
   setActiveView(viewId, { scroll: false });
 });
 
-load().catch((error) => {
+load().then(showRestartNotice).catch((error) => {
   showMessage(error.message, "error");
 });

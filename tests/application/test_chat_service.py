@@ -1820,7 +1820,10 @@ async def test_cancelled_delete_request_still_finishes_accepted_deletion(
 
 
 @pytest.mark.asyncio
-async def test_close_waits_for_terminal_settlement(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("drain_feeds", [False, True])
+async def test_close_waits_for_terminal_settlement(
+    tmp_path: Path, monkeypatch, drain_feeds
+):
     service, _runtime, store = await _service(tmp_path, FakeChatProvider())
     release_commit = asyncio.Event()
     service_closed = False
@@ -1845,6 +1848,17 @@ async def test_close_waits_for_terminal_settlement(tmp_path: Path, monkeypatch):
             text="finish before shutdown",
         )
         await asyncio.wait_for(entered_commit.wait(), timeout=1)
+
+        if drain_feeds:
+            service.begin_shutdown()
+            service.begin_shutdown()
+            assert service.availability()[0] is False
+            with pytest.raises(ChatUnavailableError):
+                await service.subscribe()
+            with pytest.raises(StopAsyncIteration):
+                await asyncio.wait_for(
+                    anext(stream.subscription.__aiter__()), timeout=1
+                )
 
         close_task = asyncio.create_task(service.close())
         await asyncio.sleep(0.05)
