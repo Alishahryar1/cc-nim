@@ -1,5 +1,7 @@
 """Shared defaults used by config models and provider adapters."""
 
+DEFAULT_MODEL = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+
 # HTTP client connect timeout (seconds). Keep aligned with README.md and .env.example.
 HTTP_CONNECT_TIMEOUT_DEFAULT = 10.0
 

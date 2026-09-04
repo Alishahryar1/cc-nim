@@ -7,7 +7,6 @@ from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
-from free_claude_code.providers.github_models import GitHubModelsProvider
 from free_claude_code.providers.groq import GroqProvider
 from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.lmstudio import LMStudioProvider
@@ -75,7 +74,6 @@ def test_provider_and_platform_registries_include_builtins() -> None:
         "kilo": KiloProvider,
         "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,
-        "github_models": GitHubModelsProvider,
         "groq": GroqProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,

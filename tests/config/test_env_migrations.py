@@ -18,6 +18,66 @@ from free_claude_code.config.env_migrations import (
 from free_claude_code.config.loader import resolve_settings_snapshot
 
 
+@pytest.mark.parametrize("schema", ["", "FCC_CONFIG_SCHEMA=1\n"])
+def test_retired_models_repair_managed_config_once_preserving_unknowns(
+    monkeypatch, tmp_path, schema
+):
+    managed, _ = _paths(monkeypatch, tmp_path)
+    managed.parent.mkdir(parents=True)
+    managed.write_text(
+        schema + "MODEL=github_models/old\nMODEL_OPUS=github_models/opus\n"
+        "REASONING_OPUS=off\nMODEL_FALLBACKS=groq/a,github_models/old,deepseek/b\n"
+        "GITHUB_MODELS_TOKEN=retired-secret\nGITHUB_MODELS_PROXY=http://user:password@proxy.test\n"
+        "UNKNOWN_PRIVATE=unknown-secret\nCUSTOM=\n",
+        encoding="utf-8",
+    )
+    assert consolidate_managed_config({}).changed
+    values = dotenv_values_from_file(managed)
+    assert "MODEL" not in values and "MODEL_OPUS" not in values
+    assert values["MODEL_FALLBACKS"] == "groq/a,deepseek/b"
+    assert values["REASONING_OPUS"] == "off"
+    assert values["GITHUB_MODELS_TOKEN"] == "retired-secret"
+    assert values["GITHUB_MODELS_PROXY"] == "http://user:password@proxy.test"
+    assert values["CUSTOM"] == ""
+    preview = env_migrations.render_managed_config(values, mask_secrets=True)
+    for secret in ("retired-secret", "password", "unknown-secret"):
+        assert secret not in preview
+    assert "GITHUB_MODELS_TOKEN=********" in preview
+    assert "UNKNOWN_PRIVATE=********" in preview
+    before = managed.read_bytes(), managed.stat().st_mtime_ns
+    assert not consolidate_managed_config({}).changed
+    assert (managed.read_bytes(), managed.stat().st_mtime_ns) == before
+
+
+def test_retired_legacy_import_repairs_refs_without_importing_credentials(
+    monkeypatch, tmp_path
+):
+    managed, legacy = _paths(monkeypatch, tmp_path)
+    legacy.parent.mkdir(parents=True)
+    original = "MODEL=github_models/old\nGITHUB_MODELS_TOKEN=old-secret\nGITHUB_MODELS_PROXY=http://secret@proxy.test\n"
+    legacy.write_text(original, encoding="utf-8")
+    consolidate_managed_config({})
+    values = dotenv_values_from_file(managed)
+    assert not {"MODEL", "GITHUB_MODELS_TOKEN", "GITHUB_MODELS_PROXY"} & values.keys()
+    assert legacy.read_text(encoding="utf-8") == original
+
+
+def test_retirement_atomic_write_failure_preserves_managed_file(monkeypatch, tmp_path):
+    managed, _ = _paths(monkeypatch, tmp_path)
+    managed.parent.mkdir(parents=True)
+    original = b"FCC_CONFIG_SCHEMA=1\nMODEL=github_models/old\n"
+    managed.write_bytes(original)
+
+    def fail_replace(*args):
+        raise OSError("injected replace failure")
+
+    monkeypatch.setattr(env_migrations.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="injected"):
+        consolidate_managed_config({})
+    assert managed.read_bytes() == original
+    assert list(managed.parent.glob("*.tmp")) == []
+
+
 def _paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, Path]:
     managed = tmp_path / ".fcc" / ".env"
     legacy = tmp_path / "legacy" / ".env"

@@ -155,7 +155,6 @@ _PROBES = (
     _Probe("deepinfra", "https://api.deepinfra.com/v1/me", _identity("uid")),
     _Probe("mistral", "/models", _MODELS),
     _Probe("wandb", "/models", _MODELS),
-    _Probe("github_models", "https://api.github.com/user", _identity("login")),
     _Probe("minimax", "/models", _MODELS),
     _Probe(
         "novita",
@@ -260,8 +259,6 @@ async def _check_one(settings: Settings, key: str, probe: _Probe) -> CredentialC
         headers["x-goog-api-key"] = credential
     else:
         headers["Authorization"] = f"Bearer {credential}"
-    if probe.provider_id == "github_models":
-        headers["Accept"] = "application/vnd.github+json"
     if probe.provider_id == "novita":
         headers["Content-Type"] = "application/json"
     try:

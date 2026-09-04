@@ -15,6 +15,7 @@ from .env_migrations import (
     consolidate_managed_config,
     settings_env_keys,
 )
+from .model_refs import normalize_retired_model_settings
 from .paths import config_lock_path, managed_env_path
 from .provider_proxies import invalid_provider_proxy_keys
 from .settings import Settings
@@ -97,7 +98,10 @@ def compose_settings_snapshot(
 ) -> SettingsSnapshot:
     """Validate prospective managed values with live process precedence."""
 
-    process = env if env is not None else os.environ
+    process = normalize_retired_model_settings(
+        env if env is not None else os.environ, preserve_empty_overrides=True
+    )
+    managed = normalize_retired_model_settings(managed, preserve_empty_overrides=False)
     aliases = _settings_aliases()
     recognized = settings_env_keys()
     values: dict[str, str] = {

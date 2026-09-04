@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.config.constants import DEFAULT_MODEL
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
@@ -86,6 +87,19 @@ def test_responses_probe_endpoints_return_204(
 
     assert client.head("/v1/responses").status_code == 204
     assert client.options("/v1/responses").status_code == 204
+
+
+@pytest.mark.parametrize("prefix", ["", "anthropic/", "claude-3-freecc-no-thinking/"])
+def test_retired_response_id_uses_default_provider(responses_client, prefix):
+    client, provider = responses_client
+    original = f"{prefix}github_models/vendor/opus"
+    response = client.post("/v1/responses", json={"model": original, "input": "hello"})
+    assert response.status_code == 200
+    assert "response.completed" in response.text
+    assert provider.requests[0].model == DEFAULT_MODEL.split("/", 1)[1]
+    assert provider.stream_kwargs[0]["response_model"] == original
+    if prefix == "claude-3-freecc-no-thinking/":
+        assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
 
 
 def test_create_response_stream_routes_native_request_through_provider(

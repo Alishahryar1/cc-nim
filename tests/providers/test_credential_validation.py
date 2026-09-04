@@ -68,7 +68,6 @@ CASES = [
     ),
     ("mistral", "https://api.mistral.ai/v1/models", {"data": []}, None),
     ("wandb", "https://api.inference.wandb.ai/v1/models", {"data": []}, None),
-    ("github_models", "https://api.github.com/user", {"login": "user"}, None),
     ("minimax", "https://api.minimax.io/v1/models", {"data": []}, None),
     (
         "novita",

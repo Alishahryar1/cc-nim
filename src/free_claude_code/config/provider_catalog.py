@@ -37,7 +37,6 @@ VERCEL_AI_GATEWAY_DEFAULT_BASE = "https://ai-gateway.vercel.sh/v1"
 BEDROCK_DEFAULT_BASE = "https://bedrock-mantle.us-east-1.api.aws/v1"
 HUGGINGFACE_DEFAULT_BASE = "https://router.huggingface.co/v1"
 COHERE_DEFAULT_BASE = "https://api.cohere.ai/compatibility/v1"
-GITHUB_MODELS_DEFAULT_BASE = "https://models.github.ai/inference"
 # Z.ai OpenAI-compatible Chat Completions APIs. The endpoint selects billing.
 ZAI_CODING_DEFAULT_BASE = "https://api.z.ai/api/coding/paas/v4"
 ZAI_API_DEFAULT_BASE = "https://api.z.ai/api/paas/v4"
@@ -390,15 +389,6 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=COHERE_DEFAULT_BASE,
         proxy_attr="cohere_proxy",
     ),
-    "github_models": ProviderDescriptor(
-        provider_id="github_models",
-        display_name="GitHub Models",
-        credential_env="GITHUB_MODELS_TOKEN",
-        credential_url="https://github.com/settings/tokens",
-        credential_attr="github_models_token",
-        default_base_url=GITHUB_MODELS_DEFAULT_BASE,
-        proxy_attr="github_models_proxy",
-    ),
     "wafer": ProviderDescriptor(
         provider_id="wafer",
         display_name="Wafer",
@@ -589,7 +579,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
 # Key order:
 # NVIDIA NIM, OpenRouter, and Groq lead the customer-facing ranking;
 # OpenCode gateways remain adjacent,
-# Vercel / Hugging Face / Cohere / GitHub Models follow gateway-style remotes,
+# Vercel / Hugging Face / Cohere follow gateway-style remotes,
 # then cloud gateways, Ollama Cloud, and local providers per project plan
 # (github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide
 # beyond fixed slots).

@@ -4,6 +4,25 @@ import pytest
 from playwright.sync_api import ConsoleMessage, Page, ViewportSize, expect
 
 
+@pytest.mark.parametrize(
+    "admin_base_url", [{"MODEL": "github_models/openai/old"}], indirect=True
+)
+def test_retired_provider_is_absent_and_default_setup_remains_available(
+    page: Page, admin_base_url: str
+):
+    _open_admin(page, admin_base_url, {"width": 1280, "height": 720})
+    expect(page.locator('[data-provider="github_models"]')).to_have_count(0)
+    expect(page.locator("#field-GITHUB_MODELS_TOKEN")).to_have_count(0)
+    card = page.locator('[data-provider="nvidia_nim"]')
+    expect(card.locator(".status-pill")).to_have_text("Missing key")
+    card.get_by_role("button", name="Configure", exact=True).click()
+    expect(page.locator("#field-NVIDIA_NIM_API_KEY")).to_be_focused()
+    page.get_by_role("button", name="Model Config", exact=True).click()
+    expect(page.locator("#field-MODEL")).to_have_value(
+        "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+    )
+
+
 def _open_admin(
     page: Page,
     admin_base_url: str,

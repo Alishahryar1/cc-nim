@@ -16,6 +16,51 @@ from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningEffort
 
 
+@pytest.mark.parametrize(
+    "prefix,off",
+    [("", False), ("anthropic/", False), ("claude-3-freecc-no-thinking/", True)],
+)
+@pytest.mark.parametrize(
+    "suffix", ["openai/gpt-4.1", "vendor/opus", "sonnet", "haiku", "fable"]
+)
+def test_retired_direct_ids_route_to_default_before_family_aliases(prefix, off, suffix):
+    settings = Settings(
+        MODEL="groq/default",
+        MODEL_OPUS="deepseek/opus",
+        MODEL_SONNET="deepseek/sonnet",
+        MODEL_HAIKU="deepseek/haiku",
+        MODEL_FABLE="deepseek/fable",
+        MODEL_FALLBACKS="groq/default,groq/backup",
+        REASONING_POLICY="high",
+        REASONING_OPUS="off",
+    )
+    original = f"{prefix}github_models/{suffix}"
+    router = ModelRouter(settings)
+    route = router.resolve(original)
+    assert route.original_model == original
+    assert route.primary.provider_model_ref == "groq/default"
+    assert [target.provider_model_ref for target in route.fallbacks] == ["groq/backup"]
+    assert route.reasoning_preference is (
+        ReasoningPreference.OFF if off else ReasoningPreference.HIGH
+    )
+    messages = router.resolve_messages_request(
+        MessagesRequest(
+            model=original,
+            max_tokens=100,
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+    responses = router.resolve_responses_request(
+        OpenAIResponsesRequest(model=original, input="hi")
+    )
+    count = router.resolve_token_count_request(
+        TokenCountRequest(model=original, messages=[Message(role="user", content="hi")])
+    )
+    for routed in (messages, responses, count):
+        assert routed.request.model == "default"
+        assert routed.resolved == route
+
+
 @pytest.fixture
 def settings():
     settings = Settings()

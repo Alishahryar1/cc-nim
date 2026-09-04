@@ -13,6 +13,10 @@ from loguru import logger
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.ports import RequestRuntimeLease, RequestRuntimePort
 from free_claude_code.application.routing import ProviderModelTarget
+from free_claude_code.config.model_refs import (
+    RETIRED_PROVIDER_IDS,
+    is_retired_model_ref,
+)
 from free_claude_code.core.anthropic import (
     ContentBlockText,
     MessagesResponse,
@@ -124,12 +128,61 @@ class ChatService:
 
     async def start(self) -> None:
         if self._started:
-            return
+            if self._accepting:
+                return
+            # A prior startup cleanup failed. Release its store before retrying.
+            retry_cleanup = asyncio.create_task(self._close_startup_store())
+            cancellation = await _wait_task_despite_cancellation(retry_cleanup)
+            try:
+                retry_cleanup.result()
+            except Exception as exc:
+                if cancellation is not None:
+                    raise cancellation from exc
+                raise
+            if cancellation is not None:
+                raise cancellation
+        cancellation: asyncio.CancelledError | None = None
         try:
             await self._store.start()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
+            self._started = True
+            default_model = self._runtime.current_settings().model
+            option = self._context.model(default_model)
+            repair_task = asyncio.create_task(
+                self._store.repair_retired_model_selections(
+                    retired_provider_ids=RETIRED_PROVIDER_IDS,
+                    default_model=default_model,
+                    disable_reasoning=option.supports_reasoning is False,
+                ),
+                name="fcc-chat-retirement-repair",
+            )
+            cancellation = await _wait_task_despite_cancellation(repair_task)
+            repaired = repair_task.result()
+            if cancellation is not None:
+                raise cancellation
+            if repaired:
+                logger.info(
+                    "Repaired retired model selections in {} Chat sessions", repaired
+                )
+        except BaseException as exc:
+            if self._started:
+                try:
+                    cleanup_task = asyncio.create_task(
+                        self._close_startup_store(), name="fcc-chat-start-cleanup"
+                    )
+                    cleanup_cancellation = await _wait_task_despite_cancellation(
+                        cleanup_task
+                    )
+                    cancellation = cancellation or cleanup_cancellation
+                    cleanup_task.result()
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "Chat startup cleanup failed: exc_type={}",
+                        type(cleanup_exc).__name__,
+                    )
+            if not isinstance(exc, Exception):
+                raise
+            if cancellation is not None:
+                raise cancellation from exc
             self._unavailable_message = (
                 str(exc)
                 if isinstance(exc, ChatUnavailableError)
@@ -143,6 +196,10 @@ class ChatService:
         self._started = True
         self._accepting = True
         self._unavailable_message = None
+
+    async def _close_startup_store(self) -> None:
+        await self._store.close()
+        self._started = False
 
     async def close(self) -> None:
         self._accepting = False
@@ -289,7 +346,12 @@ class ChatService:
             if len(title) > 200:
                 raise ChatValidationError("Chat title cannot exceed 200 characters.")
         if model is not None:
-            self._context.model(model)
+            retired = is_retired_model_ref(model)
+            if retired:
+                model = self._runtime.current_settings().model
+            option = self._context.model(model)
+            if retired and option.supports_reasoning is False:
+                reasoning = ChatReasoning.OFF
         async with self._active_lock:
             if session_id in self._deleting:
                 raise ChatConflictError("This chat is being deleted.")

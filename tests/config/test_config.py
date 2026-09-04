@@ -11,6 +11,7 @@ from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config import loader
 from free_claude_code.config.constants import (
     ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+    DEFAULT_MODEL,
     HTTP_CONNECT_TIMEOUT_DEFAULT,
 )
 from free_claude_code.config.env_files import dotenv_values_from_file
@@ -34,6 +35,82 @@ from free_claude_code.config.paths import (
 )
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
+
+
+@pytest.mark.parametrize("source", [ConfigSource.MANAGED, ConfigSource.PROCESS])
+@pytest.mark.parametrize("tier", ["FABLE", "OPUS", "SONNET", "HAIKU"])
+def test_retirement_normalizes_sources_without_resurrecting_overrides(source, tier):
+    retired = {
+        "MODEL": "github_models/openai/old",
+        f"MODEL_{tier}": "github_models/vendor/opus",
+        "MODEL_FALLBACKS": "github_models/old",
+        f"REASONING_{tier}": "off",
+    }
+    managed = {
+        "MODEL": "groq/managed",
+        f"MODEL_{tier}": "groq/tier",
+        "MODEL_FALLBACKS": "groq/backup",
+    }
+    snapshot = compose_settings_snapshot(
+        retired if source is ConfigSource.MANAGED else managed,
+        retired if source is ConfigSource.PROCESS else {},
+    )
+    assert snapshot.settings.model == DEFAULT_MODEL
+    assert getattr(snapshot.settings, f"model_{tier.lower()}") is None
+    assert (
+        getattr(snapshot.settings, f"reasoning_{tier.lower()}")
+        is ReasoningPreference.OFF
+    )
+    assert snapshot.settings.model_fallbacks is None
+    expected = (
+        ConfigSource.PROCESS if source is ConfigSource.PROCESS else ConfigSource.DEFAULT
+    )
+    assert snapshot.sources["model"] is expected
+    assert snapshot.sources[f"model_{tier.lower()}"] is expected
+    assert snapshot.sources["model_fallbacks"] is expected
+    assert retired["MODEL"] == "github_models/openai/old"
+
+
+def test_retirement_preserves_effective_default_order_and_process_environment(
+    monkeypatch,
+):
+    monkeypatch.delenv("MODEL", raising=False)
+    monkeypatch.setenv("MODEL_OPUS", "github_models/opus")
+    snapshot = compose_settings_snapshot(
+        {
+            "MODEL": "groq/default",
+            "MODEL_OPUS": "groq/managed-tier",
+            "MODEL_FALLBACKS": "groq/first, github_models/old, deepseek/last",
+        }
+    )
+    assert snapshot.settings.model == "groq/default"
+    assert snapshot.settings.model_opus is None
+    assert snapshot.sources["model_opus"] is ConfigSource.PROCESS
+    assert snapshot.settings.model_fallbacks == ("groq/first", "deepseek/last")
+    assert loader.os.environ["MODEL_OPUS"] == "github_models/opus"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"MODEL": "github_models/"},
+        {"MODEL": "other/unknown"},
+        {"MODEL_FALLBACKS": "github_models/old,groq/a,groq/a"},
+        {"MODEL_FALLBACKS": "github_models/old,,groq/a"},
+        {"MODEL_FALLBACKS": "github_models/old,"},
+        {"MODEL_FALLBACKS": ",github_models/old"},
+        {"MODEL_FALLBACKS": "github_models/old, "},
+        {"MODEL_FALLBACKS": "github_models/old,github_models/"},
+    ],
+)
+def test_retirement_does_not_hide_invalid_configuration(values):
+    with pytest.raises(ValidationError):
+        compose_settings_snapshot(values, {})
+
+
+def test_direct_settings_still_reject_retired_provider():
+    with pytest.raises(ValidationError):
+        Settings(MODEL="github_models/openai/old")
 
 
 def test_settings_defaults_are_valid_and_nonempty() -> None:

@@ -14,6 +14,7 @@ from free_claude_code.config.env_migrations import (
     recognized_env_keys,
     render_managed_config,
 )
+from free_claude_code.config.model_refs import normalize_retired_model_settings
 from free_claude_code.config.paths import managed_env_path
 from free_claude_code.config.provider_proxies import invalid_provider_proxy_keys
 from free_claude_code.config.settings import Settings
@@ -103,7 +104,7 @@ def target_values_with_updates(
             values[key] = value
 
     values[FCC_CONFIG_SCHEMA_ENV] = CONFIG_SCHEMA_VERSION
-    return values
+    return normalize_retired_model_settings(values, preserve_empty_overrides=False)
 
 
 def changed_pending_fields(

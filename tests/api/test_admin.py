@@ -31,6 +31,45 @@ def _local_client(app):
     )
 
 
+def test_admin_retirement_preview_apply_and_runtime_agree(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
+        "FCC_CONFIG_SCHEMA=1\nMODEL=groq/default\nMODEL_OPUS=groq/managed\n"
+        "GITHUB_MODELS_TOKEN=preserve-secret\nGITHUB_MODELS_PROXY=http://user:secret@proxy.test\nPRIVATE=hidden\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MODEL_OPUS", "github_models/retired-process")
+    app = create_test_app()
+    client = _local_client(app)
+    body = client.post(
+        "/admin/api/config/apply",
+        json={
+            "values": {
+                "MODEL_SONNET": "github_models/stale",
+                "MODEL_OPUS": "deepseek/cannot-unlock",
+                "MODEL_FALLBACKS": "groq/a,github_models/old,deepseek/b",
+            }
+        },
+    ).json()
+    assert body["applied"]
+    text = env_file.read_text(encoding="utf-8")
+    assert "MODEL=groq/default" in text
+    assert "MODEL_SONNET" not in text
+    assert "MODEL_OPUS=groq/managed" in text
+    assert "MODEL_FALLBACKS=groq/a,deepseek/b" in text
+    assert "preserve-secret" in text and "http://user:secret@proxy.test" in text
+    assert "preserve-secret" not in body["env_preview"]
+    assert "http://user:secret@proxy.test" not in body["env_preview"]
+    assert "PRIVATE=********" in body["env_preview"]
+    effective = provider_manager_for_app(app).current_settings()
+    assert effective.model == "groq/default"
+    assert effective.model_opus is None and effective.model_sonnet is None
+    assert effective.model_fallbacks == ("groq/a", "deepseek/b")
+
+
 @pytest.fixture(autouse=True)
 def _offline_credential_checks(monkeypatch):
     """These tests exercise config persistence; probe HTTP has its own suite."""
@@ -523,7 +562,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "FIREWORKS_API_KEY" in keys
     assert "CLOUDFLARE_API_TOKEN" in keys
     assert "CLOUDFLARE_ACCOUNT_ID" in keys
-    assert "GITHUB_MODELS_TOKEN" in keys
+    assert "GITHUB_MODELS_TOKEN" not in keys
     assert "GEMINI_API_KEY" in keys
     assert "GROQ_API_KEY" in keys
     assert "SAMBANOVA_API_KEY" in keys
@@ -1496,7 +1535,7 @@ def test_admin_apply_writes_cohere_key_and_masks_preview(monkeypatch, tmp_path):
     assert "COHERE_API_KEY=cohere-secret" in text
 
 
-def test_admin_apply_writes_github_models_token_and_masks_preview(
+def test_admin_apply_replaces_retired_model_and_ignores_retired_credential(
     monkeypatch, tmp_path
 ):
     _set_home(monkeypatch, tmp_path)
@@ -1516,11 +1555,11 @@ def test_admin_apply_writes_github_models_token_and_masks_preview(
     assert response.status_code == 200
     body = response.json()
     assert body["applied"] is True
-    assert "GITHUB_MODELS_TOKEN=********" in body["env_preview"]
+    assert "GITHUB_MODELS_TOKEN" not in body["env_preview"]
     env_file = tmp_path / ".fcc" / ".env"
     text = env_file.read_text(encoding="utf-8")
-    assert "MODEL=github_models/openai/gpt-4.1" in text
-    assert "GITHUB_MODELS_TOKEN=github-secret" in text
+    assert "MODEL=" not in text
+    assert "GITHUB_MODELS_TOKEN" not in text
 
 
 def test_admin_apply_preserves_hidden_diagnostics_and_smoke_values(

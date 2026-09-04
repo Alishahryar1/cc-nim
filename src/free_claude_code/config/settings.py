@@ -12,7 +12,8 @@ from pydantic import (
     model_validator,
 )
 
-from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from .constants import DEFAULT_MODEL, HTTP_CONNECT_TIMEOUT_DEFAULT
+from .model_refs import parse_model_fallbacks
 from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
@@ -29,18 +30,6 @@ def _empty_to_none(value: object) -> object:
     return value
 
 
-def _parse_model_fallbacks(value: object) -> object:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        if not value.strip():
-            return None
-        return tuple(part.strip() for part in value.split(","))
-    if isinstance(value, list | tuple) and not value:
-        return None
-    return value
-
-
 NonEmptyString = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1),
@@ -51,7 +40,7 @@ OptionalNonEmptyString = Annotated[
 ]
 OptionalModelFallbacks = Annotated[
     tuple[NonEmptyString, ...] | None,
-    BeforeValidator(_parse_model_fallbacks),
+    BeforeValidator(parse_model_fallbacks),
 ]
 
 
@@ -156,11 +145,6 @@ class Settings(BaseModel):
     # ==================== Cohere Compatibility API ====================
     cohere_api_key: OptionalNonEmptyString = Field(
         default=None, validation_alias="COHERE_API_KEY"
-    )
-
-    # ==================== GitHub Models ====================
-    github_models_token: OptionalNonEmptyString = Field(
-        default=None, validation_alias="GITHUB_MODELS_TOKEN"
     )
 
     # ==================== SambaNova Cloud ====================
@@ -357,7 +341,7 @@ class Settings(BaseModel):
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
     model: NonEmptyString = Field(
-        default="nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+        default=DEFAULT_MODEL,
         validation_alias="MODEL",
     )
 
@@ -470,9 +454,6 @@ class Settings(BaseModel):
     )
     cohere_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="COHERE_PROXY"
-    )
-    github_models_proxy: OptionalNonEmptyString = Field(
-        default=None, validation_alias="GITHUB_MODELS_PROXY"
     )
     sambanova_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="SAMBANOVA_PROXY"
