@@ -235,7 +235,7 @@ def test_ollama_cloud_provider_config_uses_key_and_proxy():
 
     config = build_provider_config(descriptor, settings)
 
-    assert config.api_key == "ollama-cloud-token"
+    assert config.api_keys == ["ollama-cloud-token"]
     assert config.base_url == OLLAMA_CLOUD_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
 
@@ -258,7 +258,7 @@ def test_poolside_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.default_base_url == POOLSIDE_DEFAULT_BASE
     assert descriptor.base_url_attr is None
     assert descriptor.proxy_attr == "poolside_proxy"
-    assert config.api_key == "poolside-token"
+    assert config.api_keys == ["poolside-token"]
     assert config.base_url == POOLSIDE_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -282,7 +282,7 @@ def test_llm7_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.default_base_url == LLM7_DEFAULT_BASE
     assert descriptor.base_url_attr is None
     assert descriptor.proxy_attr == "llm7_proxy"
-    assert config.api_key == "llm7-token"
+    assert config.api_keys == ["llm7-token"]
     assert config.base_url == LLM7_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -301,7 +301,7 @@ def test_xai_provider_config_uses_key_base_and_proxy() -> None:
 
     assert descriptor.display_name == "xAI (Grok)"
     assert descriptor.credential_env == "XAI_API_KEY"
-    assert config.api_key == "xai-token"
+    assert config.api_keys == ["xai-token"]
     assert config.base_url == XAI_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -320,7 +320,7 @@ def test_qwencloud_provider_config_uses_key_base_and_proxy() -> None:
 
     assert descriptor.display_name == "QwenCloud Token Plan"
     assert descriptor.credential_env == "QWENCLOUD_API_KEY"
-    assert config.api_key == "qwencloud-token"
+    assert config.api_keys == ["qwencloud-token"]
     assert config.base_url == QWENCLOUD_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -342,7 +342,7 @@ def test_cline_pass_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.credential_attr == "cline_api_key"
     assert descriptor.credential_url == "https://app.cline.bot"
     assert descriptor.base_url_attr is None
-    assert config.api_key == "cline-programmatic-token"
+    assert config.api_keys == ["cline-programmatic-token"]
     assert config.base_url == CLINE_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -362,7 +362,7 @@ def test_qwencloud_coding_provider_config_uses_key_base_and_proxy() -> None:
 
     assert descriptor.display_name == "QwenCloud Coding Plan"
     assert descriptor.credential_env == "QWENCLOUD_CODING_API_KEY"
-    assert config.api_key == "qwencloud-coding-token"
+    assert config.api_keys == ["qwencloud-coding-token"]
     assert config.base_url == QWENCLOUD_CODING_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -381,7 +381,7 @@ def test_together_provider_config_uses_key_base_and_proxy() -> None:
 
     assert descriptor.display_name == "Together AI"
     assert descriptor.credential_env == "TOGETHER_API_KEY"
-    assert config.api_key == "together-token"
+    assert config.api_keys == ["together-token"]
     assert config.base_url == TOGETHER_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -400,7 +400,7 @@ def test_deepinfra_provider_config_uses_key_base_and_proxy() -> None:
 
     assert descriptor.display_name == "DeepInfra"
     assert descriptor.credential_env == "DEEPINFRA_API_KEY"
-    assert config.api_key == "deepinfra-token"
+    assert config.api_keys == ["deepinfra-token"]
     assert config.base_url == DEEPINFRA_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -420,7 +420,7 @@ def test_siliconflow_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.display_name == "SiliconFlow"
     assert descriptor.credential_env == "SILICONFLOW_API_KEY"
     assert descriptor.base_url_attr is None
-    assert config.api_key == "siliconflow-token"
+    assert config.api_keys == ["siliconflow-token"]
     assert config.base_url == SILICONFLOW_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -443,7 +443,7 @@ def test_nebius_provider_config_uses_key_base_and_proxy() -> None:
         "https://tokenfactory.nebius.com/project/api-keys"
     )
     assert descriptor.base_url_attr is None
-    assert config.api_key == "nebius-token"
+    assert config.api_keys == ["nebius-token"]
     assert config.base_url == NEBIUS_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -466,7 +466,7 @@ def test_chutes_provider_config_uses_key_base_and_proxy() -> None:
         "https://chutes.ai/docs/getting-started/authentication"
     )
     assert descriptor.base_url_attr is None
-    assert config.api_key == "chutes-token"
+    assert config.api_keys == ["chutes-token"]
     assert config.base_url == CHUTES_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -487,7 +487,7 @@ def test_featherless_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.credential_env == "FEATHERLESS_API_KEY"
     assert descriptor.credential_url == "https://featherless.ai/account/api-keys"
     assert descriptor.base_url_attr is None
-    assert config.api_key == "featherless-token"
+    assert config.api_keys == ["featherless-token"]
     assert config.base_url == FEATHERLESS_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -507,7 +507,7 @@ def test_agnes_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.display_name == "Agnes AI"
     assert descriptor.credential_env == "AGNES_API_KEY"
     assert descriptor.base_url_attr is None
-    assert config.api_key == "agnes-token"
+    assert config.api_keys == ["agnes-token"]
     assert config.base_url == AGNES_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -527,7 +527,7 @@ def test_zenmux_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.display_name == "ZenMux"
     assert descriptor.credential_env == "ZENMUX_API_KEY"
     assert descriptor.base_url_attr is None
-    assert config.api_key == "zenmux-token"
+    assert config.api_keys == ["zenmux-token"]
     assert config.base_url == ZENMUX_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -548,7 +548,7 @@ def test_wandb_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.credential_env == "WANDB_API_KEY"
     assert descriptor.credential_url == "https://wandb.ai/settings"
     assert descriptor.base_url_attr is None
-    assert config.api_key == "wandb-token"
+    assert config.api_keys == ["wandb-token"]
     assert config.base_url == WANDB_INFERENCE_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -566,7 +566,7 @@ def test_bedrock_provider_config_uses_regional_base_key_and_proxy() -> None:
 
     assert descriptor.credential_env == "AWS_BEARER_TOKEN_BEDROCK"
     assert descriptor.default_base_url == BEDROCK_DEFAULT_BASE
-    assert config.api_key == "bedrock-token"
+    assert config.api_keys == ["bedrock-token"]
     assert config.base_url == "https://bedrock-mantle.eu-west-1.api.aws/v1"
     assert config.proxy == "http://proxy.test:8080"
 
@@ -586,7 +586,7 @@ def test_azure_openai_provider_config_uses_resource_base_key_and_proxy() -> None
         "azure_openai_api_key",
         "azure_openai_base_url",
     )
-    assert config.api_key == "azure-token"
+    assert config.api_keys == ["azure-token"]
     assert config.base_url == "https://resource.openai.azure.com/openai/v1/"
     assert config.proxy == "http://proxy.test:8080"
 
@@ -626,7 +626,7 @@ def test_local_provider_factory_resolves_catalog_static_credential(
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
         provider = create_provider(provider_id, settings)
 
-    assert config.api_key == expected_api_key
+    assert config.api_keys == [expected_api_key]
     assert isinstance(provider, OpenAIChatProvider)
     assert provider._api_key == expected_api_key
 
@@ -667,7 +667,7 @@ def test_zai_api_provider_config_uses_shared_key_general_base_and_own_proxy():
     assert descriptor.default_base_url == ZAI_API_DEFAULT_BASE
     assert descriptor.base_url_attr is None
     assert descriptor.proxy_attr == "zai_api_proxy"
-    assert config.api_key == "shared-zai-key"
+    assert config.api_keys == ["shared-zai-key"]
     assert config.base_url == ZAI_API_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
@@ -691,7 +691,7 @@ def test_kimi_code_provider_config_uses_subscription_key_and_proxy() -> None:
     config = build_provider_config(descriptor, settings)
 
     assert descriptor.credential_env == "KIMI_CODE_API_KEY"
-    assert config.api_key == "subscription-token"
+    assert config.api_keys == ["subscription-token"]
     assert config.base_url == KIMI_CODE_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
 
@@ -753,7 +753,7 @@ def test_build_provider_config_opencode_go_uses_opencode_api_key() -> None:
 
     config = build_provider_config(descriptor, settings)
 
-    assert config.api_key == "shared-opencode-token"
+    assert config.api_keys == ["shared-opencode-token"]
 
 
 def test_vercel_descriptor_uses_openai_chat_gateway() -> None:
@@ -797,7 +797,7 @@ def test_build_provider_config_vercel_uses_gateway_key_and_proxy() -> None:
 
     config = build_provider_config(descriptor, settings)
 
-    assert config.api_key == "vercel-token"
+    assert config.api_keys == ["vercel-token"]
     assert config.proxy == "http://proxy.test:8080"
 
 
@@ -810,7 +810,7 @@ def test_build_provider_config_huggingface_uses_api_key_and_proxy() -> None:
 
     config = build_provider_config(descriptor, settings)
 
-    assert config.api_key == "hf-token"
+    assert config.api_keys == ["hf-token"]
     assert config.proxy == "http://proxy.test:8080"
 
 
@@ -823,7 +823,7 @@ def test_build_provider_config_cohere_uses_api_key_and_proxy() -> None:
 
     config = build_provider_config(descriptor, settings)
 
-    assert config.api_key == "cohere-token"
+    assert config.api_keys == ["cohere-token"]
     assert config.proxy == "http://proxy.test:8080"
 
 
@@ -836,7 +836,7 @@ def test_build_provider_config_github_models_uses_token_and_proxy() -> None:
 
     config = build_provider_config(descriptor, settings)
 
-    assert config.api_key == "github-token"
+    assert config.api_keys == ["github-token"]
     assert config.proxy == "http://proxy.test:8080"
 
 

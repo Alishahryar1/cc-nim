@@ -41,6 +41,22 @@ _DOTENV_ASSIGNMENT_RE = re.compile(
 )
 
 
+def _get_validation_alias_str(alias):
+    """Convert a validation alias to a string, handling AliasChoices."""
+    if hasattr(alias, "choices"):
+        # For AliasChoices, use the first alias
+        if alias.choices:
+            return str(alias.choices[0])
+        else:
+            # Fallback - this shouldn't happen in practice
+            return ""
+    elif isinstance(alias, str):
+        return alias
+    else:
+        # For other types, convert to string
+        return str(alias)
+
+
 @dataclass(frozen=True, slots=True)
 class EnvMigration:
     """A migration for one dotenv setting."""
@@ -133,9 +149,20 @@ def settings_env_keys() -> frozenset[str]:
         if name == "nim":
             continue
         alias = field.validation_alias
-        if not isinstance(alias, str):
-            raise AssertionError(f"Settings field {name!r} needs one string alias")
-        keys.add(alias)
+        # Handle AliasChoices objects
+        if hasattr(alias, "choices"):
+            # For AliasChoices, add all choices
+            if alias.choices:
+                for choice in alias.choices:
+                    keys.add(str(choice))
+            else:
+                # Fallback to field name if no choices
+                keys.add(name)
+        elif isinstance(alias, str):
+            keys.add(alias)
+        else:
+            # For other types, convert to string
+            keys.add(str(alias))
     return frozenset(keys)
 
 
@@ -170,9 +197,25 @@ def secret_env_keys() -> frozenset[str]:
         if name.endswith(("_api_key", "_proxy", "_token"))
     }
     secret_attrs.update({"telegram_proxy_url", "proxy_auth_token"})
-    return frozenset(
-        str(Settings.model_fields[name].validation_alias) for name in secret_attrs
-    )
+
+    result = set()
+    for name in secret_attrs:
+        alias = Settings.model_fields[name].validation_alias
+        # Handle AliasChoices objects by adding all choices
+        if hasattr(alias, "choices"):
+            if alias.choices:
+                for choice in alias.choices:
+                    result.add(str(choice))
+            else:
+                # Fallback to field name if no choices
+                result.add(str(name))
+        elif isinstance(alias, str):
+            result.add(alias)
+        else:
+            # For other types, convert to string
+            result.add(str(alias))
+
+    return frozenset(result)
 
 
 def consolidate_managed_config(

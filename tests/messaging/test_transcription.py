@@ -12,7 +12,7 @@ import pytest
 from free_claude_code.messaging.transcription import TranscriptionService
 
 
-def _service(*, api_key: str = "") -> TranscriptionService:
+def _service(*, api_key: list[str] | None = None) -> TranscriptionService:
     return TranscriptionService(
         model="base",
         device="cpu",
@@ -56,7 +56,7 @@ async def test_transcription_service_transcribes_and_reuses_its_pipeline(
         pipeline
     )
     fake_audio = {"array": [0.0], "sampling_rate": 16000}
-    service = _service(api_key="hf-provider-key")
+    service = _service(api_key=["hf-provider-key"])
 
     with (
         patch.dict(
@@ -180,7 +180,7 @@ async def test_transcription_service_close_releases_pipeline_and_is_terminal(
 async def test_cancelled_transcription_keeps_ownership_until_thread_exits(
     tmp_path: Path,
 ) -> None:
-    service = _service(api_key="hf-secret")
+    service = _service(api_key=["hf-secret"])
     audio_path = tmp_path / "voice.wav"
     audio_path.write_bytes(b"voice")
     started = threading.Event()

@@ -650,7 +650,7 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
     settings = Settings()
     settings.model = "nvidia_nim/configured-model"
     settings.model_opus = "open_router/anthropic/configured-opus"
-    settings.open_router_api_key = "open-router-key"
+    settings.open_router_api_key = ["open-router-key"]
     app = create_test_app(settings)
     provider_manager_for_app(app).cache_model_infos(
         "open_router",
@@ -676,7 +676,7 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
 def test_admin_model_refresh_returns_the_updated_canonical_catalog():
     settings = Settings()
     settings.model = "deepseek/deepseek-chat"
-    settings.deepseek_api_key = "deepseek-key"
+    settings.deepseek_api_key = ["deepseek-key"]
     app = create_test_app(settings)
     runtime = app.state.services.admin
 
