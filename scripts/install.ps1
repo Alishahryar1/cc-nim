@@ -13,7 +13,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$RepoArchiveUrl = "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+$RepoArchiveUrl = "https://github.com/R-zin/free-claude-code/archive/refs/heads/main.zip"
 # Windows on ARM emulates x64, whose Python package ecosystem has broader wheel support.
 $PythonRequest = "cpython-3.14.0-windows-x86_64-none"
 $MinUvVersion = "0.11.16"
