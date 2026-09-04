@@ -202,6 +202,20 @@ def _make_chunk(
     return chunk
 
 
+def _make_context_length_bad_request() -> openai.BadRequestError:
+    response = httpx2.Response(
+        status_code=400,
+        request=httpx2.Request(
+            "POST", "https://test.api.nvidia.com/v1/chat/completions"
+        ),
+    )
+    return openai.BadRequestError(
+        "maximum context reached",
+        response=response,
+        body={"error": {"code": "context_length_exceeded"}},
+    )
+
+
 def _make_usage_chunk(*, prompt_tokens: int, completion_tokens: int):
     chunk = MagicMock()
     chunk.choices = []
@@ -1891,6 +1905,90 @@ class TestStreamingExceptionHandling:
         )
         assert original.closed is True
         assert recovery.closed is True
+
+    @pytest.mark.asyncio
+    async def test_context_error_opening_continuation_remains_terminal(self):
+        """A derived continuation's SDK context error replaces the cutoff."""
+        original = ClosableAsyncStreamMock(
+            [_make_chunk(content="partial" + ("x" * 70_000))]
+        )
+        provider = _make_provider()
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[original, _make_context_length_bad_request()],
+        ) as create:
+            events, failure = await _collect_stream_and_error(
+                provider,
+                _make_request(),
+            )
+
+        assert create.await_count == 2
+        assert failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+        assert failure.retryable is False
+        assert not any(
+            event.event == "message_stop" for event in parse_sse_text("".join(events))
+        )
+        assert original.closed is True
+
+    @pytest.mark.asyncio
+    async def test_context_error_opening_tool_repair_remains_terminal(self):
+        """A derived tool repair's SDK context error replaces the truncation."""
+        provider = _make_provider()
+        request = _make_request(
+            tools=[
+                {
+                    "name": "echo_smoke",
+                    "description": "Echo",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                        "additionalProperties": False,
+                    },
+                }
+            ]
+        )
+        original = ClosableAsyncStreamMock(
+            [
+                _make_tool_calls_chunk(
+                    name="echo_smoke",
+                    arguments='{"message":"' + ("x" * 70_000),
+                    tool_id="call_repair",
+                )
+            ],
+            error=httpx.ReadError("tool stream cutoff"),
+        )
+
+        with (
+            patch.object(
+                provider,
+                "_create_stream",
+                new_callable=AsyncMock,
+                wraps=provider._create_stream,
+            ) as create_stream,
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                side_effect=[original, _make_context_length_bad_request()],
+            ) as create,
+        ):
+            events, failure = await _collect_stream_and_error(provider, request)
+
+        assert create.await_count == 2
+        assert [call.args[2] for call in create_stream.await_args_list] == [
+            ProviderOperationKind.GENERATION,
+            ProviderOperationKind.TOOL_REPAIR,
+        ]
+        assert failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+        assert failure.retryable is False
+        assert not any(
+            event.event == "message_stop" for event in parse_sse_text("".join(events))
+        )
+        assert original.closed is True
 
     @pytest.mark.asyncio
     async def test_recovery_close_failure_preserves_completed_output(self):

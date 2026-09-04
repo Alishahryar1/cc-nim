@@ -377,6 +377,47 @@ async def test_context_failure_event_is_canonical_and_not_retried(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["messages", "responses"])
+async def test_top_level_context_error_is_canonical_and_not_retried(
+    wire_api: str,
+) -> None:
+    attempts = 0
+    failed = {
+        "type": "error",
+        "sequence_number": 0,
+        "code": "context_length_exceeded",
+        "message": "maximum context reached",
+        "param": None,
+    }
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(failed),
+        )
+
+    client = _client(handler)
+    try:
+        with pytest.raises(ExecutionFailure) as exc_info:
+            if wire_api == "messages":
+                await _collect(_transport(client, max_attempts=2))
+            else:
+                await _collect_native(
+                    _transport(client, max_attempts=2),
+                    OpenAIResponsesRequest(model="upstream-model", input="hello"),
+                )
+    finally:
+        await client.close()
+
+    assert attempts == 1
+    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert exc_info.value.retryable is False
+
+
+@pytest.mark.asyncio
 async def test_native_committed_truncation_emits_one_failed_terminal() -> None:
     attempts = 0
     committed = "x" * 70_000

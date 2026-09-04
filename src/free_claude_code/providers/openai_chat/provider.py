@@ -1225,11 +1225,17 @@ class _OpenAIChatStreamRunner:
                     request_id=self._request_id,
                     exc_type=type(recovery_error).__name__,
                 )
-                if (
-                    isinstance(recovery_error, ExecutionFailure)
-                    and recovery_error.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
-                ):
-                    error = recovery_error
+                recovery_failure = classify_provider_failure(
+                    underlying_provider_error(recovery_error),
+                    provider_name=tag,
+                    read_timeout_s=self._provider._config.http_read_timeout,
+                    request_id=self._request_id,
+                    provider_failure_override=(
+                        self._provider._provider_failure_override
+                    ),
+                )
+                if recovery_failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED:
+                    error = recovery_failure
                 recovery_events = None
             if recovery_events is not None:
                 return _OpenAIChatFailureResolution(
