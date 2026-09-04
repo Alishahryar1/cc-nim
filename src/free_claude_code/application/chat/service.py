@@ -201,6 +201,12 @@ class ChatService:
         await self._store.close()
         self._started = False
 
+    def begin_shutdown(self) -> None:
+        """Stop new Chat work and finish feeds before HTTP connections drain."""
+        self._accepting = False
+        self._unavailable_message = "Chat Sessions is stopping."
+        self._events.disconnect_subscribers()
+
     async def close(self) -> None:
         self._accepting = False
         async with self._active_lock:

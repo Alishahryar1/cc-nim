@@ -256,6 +256,11 @@ transcriber, `ApplicationRuntime`, `ApiServices`, and ASGI application.
 [runtime/asgi.py](src/free_claude_code/runtime/asgi.py) drives runtime startup and
 shutdown through lifespan events.
 
+The supervised `RuntimeServer` first signals `ApplicationRuntime.begin_shutdown`.
+Chat stops admitting work and finishes its observer feeds before Uvicorn drains
+HTTP connections. Chat operations can still settle and publish internally;
+storage and provider resources remain owned until lifespan cleanup completes.
+
 [runtime/provider_manager.py](src/free_claude_code/runtime/provider_manager.py)
 alone publishes, retires, and closes provider generations. Each inference request
 holds a settings/provider snapshot through a lease. Provider-only Admin Apply
@@ -286,6 +291,7 @@ client executables and native client state have separate owners.
 
 Lifecycle behavior is covered by
 [runtime tests](tests/runtime/test_application_runtime.py),
+[supervised HTTP shutdown tests](tests/cli/test_server_shutdown.py),
 [provider-manager tests](tests/runtime/test_provider_manager.py), and
 [response-stream tests](tests/api/test_response_streams.py).
 
@@ -327,6 +333,12 @@ unsupported probes and inconclusive network failures are not proof of a bad
 key. Accepted changes either replace a provider generation or follow the runtime
 restart path. Configuration readiness, live provider checks, and discovery are
 separate states.
+
+Automatic restart responses identify the old runtime instance. Admin polls the
+local status endpoint until a different running instance is ready, then reloads
+settings and retains credential warnings. A bounded reconnect failure offers a
+retry without resubmitting edits. Status allows reads from validated loopback
+origins so this also works when Apply changes the server address.
 
 Authentication is defined in
 [api/dependencies.py](src/free_claude_code/api/dependencies.py):

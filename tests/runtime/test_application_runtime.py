@@ -472,6 +472,7 @@ async def test_restart_required_apply_commits_without_hot_publication(tmp_path) 
         tmp_path,
         pending_fields=("PORT",),
     )
+    instance_id = runtime.admin_status()["instance_id"]
 
     with (
         patch(
@@ -493,6 +494,7 @@ async def test_restart_required_apply_commits_without_hot_publication(tmp_path) 
         "automatic": True,
         "admin_url": "http://127.0.0.1:9090/admin",
         "fields": ["PORT"],
+        "instance_id": instance_id,
     }
     restart.assert_not_awaited()
     await runtime.request_restart()

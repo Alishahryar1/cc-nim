@@ -111,6 +111,10 @@ class ChatEventPublisher:
         if self._closed:
             return
         self._closed = True
+        self.disconnect_subscribers()
+
+    def disconnect_subscribers(self) -> None:
+        """Finish observer feeds while allowing owned work to settle and publish."""
         subscriptions = tuple(self._subscriptions)
         self._subscriptions.clear()
         for subscription in subscriptions:
