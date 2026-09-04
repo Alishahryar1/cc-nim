@@ -43,6 +43,10 @@ from free_claude_code.messaging.platforms.ports import (
     MessagingRuntime,
 )
 from free_claude_code.messaging.voice import Transcriber
+from free_claude_code.providers.credential_validation import (
+    CredentialStatus,
+    check_credentials,
+)
 
 from .provider_manager import ProviderRuntimeManager
 
@@ -187,11 +191,33 @@ class ApplicationRuntime:
         async with self._config_lock:
             prepared = prepare_admin_update(updates)
             if not prepared.valid:
-                return prepared.applied_response()
+                return prepared.applied_response() | {"credential_checks": []}
             assert prepared.settings is not None
+
+            checks = await check_credentials(prepared.settings, prepared.changed_keys)
+            check_response: list[JsonObject] = [
+                {
+                    "key": check.key,
+                    "status": check.status.value,
+                    "message": check.message,
+                }
+                for check in checks
+            ]
+            rejected = [
+                check for check in checks if check.status == CredentialStatus.REJECTED
+            ]
+            if rejected:
+                return prepared.validation_response() | {
+                    "applied": False,
+                    "valid": False,
+                    "errors": [f"{check.key}: {check.message}" for check in rejected],
+                    "pending_fields": [],
+                    "credential_checks": check_response,
+                }
 
             if prepared.pending_fields:
                 result = self._commit_admin_update(prepared)
+                result["credential_checks"] = check_response
                 restart = self._restart_metadata(
                     prepared.pending_fields,
                     prepared.settings,
@@ -214,6 +240,7 @@ class ApplicationRuntime:
             )
             self._pending_fields = []
             result["restart"] = self._restart_metadata((), prepared.settings)
+            result["credential_checks"] = check_response
             return result
 
     def admin_status(self) -> JsonObject:
