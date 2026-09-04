@@ -144,6 +144,8 @@ async def test_documented_probe_acceptance_and_rejection(
     body = {"error": {"message": "secret-not-a-known-format"}}
     if provider_id == "gemini":
         body = {"error": {"details": [{"reason": "API_KEY_INVALID"}]}}
+    if provider_id == "siliconflow":
+        body = "Invalid token"  # The documented StringData error body.
     result = await validation.check_credentials(_settings(provider_id), (key,))
     assert result[0].status == (
         validation.CredentialStatus.REJECTED

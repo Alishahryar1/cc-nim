@@ -213,6 +213,9 @@ def _interpret(key: str, probe: _Probe, response: httpx.Response) -> CredentialC
     api_error = isinstance(payload, Mapping) and bool(
         payload.get("error") or payload.get("message") or payload.get("detail")
     )
+    # SiliconFlow's /user/info OpenAPI defines 401 JSON as StringData.
+    if probe.provider_id == "siliconflow" and isinstance(payload, str):
+        api_error = True
     if (api_error and response.status_code in probe.rejected_statuses) or (
         probe.provider_id == "gemini"
         and response.status_code == 400
