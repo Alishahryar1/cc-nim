@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from free_claude_code.config.constants import DEFAULT_MODEL
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningPolicy
@@ -15,6 +16,30 @@ from free_claude_code.providers.openai_chat import (
 )
 from tests.api.support import create_test_app
 from tests.providers.support import immediate_admission, make_provider_config
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("prefix", ["", "anthropic/", "claude-3-freecc-no-thinking/"])
+def test_retired_model_ingress_calls_default_provider(client, stream, prefix):
+    original = f"{prefix}github_models/vendor/opus"
+    _stream_messages_calls.clear()
+    response = client.post(
+        "/v1/messages",
+        json={
+            "model": original,
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": stream,
+        },
+    )
+    assert response.status_code == 200
+    assert len(_stream_messages_calls) == 1
+    args, kwargs = _stream_messages_calls[0]
+    assert args[0].model == DEFAULT_MODEL.split("/", 1)[1]
+    assert kwargs["response_model"] == original
+    if prefix == "claude-3-freecc-no-thinking/":
+        assert kwargs["reasoning"] == ReasoningPolicy.off()
+
 
 app = create_test_app()
 

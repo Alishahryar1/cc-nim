@@ -35,6 +35,25 @@ def _hold_next_chat_operation(page: Page, action: str) -> None:
     )
 
 
+def test_stale_chat_selection_reloads_as_default(page: Page, admin_base_url: str):
+    session = page.request.post(
+        f"{admin_base_url}/admin/api/chat/sessions", data={}
+    ).json()
+    response = page.request.patch(
+        f"{admin_base_url}/admin/api/chat/sessions/{session['id']}",
+        data={
+            "expected_revision": session["revision"],
+            "model": "github_models/openai/old",
+        },
+    )
+    assert response.ok
+    page.goto(f"{admin_base_url}/admin/chat/{session['id']}")
+    expect(page.get_by_role("combobox", name="Selected model")).to_have_value(
+        "open_router/e2e-default"
+    )
+    expect(page.get_by_role("textbox", name="Message", exact=True)).to_be_visible()
+
+
 def _select_model(page: Page, model_ref: str) -> None:
     model = page.get_by_role("combobox", name="Selected model")
     model.click()

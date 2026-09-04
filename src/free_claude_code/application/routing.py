@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from loguru import logger
 
 from free_claude_code.application.errors import UnknownProviderError
-from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
+from free_claude_code.config.model_refs import (
+    is_retired_model_ref,
+    parse_model_name,
+    parse_provider_type,
+)
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
@@ -147,6 +151,17 @@ class ModelRouter:
         self, model_name: str
     ) -> tuple[str | None, str | None, bool]:
         decoded = decode_gateway_model_id(model_name)
+        candidate = (
+            f"{decoded.provider_id}/{decoded.provider_model}"
+            if decoded is not None
+            else model_name
+        )
+        if is_retired_model_ref(candidate):
+            return (
+                parse_provider_type(self._settings.model),
+                parse_model_name(self._settings.model),
+                decoded.force_reasoning_off if decoded is not None else False,
+            )
         if decoded is not None:
             if decoded.provider_id not in SUPPORTED_PROVIDER_IDS:
                 return None, None, False

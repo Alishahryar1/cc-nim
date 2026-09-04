@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from loguru import logger
+
 from .env_files import (
     ANTHROPIC_AUTH_TOKEN_ENV,
     FCC_CONFIG_SCHEMA_ENV,
@@ -15,6 +17,7 @@ from .env_files import (
     legacy_explicit_env_path,
     verified_checkout_env_path,
 )
+from .model_refs import normalize_retired_model_settings
 from .paths import legacy_env_paths, managed_env_path
 from .provider_catalog import PROVIDER_CATALOG
 from .settings import Settings
@@ -190,7 +193,14 @@ def consolidate_managed_config(
     if base_is_managed:
         schema = base_values.get(FCC_CONFIG_SCHEMA_ENV)
         if schema == CONFIG_SCHEMA_VERSION:
-            return ConfigMigrationResult(changed=False)
+            normalized = normalize_retired_model_settings(
+                base_values, preserve_empty_overrides=False
+            )
+            if normalized == base_values:
+                return ConfigMigrationResult(changed=False)
+            atomic_write_managed_config(normalized, path=managed)
+            _log_model_repairs(base_values, normalized)
+            return ConfigMigrationResult(changed=True)
         if schema not in {None, ""}:
             raise ValueError(
                 f"Managed config {managed} uses unsupported schema {schema!r}; "
@@ -224,9 +234,21 @@ def consolidate_managed_config(
         if key in known and key != FCC_CONFIG_SCHEMA_ENV and not values[key].strip():
             values.pop(key)
     values[FCC_CONFIG_SCHEMA_ENV] = CONFIG_SCHEMA_VERSION
-
-    atomic_write_managed_config(values, path=managed)
+    normalized = normalize_retired_model_settings(
+        values, preserve_empty_overrides=False
+    )
+    atomic_write_managed_config(normalized, path=managed)
+    _log_model_repairs(values, normalized)
     return ConfigMigrationResult(changed=True, imported_from=tuple(imported))
+
+
+def _log_model_repairs(before: Mapping[str, str], after: Mapping[str, str]) -> None:
+    changed = sorted(key for key in before if before[key] != after.get(key))
+    if changed:
+        logger.info(
+            "Repaired retired provider selections in managed config: {}",
+            ", ".join(changed),
+        )
 
 
 def atomic_write_managed_config(
@@ -292,7 +314,8 @@ def render_managed_config(
     if unknown:
         lines.extend(("", "# Preserved unrecognized settings"))
         lines.extend(
-            f"{key}={quote_env_value(canonical[key])}" for key in sorted(unknown)
+            f"{key}={quote_env_value('********' if mask_secrets else canonical[key])}"
+            for key in sorted(unknown)
         )
     return "\n".join(lines) + "\n"
 

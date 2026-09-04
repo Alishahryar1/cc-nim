@@ -300,6 +300,13 @@ Lifecycle behavior is covered by
 | [config/admin](src/free_claude_code/config/admin/) | Catalog-driven fields, presentation, validation and sparse persistence |
 | [runtime/application.py](src/free_claude_code/runtime/application.py) | Credential checks, Apply publication/restart decisions and account operations |
 
+Retired provider references are normalized per source before validation by
+`config/model_refs.py`. Managed selections are cleared to inherit the default;
+process overrides retain their ownership. Startup atomically repairs managed
+config and current Chat model selections; Chat history retains its original model
+facts. Stale direct request IDs route to the effective default, preserving encoded
+reasoning intent. Unknown preserved config values are masked in Admin previews.
+
 Live precedence is defaults, managed `~/.fcc/.env`, then process environment.
 The deliberate exception is a non-empty managed `ANTHROPIC_AUTH_TOKEN`, which
 wins over an inherited token. Settings loading may perform the one-time legacy

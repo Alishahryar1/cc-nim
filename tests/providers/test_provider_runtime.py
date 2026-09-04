@@ -18,7 +18,6 @@ from free_claude_code.config.provider_catalog import (
     COHERE_DEFAULT_BASE,
     DEEPINFRA_DEFAULT_BASE,
     FEATHERLESS_DEFAULT_BASE,
-    GITHUB_MODELS_DEFAULT_BASE,
     HUGGINGFACE_DEFAULT_BASE,
     KIMI_CODE_DEFAULT_BASE,
     LLM7_DEFAULT_BASE,
@@ -45,7 +44,6 @@ from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
-from free_claude_code.providers.github_models import GitHubModelsProvider
 from free_claude_code.providers.groq import GroqProvider
 from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.lmstudio import LMStudioProvider
@@ -97,7 +95,6 @@ def _make_settings(**overrides):
     mock.bedrock_base_url = BEDROCK_DEFAULT_BASE
     mock.huggingface_api_key = "test_huggingface_key"
     mock.cohere_api_key = "test_cohere_key"
-    mock.github_models_token = "test_github_models_token"
     mock.zai_api_key = "test_zai_key"
     mock.tokenrouter_api_key = "test_tokenrouter_key"
     mock.tokenrouter_base_url = TOKENROUTER_DEFAULT_BASE
@@ -130,7 +127,6 @@ def _make_settings(**overrides):
     mock.bedrock_proxy = None
     mock.huggingface_proxy = None
     mock.cohere_proxy = None
-    mock.github_models_proxy = None
     mock.zai_proxy = None
     mock.zai_api_proxy = None
     mock.tokenrouter_proxy = None
@@ -780,14 +776,6 @@ def test_cohere_descriptor_uses_openai_chat_compatibility_api() -> None:
     assert descriptor.proxy_attr == "cohere_proxy"
 
 
-def test_github_models_descriptor_uses_openai_chat_inference_api() -> None:
-    descriptor = PROVIDER_CATALOG["github_models"]
-
-    assert descriptor.default_base_url == GITHUB_MODELS_DEFAULT_BASE
-    assert descriptor.credential_env == "GITHUB_MODELS_TOKEN"
-    assert descriptor.proxy_attr == "github_models_proxy"
-
-
 def test_build_provider_config_vercel_uses_gateway_key_and_proxy() -> None:
     descriptor = PROVIDER_CATALOG["vercel"]
     settings = _make_settings(
@@ -827,19 +815,6 @@ def test_build_provider_config_cohere_uses_api_key_and_proxy() -> None:
     assert config.proxy == "http://proxy.test:8080"
 
 
-def test_build_provider_config_github_models_uses_token_and_proxy() -> None:
-    descriptor = PROVIDER_CATALOG["github_models"]
-    settings = _make_settings(
-        github_models_token="github-token",
-        github_models_proxy="http://proxy.test:8080",
-    )
-
-    config = build_provider_config(descriptor, settings)
-
-    assert config.api_key == "github-token"
-    assert config.proxy == "http://proxy.test:8080"
-
-
 def test_create_provider_uses_openai_chat_openrouter_by_default():
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
         provider = create_provider("open_router", _make_settings())
@@ -862,7 +837,6 @@ def test_create_provider_instantiates_each_builtin():
         bedrock_api_key="test_bedrock_key",
         huggingface_api_key="test_huggingface_key",
         cohere_api_key="test_cohere_key",
-        github_models_token="test_github_models_token",
         kimi_api_key="test_kimi_key",
         kimi_code_api_key="test_kimi_code_key",
         provider_rate_limit=7,
@@ -907,7 +881,6 @@ def test_create_provider_instantiates_each_builtin():
         "bedrock": OpenAIChatProvider,
         "huggingface": OpenAIChatProvider,
         "cohere": OpenAIChatProvider,
-        "github_models": GitHubModelsProvider,
         "zai": OpenAIChatProvider,
         "zai_api": OpenAIChatProvider,
         "tokenrouter": OpenAIChatProvider,
