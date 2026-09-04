@@ -45,7 +45,10 @@ from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import (
     RetryableProviderProtocolError,
     classify_provider_failure,
+    context_window_exceeded_provider_failure,
+    is_context_window_error_code,
     is_retryable_stream_error,
+    reports_context_window_incomplete,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
 from free_claude_code.providers.model_listing import (
@@ -410,6 +413,8 @@ class OpenAICodexProvider(BaseProvider):
                         for event in start_events:
                             for held in recovery.push(event):
                                 yield held
+                    if reports_context_window_incomplete(event_type, payload):
+                        raise context_window_exceeded_provider_failure()
                     if event_type in {
                         "response.failed",
                         "error",
@@ -647,6 +652,8 @@ def _effective_error(error: Exception) -> Exception:
             extract_upstream_error_detail(error).exception_text
             or "OpenAI response failed."
         )
+        if is_context_window_error_code(error.code):
+            return context_window_exceeded_provider_failure()
         code = (error.code or "").lower()
         if "rate" in code or "429" in code:
             return ExecutionFailure(FailureKind.RATE_LIMIT, 429, message, True)
