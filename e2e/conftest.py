@@ -1,10 +1,11 @@
 """Isolated browser-test composition for the local Admin UI."""
 
 import asyncio
+import os
 import socket
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -22,7 +23,11 @@ from free_claude_code.application.chat import (
     ChatSessionPage,
 )
 from free_claude_code.application.model_metadata import ProviderModelInfo
-from free_claude_code.application.terminal import TerminalProcessPort, TerminalService
+from free_claude_code.application.terminal import (
+    TerminalClientRole,
+    TerminalEngineSnapshot,
+    TerminalService,
+)
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
 from free_claude_code.config.loader import clear_settings_cache, get_settings
@@ -36,6 +41,22 @@ from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.asgi import RuntimeASGIApp
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
+from free_claude_code.runtime.terminal_zellij import ZellijTerminalEngineHost
+
+if os.name == "nt":
+    from free_claude_code.runtime.terminal_pty_windows import (
+        WindowsProcessContainment as PlatformProcessContainment,
+    )
+    from free_claude_code.runtime.terminal_pty_windows import (
+        WindowsTerminalClientFactory as PlatformTerminalClientFactory,
+    )
+else:
+    from free_claude_code.runtime.terminal_pty_posix import (
+        PosixProcessContainment as PlatformProcessContainment,
+    )
+    from free_claude_code.runtime.terminal_pty_posix import (
+        PosixTerminalClientFactory as PlatformTerminalClientFactory,
+    )
 
 
 class _ModelListingProvider(BaseProvider):
@@ -221,64 +242,138 @@ class _ModelListingProvider(BaseProvider):
             yield ""
 
 
-class _EchoTerminalProcess(TerminalProcessPort):
-    """Deterministic in-process PTY boundary for rendered browser contracts."""
+class _EchoTerminalClient:
+    """One deterministic browser-facing client of the fake shared terminal."""
 
-    def __init__(self, pid: int) -> None:
-        self._pid = pid
+    def __init__(self, owner: _EchoTerminalSession) -> None:
+        self._owner = owner
         self._output: asyncio.Queue[bytes | None] = asyncio.Queue()
-        self._output.put_nowait(b"FCC browser-test terminal\r\n$ ")
-        self._exited = asyncio.Event()
-        self._exit_code: int | None = None
-
-    @property
-    def pid(self) -> int:
-        return self._pid
-
-    @property
-    def alive(self) -> bool:
-        return not self._exited.is_set()
+        self._closed = False
 
     async def read(self) -> bytes:
         return (await self._output.get()) or b""
 
-    async def write(self, data: bytes) -> None:
-        if self.alive:
-            self._output.put_nowait(data)
+    async def write(self, data: str) -> None:
+        if not self._closed:
+            self._owner.publish(data.encode("utf-8"))
 
     async def resize(self, rows: int, columns: int) -> None:
         del rows, columns
 
     async def wait(self) -> int | None:
-        await self._exited.wait()
-        return self._exit_code
-
-    async def terminate_tree(self) -> None:
-        if not self.alive:
-            return
-        self._exit_code = 0
-        self._exited.set()
-        self._output.put_nowait(None)
+        await self._owner.exited.wait()
+        return self._owner.exit_code
 
     async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._owner.release(self)
+        self._output.put_nowait(None)
+
+    def feed(self, data: bytes) -> None:
+        if not self._closed:
+            self._output.put_nowait(data)
+
+
+class _EchoTerminalSession:
+    """Deterministic canonical terminal used only by browser tests."""
+
+    def __init__(self) -> None:
+        self._history = bytearray(b"FCC browser-test terminal\r\n$ ")
+        self._clients: set[_EchoTerminalClient] = set()
+        self.exited = asyncio.Event()
+        self.exit_code: int | None = None
+
+    async def open_client(
+        self,
+        role: TerminalClientRole,
+        *,
+        rows: int,
+        columns: int,
+    ) -> _EchoTerminalClient:
+        del role, rows, columns
+        client = _EchoTerminalClient(self)
+        self._clients.add(client)
+        return client
+
+    async def snapshot(self) -> TerminalEngineSnapshot:
+        return TerminalEngineSnapshot(scrollback=bytes(self._history), viewport=b"")
+
+    async def resize(self, rows: int, columns: int) -> None:
+        del rows, columns
+
+    async def wait_root(self) -> int | None:
+        await self.exited.wait()
+        return self.exit_code
+
+    async def terminate_tree(self) -> None:
+        if self.exited.is_set():
+            return
+        self.exit_code = 0
+        self.exited.set()
+        for client in tuple(self._clients):
+            await client.close()
+
+    async def close(self) -> None:
+        await self.terminate_tree()
+
+    def publish(self, data: bytes) -> None:
+        self._history.extend(data)
+        for client in tuple(self._clients):
+            client.feed(data)
+
+    def release(self, client: _EchoTerminalClient) -> None:
+        self._clients.discard(client)
+
+
+class _EchoTerminalHost:
+    def __init__(self) -> None:
+        self._sessions: list[_EchoTerminalSession] = []
+
+    async def start(self) -> None:
         return None
 
-
-class _EchoTerminalFactory:
-    def __init__(self) -> None:
-        self._next_pid = 10_000
-
-    async def spawn(
+    async def create_session(
         self,
         *,
+        session_name: str,
+        command: Sequence[str],
         cwd: Path,
         env: Mapping[str, str],
         rows: int,
         columns: int,
-    ) -> _EchoTerminalProcess:
-        del cwd, env, rows, columns
-        self._next_pid += 1
-        return _EchoTerminalProcess(self._next_pid)
+    ) -> _EchoTerminalSession:
+        del session_name, command, cwd, env, rows, columns
+        session = _EchoTerminalSession()
+        self._sessions.append(session)
+        return session
+
+    async def close(self) -> None:
+        await asyncio.gather(*(session.close() for session in self._sessions))
+
+
+def _terminal_host(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> _EchoTerminalHost | ZellijTerminalEngineHost:
+    if request.node.get_closest_marker("real_terminal") is None:
+        return _EchoTerminalHost()
+    configured = os.environ.get("FCC_TEST_ZELLIJ_BIN")
+    if not configured:
+        pytest.skip("FCC_TEST_ZELLIJ_BIN is required for real terminal browser tests")
+    binary = Path(configured).resolve()
+    if not binary.is_file():
+        pytest.fail(f"FCC_TEST_ZELLIJ_BIN does not exist: {binary}")
+    root = tmp_path / "real-terminal-engine"
+    return ZellijTerminalEngineHost(
+        binary=binary,
+        config=root / "config.kdl",
+        sockets=root / "sockets",
+        data=root / "data",
+        lock_path=root / "terminal.lock",
+        client_factory=PlatformTerminalClientFactory(),
+        containment_factory=PlatformProcessContainment,
+    )
 
 
 @pytest.fixture
@@ -445,7 +540,7 @@ def admin_base_url(
         return result
 
     monkeypatch.setattr(chat_store, "begin_send", begin_send_with_delayed_ack)
-    terminal = TerminalService(_EchoTerminalFactory(), home=tmp_path)
+    terminal = TerminalService(_terminal_host(request, tmp_path), home=tmp_path)
     runtime = ApplicationRuntime(
         manager,
         transcriber=None,

@@ -19,6 +19,7 @@
     lastSentRows: null,
     lastSentColumns: null,
     applyingCanonicalSize: false,
+    role: null,
   };
 
   const root = () => document.getElementById("terminalRoot");
@@ -66,6 +67,10 @@
       }
       const payload = await state.api("/admin/api/terminal/sessions");
       if (!isCurrentRoute(generation)) return;
+      if (payload.available === false) {
+        renderFailure(payload.error || "Rerun the FCC installer and restart FCC.");
+        return;
+      }
       renderLibrary(payload.sessions || []);
     } catch (error) {
       if (!isCurrentRoute(generation)) return;
@@ -329,17 +334,30 @@
     state.fitAddon = fitAddon;
 
     state.disposables.push(
-      terminal.onData((data) => sendInput(new TextEncoder().encode(data))),
-      terminal.onBinary((data) => {
-        const bytes = Uint8Array.from(data, (character) => character.charCodeAt(0));
-        sendInput(bytes);
-      }),
+      terminal.onData(sendInput),
       terminal.onResize(({ cols, rows }) => {
-        if (!state.applyingCanonicalSize && terminalHasFocus()) {
+        if (!state.applyingCanonicalSize) {
           sendResize(rows, cols);
         }
       }),
     );
+
+    const claim = () => sendClaim();
+    for (const eventName of ["keydown", "paste", "beforeinput", "pointerdown"]) {
+      host.addEventListener(eventName, claim, true);
+    }
+    state.disposables.push({
+      dispose: () => {
+        for (const eventName of [
+          "keydown",
+          "paste",
+          "beforeinput",
+          "pointerdown",
+        ]) {
+          host.removeEventListener(eventName, claim, true);
+        }
+      },
+    });
 
     const focusAndResize = () => {
       fitTerminal();
@@ -357,7 +375,10 @@
     });
     state.resizeObserver = new ResizeObserver(() => {
       window.clearTimeout(state.resizeTimer);
-      state.resizeTimer = window.setTimeout(fitTerminal, 50);
+      state.resizeTimer = window.setTimeout(() => {
+        fitTerminal();
+        sendProposedSize();
+      }, 50);
     });
     state.resizeObserver.observe(host);
 
@@ -372,19 +393,10 @@
     const host = root()?.querySelector(".terminal-host");
     if (!host || host.clientWidth === 0 || host.clientHeight === 0) return;
     try {
-      state.fitAddon.fit();
+      if (state.role !== "observer") state.fitAddon.fit();
     } catch {
       setNotice("The terminal could not fit the available space.", "error");
     }
-  }
-
-  function terminalHasFocus() {
-    const stage = root()?.querySelector(".terminal-stage");
-    return Boolean(
-      stage &&
-        document.visibilityState === "visible" &&
-        stage.contains(document.activeElement),
-    );
   }
 
   function connectSocket(sessionId) {
@@ -393,8 +405,13 @@
     state.lastSentColumns = null;
     const generation = ++state.socketGeneration;
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const dimensions = proposedDimensions();
+    const query = new URLSearchParams({
+      rows: String(dimensions.rows),
+      columns: String(dimensions.columns),
+    });
     const socket = new WebSocket(
-      `${protocol}//${window.location.host}/admin/api/terminal/sessions/${encodeURIComponent(sessionId)}/attach`,
+      `${protocol}//${window.location.host}/admin/api/terminal/sessions/${encodeURIComponent(sessionId)}/attach?${query}`,
     );
     socket.binaryType = "arraybuffer";
     state.socket = socket;
@@ -404,9 +421,7 @@
       state.reconnectAttempt = 0;
       setNotice("");
       fitTerminal();
-      if (terminalHasFocus() && state.terminal) {
-        sendResize(state.terminal.rows, state.terminal.cols);
-      }
+      sendProposedSize();
     });
     socket.addEventListener("message", (event) => {
       if (!isCurrentSocket(generation, sessionId)) return;
@@ -449,25 +464,17 @@
       return;
     }
     if (message.type === "attached") {
+      state.role = message.role;
+      updateSession(message.session);
+      return;
+    }
+    if (message.type === "reset") {
+      state.role = message.role;
       state.terminal?.reset();
-      updateSession(message.session, { syncDimensions: false });
-      fitTerminal();
-      if (terminalHasFocus() && state.terminal) {
-        sendResize(state.terminal.rows, state.terminal.cols);
-      }
       return;
     }
     if (message.type === "state") {
       updateSession(message.session);
-      return;
-    }
-    if (message.type === "history_truncated") {
-      setNotice("Older terminal output was discarded to keep memory bounded.", "warn");
-      return;
-    }
-    if (message.type === "resync_required") {
-      setNotice("Terminal output fell behind. Resyncing…", "warn");
-      state.socket?.close();
       return;
     }
     if (message.type === "deleted") {
@@ -479,22 +486,65 @@
     }
   }
 
-  function sendInput(bytes) {
+  function sendInput(data) {
     if (
       state.currentSession?.status !== "running" ||
       state.socket?.readyState !== WebSocket.OPEN
     ) {
       return;
     }
-    state.socket.send(bytes);
+    for (const chunk of utf8Chunks(data, 64 * 1024)) {
+      state.socket.send(JSON.stringify({ type: "input", data: chunk }));
+    }
+  }
+
+  function sendClaim() {
+    if (
+      state.currentSession?.status === "running" &&
+      state.socket?.readyState === WebSocket.OPEN
+    ) {
+      state.socket.send(JSON.stringify({ type: "claim" }));
+    }
   }
 
   function sendResize(rows, columns) {
-    if (state.socket?.readyState !== WebSocket.OPEN || !terminalHasFocus()) return;
+    if (state.socket?.readyState !== WebSocket.OPEN) return;
     if (state.lastSentRows === rows && state.lastSentColumns === columns) return;
     state.lastSentRows = rows;
     state.lastSentColumns = columns;
     state.socket.send(JSON.stringify({ type: "resize", rows, columns }));
+  }
+
+  function sendProposedSize() {
+    const dimensions = proposedDimensions();
+    sendResize(dimensions.rows, dimensions.columns);
+  }
+
+  function proposedDimensions() {
+    const proposed = state.fitAddon?.proposeDimensions?.();
+    return {
+      rows: proposed?.rows || state.terminal?.rows || 24,
+      columns: proposed?.cols || state.terminal?.cols || 80,
+    };
+  }
+
+  function utf8Chunks(value, limit) {
+    const encoder = new TextEncoder();
+    const chunks = [];
+    let current = [];
+    let size = 0;
+    for (const character of value) {
+      const characterSize = encoder.encode(character).byteLength;
+      if (size + characterSize > limit && current.length > 0) {
+        chunks.push(current.join(""));
+        current = [];
+        size = 0;
+      }
+      current.push(character);
+      size += characterSize;
+    }
+    if (current.length > 0) chunks.push(current.join(""));
+    return chunks;
   }
 
   function scheduleReconnect(sessionId) {
@@ -591,6 +641,7 @@
     state.lastSentRows = null;
     state.lastSentColumns = null;
     state.applyingCanonicalSize = false;
+    state.role = null;
   }
 
   function statusPill(status) {

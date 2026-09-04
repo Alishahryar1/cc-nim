@@ -1,16 +1,17 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
 
 from free_claude_code.application.terminal import (
-    TerminalAttachmentOverflowError,
+    TerminalClientRole,
     TerminalConflictError,
     TerminalDeletedEvent,
+    TerminalEngineSnapshot,
     TerminalNotFoundError,
     TerminalOutputEvent,
-    TerminalProcessPort,
+    TerminalResetEvent,
     TerminalService,
     TerminalStateEvent,
     TerminalStatus,
@@ -19,128 +20,188 @@ from free_claude_code.application.terminal import (
 )
 
 
-class FakeTerminalProcess(TerminalProcessPort):
-    def __init__(self) -> None:
+class FakeTerminalClient:
+    def __init__(self, role: TerminalClientRole) -> None:
+        self.role = role
         self._reads: asyncio.Queue[bytes | None] = asyncio.Queue()
-        self._exit_code: int | None = None
-        self._exited = asyncio.Event()
-        self.writes: list[bytes] = []
+        self.writes: list[str] = []
         self.resizes: list[tuple[int, int]] = []
-        self.terminated = False
         self.closed = False
-        self.block_writes = False
-        self.write_started = asyncio.Event()
-        self.release_writes = asyncio.Event()
-        self.active_writes = 0
-        self.max_active_writes = 0
-        self.terminate_failure: Exception | None = None
-        self.close_failure: Exception | None = None
-
-    @property
-    def pid(self) -> int:
-        return 123
-
-    @property
-    def alive(self) -> bool:
-        return not self._exited.is_set()
 
     async def read(self) -> bytes:
         return (await self._reads.get()) or b""
 
-    async def write(self, data: bytes) -> None:
-        self.active_writes += 1
-        self.max_active_writes = max(self.max_active_writes, self.active_writes)
-        self.write_started.set()
-        try:
-            if self.block_writes:
-                await self.release_writes.wait()
-            self.writes.append(data)
-        finally:
-            self.active_writes -= 1
+    async def write(self, data: str) -> None:
+        self.writes.append(data)
 
     async def resize(self, rows: int, columns: int) -> None:
         self.resizes.append((rows, columns))
 
     async def wait(self) -> int | None:
-        await self._exited.wait()
-        return self._exit_code
-
-    async def terminate_tree(self) -> None:
-        if self.terminate_failure is not None:
-            raise self.terminate_failure
-        self.terminated = True
-        self.exit(143)
+        return 0
 
     async def close(self) -> None:
-        if self.close_failure is not None:
-            raise self.close_failure
+        if self.closed:
+            return
         self.closed = True
+        self._reads.put_nowait(None)
 
     def emit(self, data: bytes) -> None:
         self._reads.put_nowait(data)
 
-    def exit(self, code: int) -> None:
-        if self._exited.is_set():
+
+class FakeTerminalEngineSession:
+    def __init__(self) -> None:
+        self.clients: list[FakeTerminalClient] = []
+        self.opened: list[tuple[TerminalClientRole, int, int]] = []
+        self.resizes: list[tuple[int, int]] = []
+        self.snapshot_value = TerminalEngineSnapshot(b"history\r\n", b"screen\r\n")
+        self.snapshot_failure: Exception | None = None
+        self.open_failure: Exception | None = None
+        self.resize_failure: Exception | None = None
+        self.terminate_failure: Exception | None = None
+        self.close_failure: Exception | None = None
+        self.terminate_started = asyncio.Event()
+        self.release_terminate = asyncio.Event()
+        self.release_terminate.set()
+        self._root_exit = asyncio.Event()
+        self._exit_code: int | None = None
+        self.terminate_calls = 0
+        self.close_calls = 0
+
+    async def open_client(
+        self,
+        role: TerminalClientRole,
+        *,
+        rows: int,
+        columns: int,
+    ) -> FakeTerminalClient:
+        if self.open_failure is not None:
+            raise self.open_failure
+        client = FakeTerminalClient(role)
+        self.clients.append(client)
+        self.opened.append((role, rows, columns))
+        return client
+
+    async def snapshot(self) -> TerminalEngineSnapshot:
+        if self.snapshot_failure is not None:
+            raise self.snapshot_failure
+        return self.snapshot_value
+
+    async def resize(self, rows: int, columns: int) -> None:
+        if self.resize_failure is not None:
+            raise self.resize_failure
+        self.resizes.append((rows, columns))
+
+    async def wait_root(self) -> int | None:
+        await self._root_exit.wait()
+        return self._exit_code
+
+    async def terminate_tree(self) -> None:
+        self.terminate_calls += 1
+        self.terminate_started.set()
+        await self.release_terminate.wait()
+        if self.terminate_failure is not None:
+            raise self.terminate_failure
+        self.exit(143)
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        if self.close_failure is not None:
+            raise self.close_failure
+
+    def exit(self, code: int | None) -> None:
+        if self._root_exit.is_set():
             return
         self._exit_code = code
-        self._exited.set()
-        self._reads.put_nowait(None)
+        self._root_exit.set()
 
 
-class FakeTerminalFactory:
-    def __init__(self, *, failure: Exception | None = None) -> None:
-        self.failure = failure
-        self.processes: list[FakeTerminalProcess] = []
-        self.spawns: list[tuple[Path, Mapping[str, str], int, int]] = []
+class FakeTerminalEngineHost:
+    def __init__(self) -> None:
+        self.start_failure: Exception | None = None
+        self.create_failure: Exception | None = None
+        self.close_failure: Exception | None = None
+        self.engines: list[FakeTerminalEngineSession] = []
+        self.creates: list[
+            tuple[str, tuple[str, ...], Path, Mapping[str, str], int, int]
+        ] = []
+        self.started = 0
+        self.closed = 0
 
-    async def spawn(
+    async def start(self) -> None:
+        self.started += 1
+        if self.start_failure is not None:
+            raise self.start_failure
+
+    async def create_session(
         self,
         *,
+        session_name: str,
+        command: Sequence[str],
         cwd: Path,
         env: Mapping[str, str],
         rows: int,
         columns: int,
-    ) -> FakeTerminalProcess:
-        if self.failure is not None:
-            raise self.failure
-        process = FakeTerminalProcess()
-        self.processes.append(process)
-        self.spawns.append((cwd, env, rows, columns))
-        return process
+    ) -> FakeTerminalEngineSession:
+        if self.create_failure is not None:
+            raise self.create_failure
+        engine = FakeTerminalEngineSession()
+        self.engines.append(engine)
+        self.creates.append(
+            (session_name, tuple(command), cwd, dict(env), rows, columns)
+        )
+        return engine
+
+    async def close(self) -> None:
+        self.closed += 1
+        if self.close_failure is not None:
+            raise self.close_failure
 
 
 async def _service(
     *,
-    output_limit: int = 64,
-    queue_size: int = 8,
-) -> tuple[TerminalService, FakeTerminalFactory, str]:
-    factory = FakeTerminalFactory()
+    ids: Sequence[str] = ("session-one",),
+) -> tuple[TerminalService, FakeTerminalEngineHost]:
+    identifiers = iter(ids)
+    host = FakeTerminalEngineHost()
     service = TerminalService(
-        factory,
+        host,
         home=Path("/home/example"),
         env={"EXAMPLE": "yes"},
-        output_limit=output_limit,
-        attachment_queue_size=queue_size,
         clock=lambda: 1234,
-        id_factory=lambda: "session-one",
+        id_factory=lambda: next(identifiers),
+        shell_factory=lambda _env: ("shell", "--interactive"),
     )
     await service.start()
+    return service, host
+
+
+async def _created_service() -> tuple[
+    TerminalService, FakeTerminalEngineHost, FakeTerminalEngineSession, str
+]:
+    service, host = await _service()
     session = await service.create_session()
-    return service, factory, session.id
+    return service, host, host.engines[0], session.id
+
+
+async def _next_state(events) -> TerminalStateEvent:
+    while True:
+        event = await asyncio.wait_for(anext(events), timeout=1)
+        if isinstance(event, TerminalStateEvent):
+            return event
+
+
+async def _next_reset(events) -> TerminalResetEvent:
+    while True:
+        event = await asyncio.wait_for(anext(events), timeout=1)
+        if isinstance(event, TerminalResetEvent):
+            return event
 
 
 @pytest.mark.asyncio
-async def test_create_uses_home_environment_and_monotonic_names() -> None:
-    ids = iter(("one", "two"))
-    factory = FakeTerminalFactory()
-    service = TerminalService(
-        factory,
-        home=Path("/home/example"),
-        env={"EXAMPLE": "yes"},
-        clock=lambda: 1234,
-        id_factory=lambda: next(ids),
-    )
-    await service.start()
+async def test_create_uses_home_environment_shell_and_monotonic_names() -> None:
+    service, host = await _service(ids=("one", "two"))
 
     first = await service.create_session()
     second = await service.create_session()
@@ -151,311 +212,340 @@ async def test_create_uses_home_environment_and_monotonic_names() -> None:
         TerminalStatus.RUNNING,
     )
     assert second.name == "Terminal 2"
-    assert factory.spawns == [
-        (Path("/home/example"), {"EXAMPLE": "yes"}, 24, 80),
-        (Path("/home/example"), {"EXAMPLE": "yes"}, 24, 80),
+    assert host.creates == [
+        (
+            "fcc-one",
+            ("shell", "--interactive"),
+            Path("/home/example"),
+            {"EXAMPLE": "yes"},
+            24,
+            80,
+        ),
+        (
+            "fcc-two",
+            ("shell", "--interactive"),
+            Path("/home/example"),
+            {"EXAMPLE": "yes"},
+            24,
+            80,
+        ),
     ]
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_failed_spawn_does_not_publish_a_session() -> None:
-    service = TerminalService(FakeTerminalFactory(failure=OSError("spawn failed")))
+async def test_engine_unavailability_is_scoped_to_terminal_sessions() -> None:
+    host = FakeTerminalEngineHost()
+    host.start_failure = FileNotFoundError("zellij missing")
+    service = TerminalService(host)
+
     await service.start()
 
-    with pytest.raises(TerminalUnavailableError):
-        await service.create_session()
-
+    assert service.availability_error == (
+        "Terminal Sessions is unavailable. Rerun the FCC installer and restart FCC."
+    )
     assert await service.list_sessions() == ()
+    with pytest.raises(TerminalUnavailableError, match="Rerun the FCC installer"):
+        await service.create_session()
+    await service.close()
+    assert host.closed == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_engine_creation_does_not_publish_or_consume_name() -> None:
+    service, host = await _service(ids=("one", "two"))
+    host.create_failure = OSError("create failed")
+
+    with pytest.raises(TerminalUnavailableError, match="system shell"):
+        await service.create_session()
+    assert await service.list_sessions() == ()
+
+    host.create_failure = None
+    session = await service.create_session()
+    assert (session.id, session.name) == ("two", "Terminal 1")
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_two_attachments_receive_output_and_detach_does_not_stop() -> None:
-    service, factory, session_id = await _service()
-    process = factory.processes[0]
-    first = await service.attach(session_id)
-    second = await service.attach(session_id)
+async def test_each_attachment_owns_an_independent_engine_client() -> None:
+    service, _, engine, session_id = await _created_service()
+    first = await service.attach(session_id, rows=30, columns=100)
+    second = await service.attach(session_id, rows=40, columns=120)
     first_events = first.__aiter__()
     second_events = second.__aiter__()
 
-    process.emit(b"hello")
-    first_event = await asyncio.wait_for(anext(first_events), timeout=1)
-    second_event = await asyncio.wait_for(anext(second_events), timeout=1)
+    assert first.initial.role is TerminalClientRole.CONTROLLER
+    assert second.initial.role is TerminalClientRole.OBSERVER
+    assert first.initial.output == second.initial.output == b"history\r\n"
+    assert engine.opened == [
+        (TerminalClientRole.CONTROLLER, 30, 100),
+        (TerminalClientRole.OBSERVER, 30, 100),
+    ]
+    assert engine.resizes == [(30, 100)]
 
-    assert first_event == second_event == TerminalOutputEvent(b"hello")
-    await first.aclose()
-    assert process.alive
-    assert not process.terminated
-
-    process.emit(b" again")
+    engine.clients[0].emit(b"controller output")
+    engine.clients[1].emit(b"observer output")
+    assert await asyncio.wait_for(anext(first_events), timeout=1) == (
+        TerminalOutputEvent(b"controller output")
+    )
     assert await asyncio.wait_for(anext(second_events), timeout=1) == (
-        TerminalOutputEvent(b" again")
+        TerminalOutputEvent(b"observer output")
     )
+
+    await first.aclose()
     await second.aclose()
-    assert process.alive
+    assert engine.terminate_calls == 0
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_attach_replays_retained_output_then_follows_live_output_once() -> None:
-    service, factory, session_id = await _service()
-    process = factory.processes[0]
-    observer = await service.attach(session_id)
-    observer_events = observer.__aiter__()
-    process.emit(b"before attach")
-    assert await asyncio.wait_for(anext(observer_events), timeout=1) == (
-        TerminalOutputEvent(b"before attach")
+async def test_claim_rebuilds_only_the_controller_and_claimant_clients() -> None:
+    service, _, engine, session_id = await _created_service()
+    first = await service.attach(session_id, rows=30, columns=100)
+    second = await service.attach(session_id, rows=40, columns=120)
+    first_events = first.__aiter__()
+    second_events = second.__aiter__()
+    old_controller, old_observer = engine.clients
+
+    await second.claim()
+
+    assert old_controller.closed
+    assert old_observer.closed
+    assert engine.opened[-2:] == [
+        (TerminalClientRole.CONTROLLER, 40, 120),
+        (TerminalClientRole.OBSERVER, 40, 120),
+    ]
+    assert engine.resizes == [(30, 100), (40, 120)]
+    assert await anext(second_events) == TerminalResetEvent(
+        output=b"history\r\n", role=TerminalClientRole.CONTROLLER
+    )
+    assert await anext(first_events) == TerminalResetEvent(
+        output=b"history\r\n", role=TerminalClientRole.OBSERVER
     )
 
-    attached = await service.attach(session_id)
-    events = attached.__aiter__()
-    assert attached.initial.output == b"before attach"
-    process.emit(b" after attach")
-    assert await asyncio.wait_for(anext(events), timeout=1) == (
-        TerminalOutputEvent(b" after attach")
-    )
+    await second.write("whoami\r")
+    assert engine.clients[-2].writes == ["whoami\r"]
+    assert engine.clients[-1].writes == []
+    await first.aclose()
+    await second.aclose()
+    await service.close()
 
+
+@pytest.mark.asyncio
+async def test_failed_claim_keeps_existing_roles_and_dimensions() -> None:
+    service, _, engine, session_id = await _created_service()
+    controller = await service.attach(session_id, rows=30, columns=100)
+    observer = await service.attach(session_id, rows=40, columns=120)
+    old_controller, old_observer = engine.clients
+    engine.open_failure = OSError("attach failed")
+
+    with pytest.raises(TerminalUnavailableError, match="transfer terminal control"):
+        await observer.claim()
+
+    session = await service.get_session(session_id)
+    assert (session.rows, session.columns) == (30, 100)
+    assert engine.resizes == [(30, 100), (40, 120), (30, 100)]
+    assert not old_controller.closed
+    assert not old_observer.closed
+
+    await controller.write("still-controller")
+    assert old_controller.writes == ["still-controller"]
+    await controller.aclose()
     await observer.aclose()
-    await attached.aclose()
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_sessions_keep_input_and_output_isolated() -> None:
-    ids = iter(("one", "two"))
-    factory = FakeTerminalFactory()
-    service = TerminalService(factory, id_factory=lambda: next(ids))
-    await service.start()
-    first = await service.create_session()
-    second = await service.create_session()
-    first_attachment = await service.attach(first.id)
-    second_attachment = await service.attach(second.id)
-    first_events = first_attachment.__aiter__()
-    second_events = second_attachment.__aiter__()
+async def test_observer_input_and_resize_stay_on_its_read_only_view() -> None:
+    service, _, engine, session_id = await _created_service()
+    controller = await service.attach(session_id, rows=30, columns=100)
+    observer = await service.attach(session_id, rows=40, columns=120)
 
-    factory.processes[0].emit(b"first output")
-    factory.processes[1].emit(b"second output")
-    assert await anext(first_events) == TerminalOutputEvent(b"first output")
-    assert await anext(second_events) == TerminalOutputEvent(b"second output")
+    await observer.write("terminal-query-reply")
+    await observer.resize(rows=50, columns=140)
 
-    await service.write(first.id, b"first input")
-    await service.write(second.id, b"second input")
-    assert factory.processes[0].writes == [b"first input"]
-    assert factory.processes[1].writes == [b"second input"]
+    assert engine.clients[1].writes == ["terminal-query-reply"]
+    assert engine.resizes == [(30, 100)]
+    assert (await service.get_session(session_id)).rows == 30
 
-    await first_attachment.aclose()
-    await second_attachment.aclose()
+    await controller.resize(rows=35, columns=110)
+    assert engine.resizes == [(30, 100), (35, 110)]
+    assert (await service.get_session(session_id)).rows == 35
+    await controller.aclose()
+    await observer.aclose()
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_reattach_receives_bounded_retained_output() -> None:
-    service, factory, session_id = await _service(output_limit=5)
-    process = factory.processes[0]
-    process.emit(b"abc")
-    process.emit(b"def")
-    await asyncio.sleep(0)
-    await asyncio.sleep(0)
+async def test_controller_disconnect_promotes_most_recent_interactor() -> None:
+    service, _, engine, session_id = await _created_service()
+    first = await service.attach(session_id, rows=24, columns=80)
+    second = await service.attach(session_id, rows=30, columns=90)
+    third = await service.attach(session_id, rows=40, columns=120)
+    third_events = third.__aiter__()
 
-    attachment = await service.attach(session_id)
+    await third.claim()
+    await _next_reset(third_events)
+    await first.claim()
+    assert (await _next_reset(third_events)).role is TerminalClientRole.OBSERVER
+    await first.aclose()
 
-    assert attachment.initial.output == b"bcdef"
-    assert attachment.initial.session.history_truncated
-    await attachment.aclose()
+    reset = await _next_reset(third_events)
+    assert reset.role is TerminalClientRole.CONTROLLER
+    assert engine.opened[-1][0] is TerminalClientRole.CONTROLLER
+    await second.aclose()
+    await third.aclose()
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_exact_output_limit_is_not_reported_as_truncated() -> None:
-    service, factory, session_id = await _service(output_limit=5)
-    factory.processes[0].emit(b"abcde")
-    await asyncio.sleep(0)
-
-    attachment = await service.attach(session_id)
-
-    assert attachment.initial.output == b"abcde"
-    assert not attachment.initial.session.history_truncated
-    await attachment.aclose()
-    await service.close()
-
-
-@pytest.mark.asyncio
-async def test_slow_attachment_overflows_without_affecting_healthy_one() -> None:
-    service, factory, session_id = await _service(queue_size=1)
-    process = factory.processes[0]
-    slow = await service.attach(session_id)
-    healthy = await service.attach(session_id)
-    slow_events = slow.__aiter__()
-    healthy_events = healthy.__aiter__()
-
-    process.emit(b"one")
-    assert await asyncio.wait_for(anext(healthy_events), timeout=1) == (
-        TerminalOutputEvent(b"one")
-    )
-    process.emit(b"two")
-    assert await asyncio.wait_for(anext(healthy_events), timeout=1) == (
-        TerminalOutputEvent(b"two")
-    )
-
-    with pytest.raises(TerminalAttachmentOverflowError):
-        await asyncio.wait_for(anext(slow_events), timeout=1)
-    assert process.alive
-    await slow.aclose()
-    await healthy.aclose()
-    await service.close()
-
-
-@pytest.mark.asyncio
-async def test_write_resize_rename_and_validation() -> None:
-    service, factory, session_id = await _service()
-    process = factory.processes[0]
-    attachment = await service.attach(session_id)
+async def test_rename_input_and_dimension_validation() -> None:
+    service, _, engine, session_id = await _created_service()
+    attachment = await service.attach(session_id, rows=24, columns=80)
     events = attachment.__aiter__()
 
-    await service.write(session_id, b"echo hello\r")
-    resized = await service.resize(session_id, rows=40, columns=120)
     renamed = await service.rename_session(session_id, "  Build shell  ")
-
-    assert process.writes == [b"echo hello\r"]
-    assert process.resizes == [(40, 120)]
-    assert (resized.rows, resized.columns) == (40, 120)
     assert renamed.name == "Build shell"
-    assert isinstance(await anext(events), TerminalStateEvent)
-    assert isinstance(await anext(events), TerminalStateEvent)
+    assert (await _next_state(events)).session.name == "Build shell"
 
-    with pytest.raises(TerminalValidationError):
+    await attachment.write("echo hello\r")
+    assert engine.clients[0].writes == ["echo hello\r"]
+    with pytest.raises(TerminalValidationError, match="cannot be empty"):
         await service.rename_session(session_id, " ")
-    with pytest.raises(TerminalValidationError):
-        await service.resize(session_id, rows=0, columns=80)
-    with pytest.raises(TerminalValidationError):
-        await service.write(session_id, b"x" * (64 * 1024 + 1))
+    with pytest.raises(TerminalValidationError, match="dimensions"):
+        await attachment.resize(rows=0, columns=80)
+    with pytest.raises(TerminalValidationError, match="65536"):
+        await attachment.write("é" * (32 * 1024 + 1))
 
     await attachment.aclose()
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_concurrent_input_messages_are_serialized() -> None:
-    service, factory, session_id = await _service()
-    process = factory.processes[0]
-    process.block_writes = True
-
-    first = asyncio.create_task(service.write(session_id, b"first"))
-    await process.write_started.wait()
-    second = asyncio.create_task(service.write(session_id, b"second"))
-    await asyncio.sleep(0)
-
-    assert process.max_active_writes == 1
-    process.release_writes.set()
-    await asyncio.gather(first, second)
-    assert process.writes == [b"first", b"second"]
-    assert process.max_active_writes == 1
-    await service.close()
-
-
-@pytest.mark.asyncio
-async def test_normal_exit_drains_output_and_stop_is_idempotent() -> None:
-    service, factory, session_id = await _service()
-    process = factory.processes[0]
-    attachment = await service.attach(session_id)
+async def test_natural_exit_captures_final_screen_and_stop_is_idempotent() -> None:
+    service, _, engine, session_id = await _created_service()
+    attachment = await service.attach(session_id, rows=24, columns=80)
     events = attachment.__aiter__()
-    process.emit(b"last output")
-    process.exit(7)
+    engine.snapshot_value = TerminalEngineSnapshot(b"final history\r\n", b"prompt")
 
-    assert await asyncio.wait_for(anext(events), timeout=1) == (
-        TerminalOutputEvent(b"last output")
-    )
-    state = await asyncio.wait_for(anext(events), timeout=1)
-    assert isinstance(state, TerminalStateEvent)
-    assert (state.session.status, state.session.exit_code) == (
+    engine.exit(7)
+
+    stopping = await _next_state(events)
+    exited = await _next_state(events)
+    assert stopping.session.status is TerminalStatus.STOPPING
+    assert (exited.session.status, exited.session.exit_code) == (
         TerminalStatus.EXITED,
         7,
     )
-    assert process.closed
+    assert (engine.terminate_calls, engine.close_calls) == (1, 1)
+    assert (await service.stop_session(session_id)).status is TerminalStatus.EXITED
+    assert engine.terminate_calls == 1
 
-    stopped = await service.stop_session(session_id)
-    assert stopped.status is TerminalStatus.EXITED
-    assert not process.terminated
+    retained = await service.attach(session_id, rows=50, columns=120)
+    assert retained.initial.output == b"final history\r\nprompt"
+    assert retained.initial.role is TerminalClientRole.OBSERVER
     with pytest.raises(TerminalConflictError):
-        await service.write(session_id, b"too late")
-    with pytest.raises(TerminalConflictError):
-        await service.resize(session_id, rows=24, columns=80)
+        await retained.write("too late")
+    await retained.aclose()
     await attachment.aclose()
     await service.close()
 
 
 @pytest.mark.asyncio
-async def test_delete_stops_process_and_removes_session() -> None:
-    service, factory, session_id = await _service()
-    process = factory.processes[0]
-    first = await service.attach(session_id)
-    second = await service.attach(session_id)
+async def test_snapshot_failure_does_not_prevent_cleanup() -> None:
+    service, _, engine, session_id = await _created_service()
+    engine.snapshot_failure = ValueError("bad snapshot")
+
+    stopped = await service.stop_session(session_id)
+
+    assert stopped.status is TerminalStatus.EXITED
+    assert stopped.error == "Final terminal output is unavailable (ValueError)."
+    assert (engine.terminate_calls, engine.close_calls) == (1, 1)
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_stays_stopping_and_retries() -> None:
+    service, _, engine, session_id = await _created_service()
+    engine.terminate_failure = OSError("busy")
+
+    with pytest.raises(TerminalUnavailableError, match="process tree"):
+        await service.stop_session(session_id)
+    assert (await service.get_session(session_id)).status is TerminalStatus.STOPPING
+
+    engine.terminate_failure = None
+    stopped = await service.stop_session(session_id)
+    assert stopped.status is TerminalStatus.EXITED
+    assert engine.terminate_calls == 2
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_notifies_views_then_removes_the_session() -> None:
+    service, _, engine, session_id = await _created_service()
+    attachment = await service.attach(session_id, rows=24, columns=80)
+    events = attachment.__aiter__()
 
     await service.delete_session(session_id)
 
-    assert process.terminated
-    assert process.closed
-    for attachment in (first, second):
-        attachment_events = attachment.__aiter__()
-        events = [await anext(attachment_events) for _ in range(3)]
-        assert isinstance(events[-1], TerminalDeletedEvent)
-        await attachment.aclose()
+    seen_deleted = False
+    async for event in events:
+        if isinstance(event, TerminalDeletedEvent):
+            seen_deleted = True
+    assert seen_deleted
+    assert engine.terminate_calls == 1
     with pytest.raises(TerminalNotFoundError):
         await service.get_session(session_id)
-    await service.close()
-
-
-@pytest.mark.asyncio
-async def test_close_terminates_every_process() -> None:
-    ids = iter(("one", "two"))
-    factory = FakeTerminalFactory()
-    service = TerminalService(factory, id_factory=lambda: next(ids))
-    await service.start()
-    await service.create_session()
-    await service.create_session()
-
-    await service.close()
-
-    assert all(process.terminated and process.closed for process in factory.processes)
-    assert await service.list_sessions() == ()
-
-
-@pytest.mark.asyncio
-async def test_failed_close_retains_session_for_cleanup_retry() -> None:
-    service, factory, session_id = await _service()
-    process = factory.processes[0]
-    process.terminate_failure = OSError("busy")
-
-    with pytest.raises(TerminalUnavailableError):
-        await service.close()
-
-    assert (await service.get_session(session_id)).status is TerminalStatus.STOPPING
-    process.terminate_failure = None
-    await service.close()
-    assert await service.list_sessions() == ()
-
-
-@pytest.mark.asyncio
-async def test_failed_process_handle_cleanup_is_retained_for_retry() -> None:
-    service, factory, session_id = await _service()
-    process = factory.processes[0]
-    process.close_failure = OSError("busy")
-    attachment = await service.attach(session_id)
-    events = attachment.__aiter__()
-    process.exit(0)
-
-    state = await asyncio.wait_for(anext(events), timeout=1)
-    assert isinstance(state, TerminalStateEvent)
-    assert state.session.status is TerminalStatus.EXITED
-    assert state.session.error == "Terminal process cleanup failed (OSError)."
-
-    with pytest.raises(TerminalUnavailableError):
-        await service.close()
-    assert (await service.get_session(session_id)).status is TerminalStatus.EXITED
-
-    process.close_failure = None
-    await service.close()
-    assert process.closed
-    assert await service.list_sessions() == ()
     await attachment.aclose()
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_stop_and_delete_race_terminalizes_only_once() -> None:
+    service, _, engine, session_id = await _created_service()
+
+    results = await asyncio.gather(
+        service.stop_session(session_id),
+        service.delete_session(session_id),
+        return_exceptions=True,
+    )
+
+    assert not any(isinstance(result, Exception) for result in results)
+    assert engine.terminate_calls == 1
+    assert await service.list_sessions() == ()
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_attempts_all_session_cleanup_concurrently() -> None:
+    service, host = await _service(ids=("one", "two"))
+    await service.create_session()
+    await service.create_session()
+    first, second = host.engines
+    first.release_terminate.clear()
+    second.release_terminate.clear()
+
+    closing = asyncio.create_task(service.close())
+    await asyncio.wait_for(
+        asyncio.gather(first.terminate_started.wait(), second.terminate_started.wait()),
+        timeout=1,
+    )
+    first.release_terminate.set()
+    second.release_terminate.set()
+    await closing
+
+    assert await service.list_sessions() == ()
+    assert host.closed == 1
+
+
+@pytest.mark.asyncio
+async def test_engine_host_close_failure_is_retried_without_sessions() -> None:
+    service, host = await _service()
+    host.close_failure = OSError("busy")
+
+    with pytest.raises(TerminalUnavailableError, match="terminal engine"):
+        await service.close()
+    host.close_failure = None
+    await service.close()
+
+    assert host.closed == 2

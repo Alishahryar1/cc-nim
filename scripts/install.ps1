@@ -31,6 +31,10 @@ $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
 $RtkWindowsAssetSha256 = "3a1e114edce9080f8a10663e9c87488363a82f14a5ca8aab2ad416817f89d47c"
+$ZellijVersion = "0.45.1"
+$ZellijReleaseBaseUrl = "https://github.com/zellij-org/zellij/releases/download/v$ZellijVersion"
+$ZellijWindowsAssetName = "zellij-no-web-x86_64-pc-windows-msvc.zip"
+$ZellijWindowsSha256 = "3d01a2571076885f31a013b3bf1071fd1aba1db2e7b82190c68833737a625346"
 $UvInstallUrl = "https://astral.sh/uv/install.ps1"
 $script:InstallClaudeCode = $true
 $script:InstallCodex = $true
@@ -1189,6 +1193,86 @@ function Ensure-Uv {
     Confirm-Uv
 }
 
+function Get-FileSha256 {
+    param([Parameter(Mandatory = $true)][string] $Path)
+
+    $stream = [IO.File]::OpenRead($Path)
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $algorithm.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Install-TerminalEngine {
+    $installDirectory = Join-Path $env:USERPROFILE ".fcc\terminal\bin"
+    $installedPath = Join-Path $installDirectory "zellij.exe"
+    $archiveUrl = "$ZellijReleaseBaseUrl/$ZellijWindowsAssetName"
+
+    if ($DryRun) {
+        Write-Host "+ irm $archiveUrl -OutFile <temporary-archive>"
+        Write-Host "+ verify pinned SHA-256 for the extracted zellij.exe"
+        Write-Host "+ install zellij.exe to $(Format-Argument $installedPath)"
+        return
+    }
+
+    if (Test-Path -LiteralPath $installedPath -PathType Leaf) {
+        $installedHash = Get-FileSha256 -Path $installedPath
+        if ($installedHash -eq $ZellijWindowsSha256) {
+            Write-Host "Terminal Sessions engine $ZellijVersion is already installed and verified."
+            return
+        }
+    }
+
+    $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("fcc-zellij-" + [guid]::NewGuid().ToString("N"))
+    $archivePath = Join-Path $temporaryRoot $ZellijWindowsAssetName
+    $extractPath = Join-Path $temporaryRoot "extracted"
+    $temporaryInstallPath = Join-Path $installDirectory (".zellij-" + [guid]::NewGuid().ToString("N") + ".exe")
+    try {
+        New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+        Write-Host "+ irm $archiveUrl -OutFile $(Format-Argument $archivePath)"
+        Invoke-RestMethod -Uri $archiveUrl -OutFile $archivePath -ErrorAction Stop
+        if ((-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) -or ((Get-Item -LiteralPath $archivePath).Length -eq 0)) {
+            throw "The downloaded Zellij archive was empty."
+        }
+
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            $entries = @($archive.Entries | Where-Object { -not [string]::IsNullOrEmpty($_.Name) })
+            if ($entries.Count -ne 1 -or $entries[0].FullName.Replace("\", "/") -ne "zellij.exe" -or $entries[0].Length -eq 0) {
+                throw "The Zellij archive did not contain exactly one root zellij.exe."
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
+
+        Expand-Archive -LiteralPath $archivePath -DestinationPath $extractPath
+        $extractedPath = Join-Path $extractPath "zellij.exe"
+        $actualHash = Get-FileSha256 -Path $extractedPath
+        if ($actualHash -ne $ZellijWindowsSha256) {
+            throw "Zellij checksum verification failed for $ZellijWindowsAssetName."
+        }
+
+        New-Item -ItemType Directory -Force -Path $installDirectory | Out-Null
+        Copy-Item -LiteralPath $extractedPath -Destination $temporaryInstallPath
+        Move-Item -LiteralPath $temporaryInstallPath -Destination $installedPath -Force
+        $installedHash = Get-FileSha256 -Path $installedPath
+        if ($installedHash -ne $ZellijWindowsSha256) {
+            throw "The installed Zellij executable failed verification."
+        }
+        Write-Host "Installed Terminal Sessions engine $ZellijVersion."
+    }
+    finally {
+        Remove-Item -LiteralPath $temporaryInstallPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-PackageSpec {
     $includeNim = $VoiceNim
     $includeLocal = $VoiceLocal
@@ -1426,6 +1510,9 @@ Ensure-Uv
 
 Ensure-SelectedCodingAgents
 Configure-RtkForSelectedAgents
+
+Write-Step "Installing the Terminal Sessions engine"
+Install-TerminalEngine
 
 Write-Step "Installing or updating Free Claude Code"
 Install-FreeClaudeCode

@@ -137,6 +137,34 @@ assert_no_fcc_processes_running() {
     fi
 }
 
+stop_managed_terminal_engine() {
+    terminal_root="$HOME/$FCC_HOME_DIRNAME/terminal"
+    terminal_binary="$terminal_root/bin/zellij"
+    [ -x "$terminal_binary" ] || return 0
+
+    print_command env \
+        "ZELLIJ_SOCKET_DIR=$terminal_root/sockets" \
+        "ZELLIJ_CONFIG_FILE=$terminal_root/runtime/config.kdl" \
+        "$terminal_binary" \
+        --data-dir "$terminal_root/runtime/data" \
+        --config "$terminal_root/runtime/config.kdl" \
+        kill-all-sessions --yes
+    if [ "$dry_run" -eq 1 ]; then
+        return 0
+    fi
+    if ZELLIJ_SOCKET_DIR="$terminal_root/sockets" \
+        ZELLIJ_CONFIG_FILE="$terminal_root/runtime/config.kdl" \
+        "$terminal_binary" \
+        --data-dir "$terminal_root/runtime/data" \
+        --config "$terminal_root/runtime/config.kdl" \
+        kill-all-sessions --yes; then
+        return 0
+    else
+        status=$?
+    fi
+    [ "$status" -eq 1 ] || fail "Could not stop the managed Terminal Sessions engine; ~/.fcc was not deleted."
+}
+
 initialize_uv_context() {
     add_known_uv_paths
 
@@ -278,6 +306,9 @@ parse_args "$@"
 
 step "Checking for running Free Claude Code processes"
 assert_no_fcc_processes_running
+
+step "Stopping the managed Terminal Sessions engine"
+stop_managed_terminal_engine
 
 step "Locating the uv-managed Free Claude Code installation"
 initialize_uv_context

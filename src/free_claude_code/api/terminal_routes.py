@@ -2,19 +2,19 @@
 
 import asyncio
 from contextlib import suppress
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field, ValidationError
+from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from free_claude_code.application.terminal import (
     TerminalApplicationPort,
-    TerminalAttachmentOverflowError,
     TerminalAttachmentPort,
     TerminalDeletedEvent,
     TerminalError,
     TerminalNotFoundError,
     TerminalOutputEvent,
+    TerminalResetEvent,
     TerminalSession,
     TerminalStateEvent,
     TerminalUnavailableError,
@@ -40,6 +40,23 @@ class TerminalResizeMessage(BaseModel):
     columns: int = Field(ge=1, le=1_000)
 
 
+class TerminalInputMessage(BaseModel):
+    type: Literal["input"]
+    data: str
+
+
+class TerminalClaimMessage(BaseModel):
+    type: Literal["claim"]
+
+
+type TerminalClientMessage = Annotated[
+    TerminalResizeMessage | TerminalInputMessage | TerminalClaimMessage,
+    Field(discriminator="type"),
+]
+
+_CLIENT_MESSAGE_ADAPTER = TypeAdapter(TerminalClientMessage)
+
+
 @router.get("/admin/terminal", include_in_schema=False)
 @router.get("/admin/terminal/{session_id}", include_in_schema=False)
 def terminal_page(request: Request, session_id: str | None = None):
@@ -54,8 +71,13 @@ async def list_terminal_sessions(
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     require_loopback_admin(request)
-    sessions = await _terminal(services).list_sessions()
-    return {"sessions": [_session_payload(session) for session in sessions]}
+    terminal = _terminal(services)
+    sessions = await terminal.list_sessions()
+    return {
+        "available": terminal.availability_error is None,
+        "error": terminal.availability_error,
+        "sessions": [_session_payload(session) for session in sessions],
+    }
 
 
 @router.post("/admin/api/terminal/sessions", status_code=201)
@@ -112,12 +134,17 @@ async def delete_terminal_session(
 
 
 @router.websocket("/admin/api/terminal/sessions/{session_id}/attach")
-async def attach_terminal(websocket: WebSocket, session_id: str) -> None:
+async def attach_terminal(
+    websocket: WebSocket,
+    session_id: str,
+    rows: Annotated[int, Query(ge=1, le=500)] = 24,
+    columns: Annotated[int, Query(ge=1, le=1_000)] = 80,
+) -> None:
     require_loopback_admin_websocket(websocket)
     services: ApiServices = websocket.app.state.services
     terminal = _terminal(services)
     try:
-        attachment = await terminal.attach(session_id)
+        attachment = await terminal.attach(session_id, rows=rows, columns=columns)
     except TerminalNotFoundError as exc:
         await websocket.close(code=4404, reason=str(exc))
         return
@@ -131,7 +158,7 @@ async def attach_terminal(websocket: WebSocket, session_id: str) -> None:
         name=f"terminal-websocket-send-{session_id}",
     )
     receiver = asyncio.create_task(
-        _receive_terminal(websocket, terminal, session_id),
+        _receive_terminal(websocket, attachment),
         name=f"terminal-websocket-receive-{session_id}",
     )
     try:
@@ -165,53 +192,53 @@ async def _send_terminal(
 ) -> None:
     initial = attachment.initial
     await websocket.send_json(
-        {"type": "attached", "session": _session_payload(initial.session)}
+        {
+            "type": "attached",
+            "session": _session_payload(initial.session),
+            "role": initial.role.value,
+        }
     )
-    if initial.session.history_truncated:
-        await websocket.send_json({"type": "history_truncated"})
+    await websocket.send_json({"type": "reset", "role": initial.role.value})
     if initial.output:
         await websocket.send_bytes(initial.output)
 
-    try:
-        async for event in attachment:
-            if isinstance(event, TerminalOutputEvent):
-                await websocket.send_bytes(event.data)
-            elif isinstance(event, TerminalStateEvent):
-                await websocket.send_json(
-                    {"type": "state", "session": _session_payload(event.session)}
-                )
-            elif isinstance(event, TerminalDeletedEvent):
-                await websocket.send_json({"type": "deleted"})
-                return
-    except TerminalAttachmentOverflowError:
-        await websocket.send_json({"type": "resync_required"})
+    async for event in attachment:
+        if isinstance(event, TerminalOutputEvent):
+            await websocket.send_bytes(event.data)
+        elif isinstance(event, TerminalResetEvent):
+            await websocket.send_json({"type": "reset", "role": event.role.value})
+            if event.output:
+                await websocket.send_bytes(event.output)
+        elif isinstance(event, TerminalStateEvent):
+            await websocket.send_json(
+                {"type": "state", "session": _session_payload(event.session)}
+            )
+        elif isinstance(event, TerminalDeletedEvent):
+            await websocket.send_json({"type": "deleted"})
+            return
 
 
 async def _receive_terminal(
     websocket: WebSocket,
-    terminal: TerminalApplicationPort,
-    session_id: str,
+    attachment: TerminalAttachmentPort,
 ) -> None:
     while True:
         message = await websocket.receive()
         if message["type"] == "websocket.disconnect":
             return
-        data = message.get("bytes")
-        if data is not None:
-            await terminal.write(session_id, data)
-            continue
         text = message.get("text")
         if text is None:
-            continue
+            raise TerminalValidationError("Invalid terminal control message.")
         try:
-            resize = TerminalResizeMessage.model_validate_json(text)
+            control = _CLIENT_MESSAGE_ADAPTER.validate_json(text)
         except ValidationError as exc:
             raise TerminalValidationError("Invalid terminal control message.") from exc
-        await terminal.resize(
-            session_id,
-            rows=resize.rows,
-            columns=resize.columns,
-        )
+        if isinstance(control, TerminalInputMessage):
+            await attachment.write(control.data)
+        elif isinstance(control, TerminalResizeMessage):
+            await attachment.resize(rows=control.rows, columns=control.columns)
+        else:
+            await attachment.claim()
 
 
 def _terminal(services: ApiServices) -> TerminalApplicationPort:
@@ -230,5 +257,4 @@ def _session_payload(session: TerminalSession) -> JsonObject:
         "columns": session.columns,
         "exit_code": session.exit_code,
         "error": session.error,
-        "history_truncated": session.history_truncated,
     }

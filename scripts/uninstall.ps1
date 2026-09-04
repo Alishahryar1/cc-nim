@@ -141,6 +141,42 @@ function Assert-NoFccProcessesRunning {
     }
 }
 
+function Stop-ManagedTerminalEngine {
+    $terminalRoot = Join-Path $env:USERPROFILE ".fcc\terminal"
+    $binary = Join-Path $terminalRoot "bin\zellij.exe"
+    if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+        return
+    }
+
+    $arguments = @(
+        "--data-dir",
+        (Join-Path $terminalRoot "runtime\data"),
+        "--config",
+        (Join-Path $terminalRoot "runtime\config.kdl"),
+        "kill-all-sessions",
+        "--yes"
+    )
+    Write-Host "+ $(Format-Command -FilePath $binary -Arguments $arguments)"
+    if ($DryRun) {
+        return
+    }
+
+    $previousSocketDirectory = $env:ZELLIJ_SOCKET_DIR
+    $previousConfigFile = $env:ZELLIJ_CONFIG_FILE
+    try {
+        $env:ZELLIJ_SOCKET_DIR = Join-Path $terminalRoot "sockets"
+        $env:ZELLIJ_CONFIG_FILE = Join-Path $terminalRoot "runtime\config.kdl"
+        $result = Invoke-NativeResult -FilePath $binary -Arguments $arguments
+    }
+    finally {
+        $env:ZELLIJ_SOCKET_DIR = $previousSocketDirectory
+        $env:ZELLIJ_CONFIG_FILE = $previousConfigFile
+    }
+    if ($result.ExitCode -notin @(0, 1)) {
+        throw "Could not stop the managed Terminal Sessions engine; ~/.fcc was not deleted."
+    }
+}
+
 function Initialize-UvContext {
     Add-KnownUvPaths
 
@@ -318,6 +354,9 @@ if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
 
 Write-Step "Checking for running Free Claude Code processes"
 Assert-NoFccProcessesRunning
+
+Write-Step "Stopping the managed Terminal Sessions engine"
+Stop-ManagedTerminalEngine
 
 Write-Step "Locating the uv-managed Free Claude Code installation"
 Initialize-UvContext

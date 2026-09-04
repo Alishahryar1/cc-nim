@@ -364,7 +364,7 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*x.ai*:grok-download|*dev.meta.ai*:muse-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*x.ai*:grok-download|*dev.meta.ai*:muse-download|*rtk-ai*:rtk-download|*zellij-org*:zellij-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
@@ -383,6 +383,7 @@ case "$url" in
         fi
         source="$FAKE_FIXTURES/rtk-x86_64-unknown-linux-musl.tar.gz"
         ;;
+    *zellij-org*) source="$FAKE_FIXTURES/zellij-no-web-x86_64-unknown-linux-musl.tar.gz" ;;
     *astral.sh*) source="$FAKE_FIXTURES/uv-installer.sh" ;;
     *) exit 42 ;;
 esac
@@ -520,6 +521,18 @@ chmod +x "$uv_bin/uv"
         metadata.mode = 0o755
         metadata.size = len(rtk_command)
         archive.addfile(metadata, io.BytesIO(rtk_command))
+    zellij_command = b"fake Zellij executable"
+    with tarfile.open(
+        fixtures / "zellij-no-web-x86_64-unknown-linux-musl.tar.gz", "w:gz"
+    ) as archive:
+        metadata = tarfile.TarInfo("zellij")
+        metadata.mode = 0o700
+        metadata.size = len(zellij_command)
+        archive.addfile(metadata, io.BytesIO(zellij_command))
+    zellij_path = home / ".fcc" / "terminal" / "bin" / "zellij"
+    zellij_path.parent.mkdir(parents=True)
+    zellij_path.write_bytes(zellij_command)
+    zellij_path.chmod(0o700)
     _write_executable(fixtures / "uv-command.sh", _posix_uv_command("0.11.28"))
     _write_executable(
         fixtures / "fcc-command.sh",
@@ -557,11 +570,20 @@ esac
         bin_dir / "sha256sum",
         """#!/bin/sh
 echo "sha256sum:$*" >> "$CALL_LOG"
-if [ "$FAIL_STEP" = "rtk-checksum" ]; then
-    checksum="0000000000000000000000000000000000000000000000000000000000000000"
-else
-    checksum="d94cc2a3e57fa534892b5235a726e7eeb7523f205a5f8f48f853bfcae7be7e33"
-fi
+case "$1:$FAIL_STEP" in
+    *zellij*:zellij-checksum)
+        checksum="0000000000000000000000000000000000000000000000000000000000000000"
+        ;;
+    *zellij*:*)
+        checksum="0ec6ef07b63c6355c02ce18343d40ef5ef5af19e25313ea9009c8fceda29e94f"
+        ;;
+    *:rtk-checksum)
+        checksum="0000000000000000000000000000000000000000000000000000000000000000"
+        ;;
+    *)
+        checksum="d94cc2a3e57fa534892b5235a726e7eeb7523f205a5f8f48f853bfcae7be7e33"
+        ;;
+esac
 printf '%s  %s\n' "$checksum" "$1"
 """,
     )
@@ -639,6 +661,38 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     home = Path(posix_harness.env["HOME"])
     assert (home / ".grok" / "bin" / "grok").is_file()
     assert not (home / ".local" / "bin" / "grok").exists()
+
+
+def test_install_sh_installs_pinned_terminal_engine_atomically(
+    posix_harness: PosixHarness,
+) -> None:
+    installed = Path(posix_harness.env["HOME"]) / ".fcc" / "terminal" / "bin" / "zellij"
+    installed.unlink()
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert installed.read_bytes() == b"fake Zellij executable"
+    assert installed.stat().st_mode & 0o700 == 0o700
+    assert any(
+        "zellij-org/zellij/releases/download/v0.45.1" in call
+        for call in posix_harness.calls()
+    )
+
+
+def test_install_sh_preserves_old_terminal_engine_on_checksum_failure(
+    posix_harness: PosixHarness,
+) -> None:
+    installed = Path(posix_harness.env["HOME"]) / ".fcc" / "terminal" / "bin" / "zellij"
+    installed.write_bytes(b"old terminal engine")
+
+    result = posix_harness.run(fail_step="zellij-checksum")
+
+    assert result.returncode != 0
+    assert installed.read_bytes() == b"old terminal engine"
+    assert not any(
+        "--refresh-package free-claude-code" in call for call in posix_harness.calls()
+    )
 
 
 def test_install_sh_discovers_grok_in_custom_bin_directory(
@@ -2096,6 +2150,13 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "uv-install"
     rtk_archive = fixtures / "rtk-x86_64-pc-windows-msvc.zip"
     with zipfile.ZipFile(rtk_archive, "w") as archive:
         archive.writestr("rtk.exe", b"fake RTK executable")
+    zellij_bytes = b"fake Zellij executable"
+    zellij_archive = fixtures / "zellij-no-web-x86_64-pc-windows-msvc.zip"
+    with zipfile.ZipFile(zellij_archive, "w") as archive:
+        archive.writestr("zellij.exe", zellij_bytes)
+    zellij_path = home / ".fcc" / "terminal" / "bin" / "zellij.exe"
+    zellij_path.parent.mkdir(parents=True)
+    zellij_path.write_bytes(zellij_bytes)
     for asset_name in (
         "opencode-windows-x64-baseline.zip",
         "opencode-windows-arm64.zip",
@@ -2131,6 +2192,7 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "grok-download" -and $Uri.Contains("x.ai/cli")) -or
         ($env:FAIL_STEP -eq "muse-download" -and $Uri.Contains("scripts/install-muse.ps1")) -or
         ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
+        ($env:FAIL_STEP -eq "zellij-download" -and $Uri.Contains("zellij-org/zellij")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
         throw "simulated download failure"
@@ -2163,6 +2225,9 @@ function Invoke-RestMethod {
     elseif ($Uri.EndsWith("rtk-x86_64-pc-windows-msvc.zip")) {
         $source = Join-Path $env:FAKE_FIXTURES "rtk-x86_64-pc-windows-msvc.zip"
     }
+    elseif ($Uri.EndsWith("zellij-no-web-x86_64-pc-windows-msvc.zip")) {
+        $source = Join-Path $env:FAKE_FIXTURES "zellij-no-web-x86_64-pc-windows-msvc.zip"
+    }
     elseif ($Uri.Contains("astral.sh")) {
         $source = Join-Path $env:FAKE_FIXTURES "uv-installer.ps1"
     }
@@ -2191,6 +2256,16 @@ function Get-Process {
     }
 }
 $installerSource = [IO.File]::ReadAllText($env:FCC_INSTALLER)
+$zellijHash = if ($env:FAIL_STEP -eq "zellij-checksum") {
+    "0000000000000000000000000000000000000000000000000000000000000000"
+}
+else {
+    $env:FAKE_ZELLIJ_SHA256
+}
+$installerSource = $installerSource.Replace(
+    "3d01a2571076885f31a013b3bf1071fd1aba1db2e7b82190c68833737a625346",
+    $zellijHash
+)
 $nativeVersionProbe = '    $output = Invoke-Utf8NativeCapture -FilePath $OpenCodePath -Arguments @("--version")'
 $fakeArchiveVersionProbe = @'
     $output = if ([IO.Path]::GetFileName($OpenCodePath) -eq "opencode.exe") {
@@ -2223,6 +2298,7 @@ $installer = [scriptblock]::Create($installerSource)
             "FAKE_FIXTURES": str(fixtures),
             "FAKE_TOOL_BIN": str(tool_bin),
             "FAKE_NPM_PREFIX": str(npm_prefix),
+            "FAKE_ZELLIJ_SHA256": hashlib.sha256(zellij_bytes).hexdigest(),
             "FCC_INSTALLER": str(_repo_root() / "scripts" / "install.ps1"),
             "FCC_PROCESS_MARKER": str(tmp_path / "fcc-process-ready"),
             "FCC_RUNNING_COMMAND": "",
@@ -2312,6 +2388,47 @@ def test_install_ps1_fresh_install_is_verified(
         / "Programs"
         / "Free Claude Code.lnk"
     ).is_file()
+
+
+def test_install_ps1_installs_pinned_terminal_engine_atomically(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    installed = (
+        Path(powershell_harness.env["USERPROFILE"])
+        / ".fcc"
+        / "terminal"
+        / "bin"
+        / "zellij.exe"
+    )
+    installed.unlink()
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert installed.read_bytes() == b"fake Zellij executable"
+    assert any(
+        "zellij-org/zellij/releases/download/v0.45.1" in call
+        for call in powershell_harness.calls()
+    )
+
+
+def test_install_ps1_preserves_old_terminal_engine_on_checksum_failure(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    installed = (
+        Path(powershell_harness.env["USERPROFILE"])
+        / ".fcc"
+        / "terminal"
+        / "bin"
+        / "zellij.exe"
+    )
+    installed.write_bytes(b"old terminal engine")
+
+    result = powershell_harness.run(fail_step="zellij-checksum")
+
+    assert result.returncode != 0
+    assert installed.read_bytes() == b"old terminal engine"
+    assert not any("free-claude-code @" in call for call in powershell_harness.calls())
 
 
 def test_install_ps1_discovers_grok_in_custom_bin_directory(

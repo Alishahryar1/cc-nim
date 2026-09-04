@@ -15,6 +15,8 @@ GROK_INSTALL_URL="https://x.ai/cli/install.sh"
 MUSE_INSTALL_URL="https://dev.meta.ai/install.sh"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
+ZELLIJ_VERSION="0.45.1"
+ZELLIJ_RELEASE_BASE_URL="https://github.com/zellij-org/zellij/releases/download/v$ZELLIJ_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
@@ -597,6 +599,103 @@ ensure_rtk() {
     fi
 
     verify_rtk_command
+}
+
+select_zellij_release() {
+    zellij_platform=$(uname -s)
+    zellij_architecture=$(uname -m)
+    case "$zellij_platform:$zellij_architecture" in
+        Linux:x86_64|Linux:amd64)
+            zellij_asset_name="zellij-no-web-x86_64-unknown-linux-musl.tar.gz"
+            zellij_asset_sha256="0ec6ef07b63c6355c02ce18343d40ef5ef5af19e25313ea9009c8fceda29e94f"
+            ;;
+        Linux:aarch64|Linux:arm64)
+            zellij_asset_name="zellij-no-web-aarch64-unknown-linux-musl.tar.gz"
+            zellij_asset_sha256="2f3965f5b4d7fbb25dfc543e91f9680c9ee7b4eb07d8a3e6392fa276fc65c509"
+            ;;
+        Darwin:x86_64|Darwin:amd64)
+            zellij_asset_name="zellij-no-web-x86_64-apple-darwin.tar.gz"
+            zellij_asset_sha256="ca87de11f346e040be549b8357730143892f005fc66dbe65fe60427673897d30"
+            ;;
+        Darwin:aarch64|Darwin:arm64)
+            zellij_asset_name="zellij-no-web-aarch64-apple-darwin.tar.gz"
+            zellij_asset_sha256="ca1d515f6b94435b60504dc1c735a3f7c4273fab92d3c8270e8d4a321e3397c5"
+            ;;
+        *)
+            fail "Zellij $ZELLIJ_VERSION does not provide a managed Terminal Sessions engine for $zellij_platform $zellij_architecture."
+            ;;
+    esac
+}
+
+zellij_file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1"
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1"
+    else
+        fail "Terminal Sessions engine installation requires sha256sum or shasum."
+    fi
+}
+
+install_terminal_engine() {
+    select_zellij_release
+    zellij_archive_url="$ZELLIJ_RELEASE_BASE_URL/$zellij_asset_name"
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command curl -fsSL "$zellij_archive_url" -o "<temporary-archive>"
+        printf '+ verify pinned SHA-256 for the extracted zellij\n'
+        printf '+ install zellij to %s\n' "${HOME:-~}/.fcc/terminal/bin/zellij"
+        return 0
+    fi
+
+    [ -n "${HOME:-}" ] || fail "HOME is required to install the Terminal Sessions engine."
+    zellij_install_directory="$HOME/.fcc/terminal/bin"
+    zellij_installed_path="$zellij_install_directory/zellij"
+    if [ -f "$zellij_installed_path" ]; then
+        zellij_actual_sha256=$(zellij_file_sha256 "$zellij_installed_path") || fail "Could not hash the installed Zellij executable."
+        zellij_actual_sha256=${zellij_actual_sha256%% *}
+        if [ "$zellij_actual_sha256" = "$zellij_asset_sha256" ]; then
+            printf 'Terminal Sessions engine %s is already installed and verified.\n' "$ZELLIJ_VERSION"
+            return 0
+        fi
+    fi
+
+    temporary_file=$(mktemp "${TMPDIR:-/tmp}/fcc-zellij.XXXXXX") || fail "Unable to create a temporary Zellij archive."
+    print_command curl -fsSL "$zellij_archive_url" -o "$temporary_file"
+    if curl -fsSL "$zellij_archive_url" -o "$temporary_file"; then
+        :
+    else
+        status=$?
+        fail "Could not download Zellij $ZELLIJ_VERSION (curl exit code $status)."
+    fi
+    [ -s "$temporary_file" ] || fail "The downloaded Zellij archive was empty."
+
+    if zellij_archive_entries=$(tar -tzf "$temporary_file"); then
+        :
+    else
+        fail "The Zellij archive could not be inspected."
+    fi
+    [ "$zellij_archive_entries" = "zellij" ] || fail "The Zellij archive did not contain exactly one root zellij executable."
+
+    run mkdir -p "$zellij_install_directory"
+    temporary_binary=$(mktemp "$zellij_install_directory/.zellij.XXXXXX") || fail "Unable to create a temporary Zellij executable."
+    print_command tar -xOzf "$temporary_file" zellij
+    if tar -xOzf "$temporary_file" zellij >"$temporary_binary"; then
+        :
+    else
+        fail "The Zellij archive could not be extracted."
+    fi
+    [ -s "$temporary_binary" ] || fail "The extracted Zellij executable was empty."
+    zellij_actual_sha256=$(zellij_file_sha256 "$temporary_binary") || fail "Could not hash the extracted Zellij executable."
+    zellij_actual_sha256=${zellij_actual_sha256%% *}
+    [ "$zellij_actual_sha256" = "$zellij_asset_sha256" ] || fail "Zellij checksum verification failed for $zellij_asset_name."
+
+    run chmod 700 "$temporary_binary"
+    run mv "$temporary_binary" "$zellij_installed_path"
+    temporary_binary=""
+    rm -f "$temporary_file"
+    temporary_file=""
+    printf 'Installed Terminal Sessions engine %s.\n' "$ZELLIJ_VERSION"
 }
 
 run_rtk_init() {
@@ -1343,6 +1442,12 @@ if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_h
 fi
 require_command sh
 require_command mktemp
+require_command tar
+if [ "$dry_run" -eq 0 ] &&
+    ! command -v sha256sum >/dev/null 2>&1 &&
+    ! command -v shasum >/dev/null 2>&1; then
+    fail "Terminal Sessions engine installation requires sha256sum or shasum."
+fi
 if [ "$enable_rtk" -eq 1 ] && ! command -v rtk >/dev/null 2>&1; then
     require_command tar
     if [ "$dry_run" -eq 0 ] &&
@@ -1357,6 +1462,9 @@ ensure_uv
 
 ensure_selected_coding_agents
 configure_rtk_for_selected_agents
+
+step "Installing the Terminal Sessions engine"
+install_terminal_engine
 
 step "Installing or updating Free Claude Code"
 install_free_claude_code

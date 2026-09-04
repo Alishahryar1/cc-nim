@@ -123,6 +123,23 @@ jobs:
         if: matrix.id == 'playwright'
         run: uv run playwright install --with-deps chromium
 
+      - name: Install the real Terminal Sessions engine
+        if: matrix.id == 'playwright'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/zellij.tar.gz"
+          binary="$RUNNER_TEMP/zellij"
+          curl -fsSL \
+            "https://github.com/zellij-org/zellij/releases/download/v0.45.1/zellij-no-web-x86_64-unknown-linux-musl.tar.gz" \
+            -o "$archive"
+          test "$(tar -tzf "$archive")" = "zellij"
+          tar -xOzf "$archive" zellij > "$binary"
+          test "$(sha256sum "$binary" | cut -d ' ' -f 1)" = \
+            "0ec6ef07b63c6355c02ce18343d40ef5ef5af19e25313ea9009c8fceda29e94f"
+          chmod 700 "$binary"
+          echo "FCC_TEST_ZELLIJ_BIN=$binary" >> "$GITHUB_ENV"
+
       - name: Run
         run: ${{ matrix.run }}
 
@@ -183,6 +200,66 @@ jobs:
 
       - name: Install Python
         run: uv python install "${{ steps.python.outputs.version }}"
+
+      - name: Install the real Terminal Sessions engine (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_OS:$RUNNER_ARCH" in
+            Linux:X64)
+              asset="zellij-no-web-x86_64-unknown-linux-musl.tar.gz"
+              expected="0ec6ef07b63c6355c02ce18343d40ef5ef5af19e25313ea9009c8fceda29e94f"
+              ;;
+            Linux:ARM64)
+              asset="zellij-no-web-aarch64-unknown-linux-musl.tar.gz"
+              expected="2f3965f5b4d7fbb25dfc543e91f9680c9ee7b4eb07d8a3e6392fa276fc65c509"
+              ;;
+            macOS:X64)
+              asset="zellij-no-web-x86_64-apple-darwin.tar.gz"
+              expected="ca87de11f346e040be549b8357730143892f005fc66dbe65fe60427673897d30"
+              ;;
+            macOS:ARM64)
+              asset="zellij-no-web-aarch64-apple-darwin.tar.gz"
+              expected="ca1d515f6b94435b60504dc1c735a3f7c4273fab92d3c8270e8d4a321e3397c5"
+              ;;
+            *)
+              echo "Unsupported terminal test runner: $RUNNER_OS $RUNNER_ARCH" >&2
+              exit 1
+              ;;
+          esac
+          archive="$RUNNER_TEMP/$asset"
+          binary="$RUNNER_TEMP/zellij"
+          curl -fsSL \
+            "https://github.com/zellij-org/zellij/releases/download/v0.45.1/$asset" \
+            -o "$archive"
+          test "$(tar -tzf "$archive")" = "zellij"
+          tar -xOzf "$archive" zellij > "$binary"
+          if command -v sha256sum >/dev/null 2>&1; then
+            actual="$(sha256sum "$binary" | cut -d ' ' -f 1)"
+          else
+            actual="$(shasum -a 256 "$binary" | cut -d ' ' -f 1)"
+          fi
+          test "$actual" = "$expected"
+          chmod 700 "$binary"
+          echo "FCC_TEST_ZELLIJ_BIN=$binary" >> "$GITHUB_ENV"
+
+      - name: Install the real Terminal Sessions engine (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "zellij.zip"
+          $directory = Join-Path $env:RUNNER_TEMP "zellij"
+          Invoke-WebRequest `
+            -Uri "https://github.com/zellij-org/zellij/releases/download/v0.45.1/zellij-no-web-x86_64-pc-windows-msvc.zip" `
+            -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $directory
+          $binary = Join-Path $directory "zellij.exe"
+          $actual = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne "3d01a2571076885f31a013b3bf1071fd1aba1db2e7b82190c68833737a625346") {
+            throw "Zellij checksum mismatch: $actual"
+          }
+          "FCC_TEST_ZELLIJ_BIN=$binary" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Verify native PTY lifecycle
         shell: bash

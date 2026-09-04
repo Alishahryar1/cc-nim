@@ -32,7 +32,7 @@ from .asgi import RuntimeASGIApp
 from .chat_sqlite import SQLiteChatStore
 from .codex_catalog import CodexModelCatalogPublisher
 from .provider_manager import ProviderRuntimeManager
-from .terminal_pty import create_terminal_process_factory
+from .terminal_pty import create_terminal_engine_host
 
 
 def build_asgi_app(
@@ -66,7 +66,7 @@ def build_asgi_app(
         provider_manager,
         SQLiteChatStore(chat_database_path(), chat_lock_path()),
     )
-    terminal_service = TerminalService(create_terminal_process_factory())
+    terminal_service = TerminalService(create_terminal_engine_host())
     runtime = ApplicationRuntime(
         provider_manager,
         chat_service=chat_service,

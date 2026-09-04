@@ -12,6 +12,13 @@ class TerminalStatus(StrEnum):
     EXITED = "exited"
 
 
+class TerminalClientRole(StrEnum):
+    """A browser view's relationship to the shared terminal pane."""
+
+    CONTROLLER = "controller"
+    OBSERVER = "observer"
+
+
 @dataclass(frozen=True, slots=True)
 class TerminalSession:
     """Current observable state for one server-owned terminal."""
@@ -24,20 +31,40 @@ class TerminalSession:
     columns: int
     exit_code: int | None
     error: str | None
-    history_truncated: bool
 
 
 @dataclass(frozen=True, slots=True)
 class TerminalAttachmentSnapshot:
-    """Atomic retained state delivered before one attachment follows live output."""
+    """Atomic rendered state delivered before one view follows live output."""
 
     session: TerminalSession
     output: bytes
+    role: TerminalClientRole
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalEngineSnapshot:
+    """Terminal-engine render split into off-screen history and live viewport."""
+
+    scrollback: bytes
+    viewport: bytes
+
+    @property
+    def rendered(self) -> bytes:
+        return self.scrollback + self.viewport
 
 
 @dataclass(frozen=True, slots=True)
 class TerminalOutputEvent:
     data: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalResetEvent:
+    """Replace a view after reconnect or controller transfer."""
+
+    output: bytes
+    role: TerminalClientRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +78,7 @@ class TerminalDeletedEvent:
 
 
 type TerminalAttachmentEvent = (
-    TerminalOutputEvent | TerminalStateEvent | TerminalDeletedEvent
+    TerminalOutputEvent | TerminalResetEvent | TerminalStateEvent | TerminalDeletedEvent
 )
 
 
@@ -73,7 +100,3 @@ class TerminalConflictError(TerminalError):
 
 class TerminalValidationError(TerminalError):
     """Terminal input or metadata is invalid."""
-
-
-class TerminalAttachmentOverflowError(TerminalError):
-    """One slow terminal attachment must reconnect from retained output."""

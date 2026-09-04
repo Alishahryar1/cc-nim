@@ -28,6 +28,7 @@ dependencies = [
     "requests[socks]>=2.34.2",
     "pystray>=0.19.5; sys_platform == 'win32' or sys_platform == 'darwin'",
     "Pillow>=12.0.0; sys_platform == 'win32' or sys_platform == 'darwin'",
+    "psutil>=7.2.2,<8",
     "ptyprocess>=0.7,<1; sys_platform != 'win32'",
     "pywinpty>=3.0.5,<4; sys_platform == 'win32'",
 ]
@@ -132,6 +133,7 @@ markers = [
     "clients: client compatibility checks",
     "voice: voice transcription checks",
     "contract: deterministic feature contract checks",
+    "real_terminal: browser scenarios backed by the pinned native terminal engine",
     "smoke_target(name): route a smoke test behind FCC_SMOKE_TARGETS",
     "xdist_group(name): group smoke provider items under pytest-xdist --dist=loadgroup",
 ]

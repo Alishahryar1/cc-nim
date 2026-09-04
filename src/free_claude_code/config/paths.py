@@ -1,5 +1,6 @@
 """Shared filesystem paths for Free Claude Code configuration."""
 
+import os
 from pathlib import Path
 
 FCC_CONFIG_DIRNAME = ".fcc"
@@ -19,6 +20,12 @@ AIDER_TEMP_DIRNAME = "aider"
 CHAT_STATE_DIRNAME = "chat"
 CHAT_DATABASE_FILENAME = "chat.db"
 CHAT_LOCK_FILENAME = "chat.lock"
+TERMINAL_DIRNAME = "terminal"
+TERMINAL_BIN_DIRNAME = "bin"
+TERMINAL_SOCKET_DIRNAME = "sockets"
+TERMINAL_RUNTIME_DIRNAME = "runtime"
+TERMINAL_LOCK_FILENAME = "terminal.lock"
+TERMINAL_CONFIG_FILENAME = "config.kdl"
 
 
 def config_dir_path() -> Path:
@@ -61,6 +68,43 @@ def chat_lock_path() -> Path:
     """Return the exclusive Chat Sessions process-lock path."""
 
     return chat_state_dir_path() / CHAT_LOCK_FILENAME
+
+
+def terminal_state_dir_path() -> Path:
+    """Return the private managed terminal-engine directory."""
+
+    return config_dir_path() / TERMINAL_DIRNAME
+
+
+def terminal_binary_path() -> Path:
+    """Return the managed Zellij executable path for this platform."""
+
+    executable = "zellij.exe" if os.name == "nt" else "zellij"
+    return terminal_state_dir_path() / TERMINAL_BIN_DIRNAME / executable
+
+
+def terminal_socket_dir_path() -> Path:
+    """Return FCC's isolated Zellij socket namespace."""
+
+    return terminal_state_dir_path() / TERMINAL_SOCKET_DIRNAME
+
+
+def terminal_runtime_dir_path() -> Path:
+    """Return the ephemeral managed terminal runtime directory."""
+
+    return terminal_state_dir_path() / TERMINAL_RUNTIME_DIRNAME
+
+
+def terminal_config_path() -> Path:
+    """Return the generated FCC-only Zellij configuration path."""
+
+    return terminal_runtime_dir_path() / TERMINAL_CONFIG_FILENAME
+
+
+def terminal_lock_path() -> Path:
+    """Return the exclusive terminal-engine owner lock path."""
+
+    return terminal_state_dir_path() / TERMINAL_LOCK_FILENAME
 
 
 def legacy_env_paths() -> tuple[Path, ...]:
