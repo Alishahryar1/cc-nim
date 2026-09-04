@@ -592,6 +592,33 @@ def test_messages_context_window_failure_triggers_client_compaction() -> None:
     assert trace["provider_retryable"] is False
 
 
+def test_responses_context_window_failure_triggers_client_compaction() -> None:
+    provider = CanonicalFailureProvider(
+        [],
+        kind=FailureKind.CONTEXT_WINDOW_EXCEEDED,
+        status_code=400,
+        message="Provider input exceeds the model context window.",
+        retryable=False,
+    )
+    resolver_patch, client = _client_for(provider)
+
+    with resolver_patch, client:
+        response = client.post("/v1/responses", json=_responses_payload())
+
+    request_id = response.headers["request-id"]
+    assert response.status_code == 400
+    assert response.headers["x-should-retry"] == "false"
+    assert response.json()["error"] == {
+        "message": (
+            "Provider input exceeds the model context window.\n\n"
+            f"Request ID: {request_id}"
+        ),
+        "type": "invalid_request_error",
+        "param": None,
+        "code": "context_length_exceeded",
+    }
+
+
 def test_responses_pre_start_execution_failure_is_correlated_terminal_json() -> None:
     provider = CanonicalFailureProvider(
         [],
@@ -709,6 +736,24 @@ def test_responses_post_start_execution_failure_retains_id_after_block_close() -
         "code": None,
     }
     trace_mock.assert_not_called()
+
+
+def test_responses_post_start_context_failure_retains_compaction_code() -> None:
+    provider = CanonicalFailureProvider(
+        _partial_anthropic_stream(close_block=True),
+        kind=FailureKind.CONTEXT_WINDOW_EXCEEDED,
+        status_code=400,
+        message="Provider input exceeds the model context window.",
+        retryable=False,
+    )
+    resolver_patch, client = _client_for(provider)
+
+    with resolver_patch, client:
+        response = client.post("/v1/responses", json=_responses_payload())
+
+    events = parse_sse_text(response.text)
+    assert events[-1].event == "response.failed"
+    assert events[-1].data["response"]["error"]["code"] == ("context_length_exceeded")
 
 
 def test_messages_stream_false_discards_partial_content_on_execution_failure() -> None:
