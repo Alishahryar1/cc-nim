@@ -10,6 +10,7 @@ import httpx
 import openai
 
 from free_claude_code.core.diagnostics import (
+    attached_upstream_error_body,
     extract_upstream_error_detail,
     format_execution_failure_message,
     safe_exception_message,
@@ -442,7 +443,7 @@ def _reports_context_window_exceeded(exc: BaseException) -> bool:
     if is_context_window_error_code(getattr(exc, "code", None)):
         return True
 
-    bodies = [getattr(exc, "body", None)]
+    bodies = [attached_upstream_error_body(exc), getattr(exc, "body", None)]
     response = getattr(exc, "response", None)
     if response is not None:
         with suppress(Exception):

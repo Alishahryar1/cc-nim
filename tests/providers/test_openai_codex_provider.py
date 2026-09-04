@@ -68,6 +68,14 @@ class _CloseTrackingResponse(httpx.Response):
             raise self._close_error
 
 
+class _StaticAsyncBody(httpx.AsyncByteStream):
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self._body
+
+
 class _CloseAwareAuth(_FakeAuth):
     def __init__(self, responses: list[_CloseTrackingResponse]) -> None:
         super().__init__()
@@ -1193,6 +1201,62 @@ async def test_context_terminals_have_canonical_failure_semantics(
         else provider.stream_responses(
             _responses_request(),
             request_id=f"req_context_{wire_api}",
+            response_model="openai/gpt-test",
+        )
+    )
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await _collect(stream)
+
+    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert exc_info.value.retryable is False
+    assert calls == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["messages", "responses"])
+async def test_streamed_context_http_error_has_canonical_failure_semantics(
+    wire_api: str,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            400,
+            stream=_StaticAsyncBody(
+                json.dumps(
+                    {
+                        "error": {
+                            "code": "context_length_exceeded",
+                            "message": "maximum context length exceeded",
+                        }
+                    }
+                ).encode()
+            ),
+            headers={"content-type": "application/json"},
+            request=request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+
+    stream = (
+        provider.stream_messages(
+            _request(),
+            request_id=f"req_context_http_{wire_api}",
+            response_model="claude-opus-4",
+        )
+        if wire_api == "messages"
+        else provider.stream_responses(
+            _responses_request(),
+            request_id=f"req_context_http_{wire_api}",
             response_model="openai/gpt-test",
         )
     )
