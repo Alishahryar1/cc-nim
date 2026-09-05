@@ -2,6 +2,7 @@
 
 import asyncio
 import socket
+import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -427,9 +428,21 @@ def admin_base_url(
             lifespan="on",
         )
     )
+
+    def run_server() -> None:
+        if sys.platform == "win32":
+            # This HTTP-only fixture owns no subprocess transports. A browser
+            # reset can interrupt Proactor socket cleanup on Python 3.14.0;
+            # use the selector loop here, leaving Playwright's loop unchanged.
+            asyncio.run(
+                server.serve(sockets=[listener]),
+                loop_factory=asyncio.SelectorEventLoop,
+            )
+        else:
+            server.run(sockets=[listener])
+
     thread = threading.Thread(
-        target=server.run,
-        kwargs={"sockets": [listener]},
+        target=run_server,
         name="fcc-admin-playwright",
         daemon=True,
     )

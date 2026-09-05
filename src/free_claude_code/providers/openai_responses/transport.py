@@ -315,10 +315,21 @@ class OpenAIResponsesTransport:
                         "error",
                         "response.error",
                     }:
-                        raise responses_stream_failure_from_event(
+                        stream_failure = responses_stream_failure_from_event(
                             upstream_event.type,
                             payload,
                         )
+                        if adapt_event is not None:
+                            try:
+                                stream_failure.payload = adapt_event(
+                                    upstream_event.type, payload
+                                )
+                            except RetryableProviderProtocolError:
+                                # Preserve the upstream failure classification.
+                                # Synthesize the terminal event if partial output
+                                # cannot retain a consistent public identity.
+                                stream_failure.payload = None
+                        raise stream_failure
                     if reports_context_window_incomplete(
                         upstream_event.type,
                         payload,

@@ -10,6 +10,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import cast
 
+import httpx2
 import pytest
 
 from free_claude_code.core.anthropic.models import MessagesRequest
@@ -118,10 +119,13 @@ def _assert_native_identity(events: list[JsonObject]) -> list[JsonObject]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("responses", [False, True], ids=["messages", "responses"])
+@pytest.mark.parametrize("missing_delta_id", [False, True])
 async def test_captured_copilot_tool_identity_survives_stream_and_result_continuation(
-    tmp_path: Path, responses: bool
+    tmp_path: Path, responses: bool, missing_delta_id: bool
 ) -> None:
     capture = _capture()
+    if missing_delta_id:
+        capture[5].pop("item_id")
     call_id = _item(capture[2])["call_id"]
     harness = Harness(tmp_path, CopilotEgress.RESPONSES)
     harness.responses_content = responses_sse(*capture).encode()
@@ -254,12 +258,19 @@ async def test_copilot_done_only_tool_binds_identity_without_an_added_event(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("responses", [False, True], ids=["messages", "responses"])
+@pytest.mark.parametrize("arguments_done_only", [False, True])
 async def test_copilot_argument_delta_without_item_metadata_fails_before_inventing_a_tool(
-    tmp_path: Path, responses: bool
+    tmp_path: Path, responses: bool, arguments_done_only: bool
 ) -> None:
     capture = [
         event for event in _capture() if event["type"] != "response.output_item.added"
     ]
+    if arguments_done_only:
+        capture = [
+            event
+            for event in capture
+            if event["type"] != "response.function_call_arguments.delta"
+        ]
     harness = Harness(tmp_path, CopilotEgress.RESPONSES)
     harness.responses_content = responses_sse(*capture).encode()
     emitted: list[JsonObject] = []
@@ -400,5 +411,100 @@ async def test_copilot_interleaved_tools_use_output_positions_and_preserve_final
         await _run(harness, followup)
         body = json.loads(harness.seen[-1].content)
         assert body["input"][:3] == output
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("responses", [False, True])
+@pytest.mark.parametrize("field", ["call_id", "name", "type"])
+@pytest.mark.parametrize("missing", [False, True])
+async def test_copilot_rejects_incomplete_or_changed_tool_identity(
+    tmp_path: Path, responses: bool, field: str, missing: bool
+) -> None:
+    capture = _capture()
+    if missing:
+        _item(capture[2]).pop(field)
+    else:
+        _item(capture[11])[field] = "different"
+        _output(capture[-1])[0][field] = "different"
+    harness = Harness(tmp_path, CopilotEgress.RESPONSES)
+    harness.responses_content = responses_sse(*capture).encode()
+    failed = False
+    try:
+        try:
+            events = await _run(harness, _input(responses, harness.runtime.name))
+            failed = any(
+                event["type"] in {"error", "response.failed"} for event in events
+            )
+        except ExecutionFailure:
+            failed = True
+        assert failed, "Contradictory or incomplete tool identity must not succeed"
+        assert all(wire.closed for wire in harness.wires)
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_copilot_committed_failure_retains_public_response_and_item_identity(
+    tmp_path: Path,
+) -> None:
+    capture = _capture()
+    capture[3]["delta"] = " " * 70000 + str(capture[3]["delta"])
+    capture[-1]["type"] = "response.failed"
+    _response(capture[-1])["status"] = "failed"
+    _response(capture[-1])["error"] = {
+        "code": "server_error",
+        "message": "Synthetic upstream failure",
+    }
+    harness = Harness(tmp_path, CopilotEgress.RESPONSES)
+    harness.responses_content = responses_sse(*capture).encode()
+    try:
+        events = await _run(harness, _input(True, harness.runtime.name))
+        assert events[-1]["type"] == "response.failed"
+        output = _assert_native_identity(events)
+        assert output[0]["id"] == _item(capture[2])["id"]
+        assert len(harness.seen) == 1
+        assert all(wire.closed for wire in harness.wires)
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("responses", [False, True])
+async def test_copilot_partial_failure_output_does_not_mask_authentication_refresh(
+    tmp_path: Path, responses: bool
+) -> None:
+    capture = _capture()
+    failed = deepcopy(capture[-1])
+    failed["type"] = "response.failed"
+    _response(failed).update(
+        status="failed",
+        error={"code": "invalid_api_key", "message": "expired"},
+        output=[{"id": "partial-final-tool", "type": "function_call"}],
+    )
+    recovered = deepcopy(capture)
+    _response(recovered[0])["id"] = "recovered-response"
+    _item(recovered[2])["id"] = "recovered-tool"
+
+    class RefreshHarness(Harness):
+        def openai(self, request: httpx2.Request) -> httpx2.Response:
+            if self.runtime.sessions[0].endpoint_calls > 1:
+                self.responses_content = responses_sse(*recovered).encode()
+            return super().openai(request)
+
+    harness = RefreshHarness(tmp_path, CopilotEgress.RESPONSES)
+    harness.responses_content = responses_sse(*capture[:3], failed).encode()
+    try:
+        events = await _run(harness, _input(responses, harness.runtime.name))
+        assert events[-1]["type"] == (
+            "response.completed" if responses else "message_stop"
+        )
+        assert harness.runtime.sessions[0].endpoint_calls == 2
+        assert len(harness.seen) == 2
+        if responses:
+            output = _assert_native_identity(events)
+            assert _response(events[-1])["id"] == "recovered-response"
+            assert output[0]["id"] == "recovered-tool"
     finally:
         await harness.close()
