@@ -1,4 +1,10 @@
-"""Installed `fcc-cline` launcher for the stable Cline CLI."""
+"""Installed `fcc-cline` launcher for the stable Cline CLI.
+
+Sessions run with an isolated Hub discovery path so a stale or user-run Cline
+Hub can never capture an fcc-cline session: the child resolves Hub state only
+inside FCC's ephemeral configuration directory, which is deleted on exit. A
+Hub started with ordinary cline keeps using its own discovery file.
+"""
 
 import json
 import os
@@ -250,6 +256,7 @@ def build_cline_launcher_env(
     *,
     proxy_root_url: str,
     providers_path: Path,
+    hub_discovery_path: Path,
     base_env: Mapping[str, str],
 ) -> dict[str, str]:
     """Build the child-only Cline environment while preserving native state."""
@@ -257,6 +264,12 @@ def build_cline_launcher_env(
     env = with_local_proxy_bypass(base_env, proxy_root_url=proxy_root_url)
     env["CLINE_PROVIDER_SETTINGS_PATH"] = str(providers_path)
     env["CLINE_SESSION_BACKEND_MODE"] = "local"
+    # Interactive Cline passes backendMode:"auto" to core, which overrides
+    # CLINE_SESSION_BACKEND_MODE and may attach to (or start) a detached Hub
+    # that resolves provider settings from the user's global store instead of
+    # FCC's ephemeral file. Redirecting Hub discovery into the ephemeral tree
+    # makes that attachment impossible without touching user-run Hub state.
+    env["CLINE_HUB_DISCOVERY_PATH"] = str(hub_discovery_path)
     return env
 
 
@@ -276,6 +289,7 @@ def _run_with_temporary_config(
         settings_directory = Path(temp_directory, "settings")
         providers_path = settings_directory / "providers.json"
         models_path = settings_directory / "models.json"
+        hub_discovery_path = Path(temp_directory, "hub", "production.json")
         try:
             settings_directory.mkdir(mode=0o700)
             _write_private_json(providers_path, config.providers)
@@ -289,6 +303,7 @@ def _run_with_temporary_config(
             build_cline_launcher_env(
                 proxy_root_url=proxy_root_url,
                 providers_path=providers_path,
+                hub_discovery_path=hub_discovery_path,
                 base_env=os.environ,
             ),
         )

@@ -378,13 +378,16 @@ def test_cline_child_env_is_process_local_and_preserves_native_state(
     from free_claude_code.cli.launchers.cline import build_cline_launcher_env
 
     providers_path = tmp_path / "settings" / "providers.json"
+    hub_discovery_path = tmp_path / "hub" / "production.json"
     env = build_cline_launcher_env(
         proxy_root_url="http://127.0.0.1:9191",
         providers_path=providers_path,
+        hub_discovery_path=hub_discovery_path,
         base_env={
             "PATH": "keep",
             "CLINE_PROVIDER_SETTINGS_PATH": "stale-provider-file",
             "CLINE_SESSION_BACKEND_MODE": "hub",
+            "CLINE_HUB_DISCOVERY_PATH": "stale-user-hub-discovery.json",
             "CLINE_DATA_DIR": "keep-user-state",
             "CLINE_CONFIG_DIR": "keep-user-config",
             "HTTP_PROXY": "http://proxy.example",
@@ -394,11 +397,32 @@ def test_cline_child_env_is_process_local_and_preserves_native_state(
     assert env["PATH"] == "keep"
     assert env["CLINE_PROVIDER_SETTINGS_PATH"] == str(providers_path)
     assert env["CLINE_SESSION_BACKEND_MODE"] == "local"
+    assert env["CLINE_HUB_DISCOVERY_PATH"] == str(hub_discovery_path)
     assert env["CLINE_DATA_DIR"] == "keep-user-state"
     assert env["CLINE_CONFIG_DIR"] == "keep-user-config"
     assert env["HTTP_PROXY"] == "http://proxy.example"
     assert env["NO_PROXY"] == "127.0.0.1,localhost,::1"
     assert env["no_proxy"] == env["NO_PROXY"]
+
+
+def test_cline_hub_discovery_is_isolated_from_user_hub_state() -> None:
+    from free_claude_code.cli.launchers.cline import build_cline_launcher_env
+
+    user_hub_discovery = (
+        Path.home() / ".cline" / "data" / "locks" / "hub" / "production.json"
+    )
+    isolated_path = Path("ephemeral") / "hub" / "production.json"
+    env = build_cline_launcher_env(
+        proxy_root_url="http://127.0.0.1:9191",
+        providers_path=Path("ephemeral") / "settings" / "providers.json",
+        hub_discovery_path=isolated_path,
+        base_env={
+            "CLINE_HUB_DISCOVERY_PATH": str(user_hub_discovery),
+        },
+    )
+
+    assert env["CLINE_HUB_DISCOVERY_PATH"] == str(isolated_path)
+    assert Path(env["CLINE_HUB_DISCOVERY_PATH"]) != user_hub_discovery
 
 
 def test_cline_launch_uses_private_ephemeral_files_and_preserves_model_flag(
@@ -409,6 +433,7 @@ def test_cline_launch_uses_private_ephemeral_files_and_preserves_model_flag(
     monkeypatch.setenv("CLINE_DATA_DIR", "keep-native-state")
     observed_providers_path: Path | None = None
     observed_models_path: Path | None = None
+    observed_hub_path: Path | None = None
 
     def observe_process(
         *,
@@ -418,7 +443,7 @@ def test_cline_launch_uses_private_ephemeral_files_and_preserves_model_flag(
         display_name: str,
         install_hint: str,
     ) -> None:
-        nonlocal observed_providers_path, observed_models_path
+        nonlocal observed_providers_path, observed_models_path, observed_hub_path
         del binary_name, display_name, install_hint
         assert command == [
             "resolved-cline",
@@ -430,6 +455,7 @@ def test_cline_launch_uses_private_ephemeral_files_and_preserves_model_flag(
         ]
         observed_providers_path = Path(env["CLINE_PROVIDER_SETTINGS_PATH"])
         observed_models_path = observed_providers_path.with_name("models.json")
+        observed_hub_path = Path(env["CLINE_HUB_DISCOVERY_PATH"])
         providers = json.loads(observed_providers_path.read_text(encoding="utf-8"))
         models = json.loads(observed_models_path.read_text(encoding="utf-8"))
         settings = providers["providers"][CLINE_PROVIDER_ID]["settings"]
@@ -442,6 +468,8 @@ def test_cline_launch_uses_private_ephemeral_files_and_preserves_model_flag(
         )
         assert env["CLINE_SESSION_BACKEND_MODE"] == "local"
         assert env["CLINE_DATA_DIR"] == "keep-native-state"
+        assert observed_hub_path.parent.parent == observed_providers_path.parent.parent
+        assert not observed_hub_path.exists()
 
     with (
         patch.object(cline, "resolve_client_binary", return_value="resolved-cline"),
@@ -460,8 +488,51 @@ def test_cline_launch_uses_private_ephemeral_files_and_preserves_model_flag(
     fetch_models.assert_called_once_with("http://127.0.0.1:9191", "proxy-token")
     assert observed_providers_path is not None
     assert observed_models_path is not None
+    assert observed_hub_path is not None
     assert not observed_providers_path.exists()
     assert not observed_models_path.exists()
+    assert not observed_hub_path.exists()
+
+
+def test_cline_hub_discovery_path_lives_in_ephemeral_temp_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli.launchers import cline
+
+    monkeypatch.setenv("CLINE_HUB_DISCOVERY_PATH", "stale-user-hub-discovery.json")
+    observed_hub_path: Path | None = None
+
+    def observe_process(
+        *,
+        command: list[str],
+        env: Mapping[str, str],
+        binary_name: str,
+        display_name: str,
+        install_hint: str,
+    ) -> None:
+        nonlocal observed_hub_path
+        del command, binary_name, display_name, install_hint
+        observed_hub_path = Path(env["CLINE_HUB_DISCOVERY_PATH"])
+
+    with (
+        patch.object(cline, "resolve_client_binary", return_value="resolved-cline"),
+        patch.object(cline, "require_compatible_cline"),
+        patch.object(cline, "get_settings", return_value=_settings()),
+        patch.object(cline, "preflight_proxy", return_value=None),
+        patch.object(
+            cline,
+            "fetch_proxy_models_response",
+            return_value=_models_payload(),
+        ),
+        patch.object(cline, "run_client_process", side_effect=observe_process),
+    ):
+        cline.launch(["hello"])
+
+    assert observed_hub_path is not None
+    assert observed_hub_path.parent.name == "hub"
+    assert observed_hub_path.name == "production.json"
+    assert observed_hub_path.parent.parent.name.startswith("fcc-cline-")
+    assert not observed_hub_path.exists()
 
 
 def test_cline_fails_closed_when_proxy_is_unreachable(
