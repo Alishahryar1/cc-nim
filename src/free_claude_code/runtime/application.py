@@ -25,12 +25,9 @@ from free_claude_code.application.model_metadata import ProviderModelRefreshResu
 from free_claude_code.application.ports import StopResult
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
-    commit_prepared_admin_update,
-    prepare_admin_update,
 )
-from free_claude_code.config.admin.state import ConfigInputValue
+from free_claude_code.config.admin.state import ConfigInputValue, ValueState
 from free_claude_code.config.admin.status import provider_config_status
-from free_claude_code.config.admin.values import load_value_state
 from free_claude_code.config.loader import clear_settings_cache
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
@@ -49,9 +46,10 @@ from free_claude_code.providers.credential_validation import (
     check_credentials,
 )
 
+from .configuration import ConfigurationService
 from .provider_manager import ProviderRuntimeManager
 
-RestartCallback = Callable[[], Awaitable[None] | None]
+RestartCallback = Callable[[], None]
 
 _PROVIDER_CHECK_FAILURE_MESSAGE = (
     "Could not refresh this provider's models. Verify its configuration and access."
@@ -100,6 +98,38 @@ def startup_failure_message(settings: Settings, exc: Exception) -> str:
     return f"Server startup failed: exc_type={type(exc).__name__}"
 
 
+async def _await_owned_task[T](
+    task: asyncio.Task[T],
+    *,
+    cancel_on_interrupt: Callable[[], bool] | None = None,
+) -> T:
+    """Keep ownership until a task settles, then propagate caller cancellation."""
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            # wait never cancels the owned task or logs its exception on interruption.
+            await asyncio.wait({task})
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+                if cancel_on_interrupt is not None and cancel_on_interrupt():
+                    task.cancel()
+    try:
+        result = task.result()
+    except BaseException as exc:
+        if cancellation is not None:
+            if not isinstance(exc, asyncio.CancelledError):
+                logger.warning(
+                    "Cancelled runtime operation failed: exc_type={}",
+                    type(exc).__name__,
+                )
+            raise cancellation from exc
+        raise
+    if cancellation is not None:
+        raise cancellation
+    return result
+
+
 class ApplicationRuntime:
     """Own every process-lifetime resource used by one server instance."""
 
@@ -107,12 +137,14 @@ class ApplicationRuntime:
         self,
         provider_manager: ProviderRuntimeManager,
         *,
+        configuration: ConfigurationService,
         transcriber: Transcriber | None,
         chat_service: ChatService | None = None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
     ) -> None:
         self.provider_manager = provider_manager
+        self._configuration = configuration
         self._chat_service = chat_service
         self._transcriber = transcriber
         self._restart_callback = restart_callback
@@ -134,7 +166,7 @@ class ApplicationRuntime:
         self._closed = False
         self._provider_manager_closed = False
         self._connected_accounts_closed = False
-        self._close_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
 
     @property
     def settings(self) -> Settings:
@@ -146,27 +178,42 @@ class ApplicationRuntime:
         return self._closed
 
     async def start(self) -> None:
-        if self._started:
-            return
-        logger.info("Starting Claude Code Proxy...")
         try:
-            await self.provider_manager.warm_referenced_model_cache()
-            self.provider_manager.start_model_list_refresh()
-            if self._chat_service is not None:
-                await self._chat_service.start()
-            await self._start_messaging_if_configured()
-            logging.getLogger("uvicorn.error").info(
-                "Admin UI: %s (local-only)",
-                local_admin_url(self.settings),
-            )
-            self._started = True
+            async with self._lifecycle_lock:
+                if self._draining:
+                    raise ApplicationUnavailableError(
+                        "Application runtime is shutting down."
+                    )
+                if self._started:
+                    return
+                logger.info("Starting Claude Code Proxy...")
+                await _await_owned_task(
+                    asyncio.create_task(self._configuration.initialize())
+                )
+                if self._draining:
+                    raise ApplicationUnavailableError(
+                        "Application runtime is shutting down."
+                    )
+                await self.provider_manager.warm_referenced_model_cache()
+                self.provider_manager.start_model_list_refresh()
+                if self._chat_service is not None:
+                    await self._chat_service.start()
+                await self._start_messaging_if_configured()
+                if self._draining:
+                    raise ApplicationUnavailableError(
+                        "Application runtime is shutting down."
+                    )
+                logging.getLogger("uvicorn.error").info(
+                    "Admin UI: %s (local-only)",
+                    local_admin_url(self.settings),
+                )
+                self._started = True
         except asyncio.CancelledError:
             await self.close()
             raise
         except Exception as exc:
             logger.error(
-                "Startup failed:\n{}",
-                startup_failure_message(self.settings, exc),
+                "Startup failed:\n{}", startup_failure_message(self.settings, exc)
             )
             await self.close()
             raise
@@ -178,11 +225,13 @@ class ApplicationRuntime:
             self._chat_service.begin_shutdown()
 
     async def close(self) -> bool:
-        async with self._close_lock:
+        self.begin_shutdown()
+        async with self._lifecycle_lock:
             if self._closed:
                 return True
             logger.info("Shutdown requested, cleaning up...")
-            self._closed = await self._close_owned_resources()
+            async with self._config_lock:
+                self._closed = await self._close_owned_resources()
             if self._closed:
                 self._started = False
                 logger.info("Server shut down cleanly")
@@ -197,8 +246,15 @@ class ApplicationRuntime:
         updates: Mapping[str, ConfigInputValue],
     ) -> JsonObject:
         """Apply one validated config update without splitting runtime ownership."""
+        caller = asyncio.current_task()
+        assert caller is not None
+        initial_cancellations = caller.cancelling()
         async with self._config_lock:
-            prepared = prepare_admin_update(updates)
+            if self._draining:
+                raise ApplicationUnavailableError(
+                    "Configuration runtime is shutting down."
+                )
+            prepared = await self._configuration.prepare(updates, self.settings)
             if not prepared.valid:
                 return prepared.applied_response() | {"credential_checks": []}
             assert prepared.settings is not None
@@ -224,35 +280,64 @@ class ApplicationRuntime:
                     "credential_checks": check_response,
                 }
 
-            if prepared.pending_fields:
-                result = self._commit_admin_update(prepared)
-                result["credential_checks"] = check_response
-                restart = self._restart_metadata(
-                    prepared.pending_fields,
-                    prepared.settings,
-                )
-                result["restart"] = restart
-                self._pending_fields = (
-                    [] if restart["automatic"] else list(prepared.pending_fields)
-                )
-                return result
+            persistence_started = False
 
+            async def commit() -> JsonObject:
+                nonlocal persistence_started
+                # The caller's cancellation wakeup may run after finalization starts.
+                if caller.cancelling() > initial_cancellations:
+                    raise asyncio.CancelledError
+                persistence_started = True
+                return await self._commit_admin_update(prepared)
+
+            finalization = asyncio.create_task(
+                self._finalize_admin_update(prepared, check_response, commit)
+            )
+            return await _await_owned_task(
+                finalization,
+                cancel_on_interrupt=lambda: not persistence_started,
+            )
+
+    async def _finalize_admin_update(
+        self,
+        prepared: PreparedAdminUpdate,
+        check_response: list[JsonObject],
+        commit: Callable[[], Awaitable[JsonObject]],
+    ) -> JsonObject:
+        assert prepared.settings is not None
+        if prepared.pending_fields:
+            result = await commit()
+        else:
             result: JsonObject = {}
 
-            def commit() -> None:
-                result.update(self._commit_admin_update(prepared))
+            async def publish_commit() -> None:
+                result.update(await commit())
 
             await self.provider_manager.replace(
                 prepared.settings,
-                commit=commit,
+                commit=publish_commit,
                 reason="admin_apply",
             )
+        self._pending_fields = list(prepared.pending_fields)
+        automatic = bool(prepared.pending_fields and self._signal_restart())
+        if automatic:
             self._pending_fields = []
-            result["restart"] = self._restart_metadata((), prepared.settings)
-            result["credential_checks"] = check_response
-            return result
+        result["restart"] = self._restart_metadata(
+            prepared.pending_fields,
+            prepared.settings,
+            automatic=automatic,
+        )
+        result["credential_checks"] = check_response
+        return result
 
-    def admin_status(self) -> JsonObject:
+    async def admin_config(self) -> JsonObject:
+        return await self._configuration.admin_config()
+
+    async def admin_values(self) -> ValueState:
+        return await self._configuration.admin_values()
+
+    async def admin_status(self) -> JsonObject:
+        values = await self.admin_values()
         settings = self.settings
         return {
             "status": "stopping" if self._draining else "running",
@@ -262,7 +347,7 @@ class ApplicationRuntime:
             "model": settings.model,
             "provider": parse_provider_type(settings.model),
             "pending_fields": list(self._pending_fields),
-            "provider_status": provider_config_status(load_value_state()),
+            "provider_status": provider_config_status(values),
             "cached_models": {
                 provider_id: sorted(model_ids)
                 for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
@@ -341,13 +426,28 @@ class ApplicationRuntime:
         self._connected_account_revisions[provider_id] = status.revision
         return status
 
-    async def request_restart(self) -> None:
+    def _signal_restart(self) -> bool:
+        """Invoke a synchronous signal; failure leaves the saved change pending."""
         callback = self._restart_callback
         if callback is None:
-            return
-        result = callback()
-        if inspect.isawaitable(result):
-            await result
+            return False
+        try:
+            result = callback()
+            # Enforce the contract for dynamically supplied callbacks as well.
+            # Never execute an async callback that could await runtime.close().
+            if inspect.iscoroutine(result):
+                result.close()
+            if result is not None:
+                raise TypeError(
+                    "Restart callback must signal synchronously and return None."
+                )
+        except Exception as exc:
+            logger.warning(
+                "Config saved but restart signal failed: exc_type={}",
+                type(exc).__name__,
+            )
+            return False
+        return True
 
     async def stop_all(self) -> StopResult | None:
         if self._messaging_workflow is not None:
@@ -358,11 +458,11 @@ class ApplicationRuntime:
             return StopResult(source="cli_manager")
         return None
 
-    def _commit_admin_update(
+    async def _commit_admin_update(
         self,
         prepared: PreparedAdminUpdate,
     ) -> JsonObject:
-        result = commit_prepared_admin_update(prepared)
+        result = await self._configuration.commit(prepared)
         clear_settings_cache()
         return result
 
@@ -370,8 +470,9 @@ class ApplicationRuntime:
         self,
         fields: tuple[str, ...],
         settings: Settings,
+        *,
+        automatic: bool,
     ) -> JsonObject:
-        automatic = bool(fields and self._restart_callback is not None)
         result: JsonObject = {
             "required": bool(fields),
             "automatic": automatic,

@@ -15,7 +15,7 @@ from free_claude_code.config.env_migrations import (
     consolidate_managed_config,
     migrate_env_setting_in_text,
 )
-from free_claude_code.config.loader import resolve_settings_snapshot
+from free_claude_code.config.loader import ManagedConfigStore
 
 
 @pytest.mark.parametrize("schema", ["", "FCC_CONFIG_SCHEMA=1\n"])
@@ -376,10 +376,13 @@ def test_concurrent_loaders_produce_one_valid_managed_file(
     legacy.parent.mkdir(parents=True)
     legacy.write_text("MODEL=deepseek/concurrent\n", encoding="utf-8")
 
+    def initialize_and_read(_index):
+        store = ManagedConfigStore()
+        store.initialize({})
+        return store.read({})
+
     with ThreadPoolExecutor(max_workers=8) as executor:
-        snapshots = list(
-            executor.map(lambda _index: resolve_settings_snapshot({}), range(8))
-        )
+        snapshots = list(executor.map(initialize_and_read, range(8)))
 
     assert {snapshot.settings.model for snapshot in snapshots} == {
         "deepseek/concurrent"

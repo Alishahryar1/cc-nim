@@ -25,7 +25,11 @@ from free_claude_code.application.chat import (
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
-from free_claude_code.config.loader import clear_settings_cache, get_settings
+from free_claude_code.config.loader import (
+    ManagedConfigStore,
+    clear_settings_cache,
+    get_settings,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
@@ -35,6 +39,7 @@ from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.asgi import RuntimeASGIApp
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
+from free_claude_code.runtime.configuration import ConfigurationService
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 
 
@@ -385,7 +390,12 @@ def admin_base_url(
         return result
 
     monkeypatch.setattr(chat_store, "begin_send", begin_send_with_delayed_ack)
-    runtime = ApplicationRuntime(manager, transcriber=None, chat_service=chat)
+    runtime = ApplicationRuntime(
+        manager,
+        configuration=ConfigurationService(ManagedConfigStore()),
+        transcriber=None,
+        chat_service=chat,
+    )
     app = RuntimeASGIApp(
         create_app(
             ApiServices(

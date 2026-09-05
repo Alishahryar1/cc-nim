@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import DEFAULT_MODEL
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
@@ -72,7 +73,7 @@ class PreStartFailingProvider(FakeProvider):
 @pytest.fixture
 def responses_client():
     provider = FakeProvider(_responses_text_stream("Hello from provider"))
-    app = create_test_app()
+    app = create_test_app(Settings())
     with (
         patch("free_claude_code.api.routes.resolve_provider", return_value=provider),
         TestClient(app) as client,

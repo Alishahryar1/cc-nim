@@ -9,11 +9,14 @@ from free_claude_code.application.ports import StopResult
 from free_claude_code.config.settings import Settings
 from tests.api.support import create_test_app
 
-app = create_test_app()
+
+@pytest.fixture
+def app():
+    return create_test_app(Settings())
 
 
 @pytest.fixture
-def client():
+def client(app):
     return TestClient(app)
 
 
@@ -26,7 +29,7 @@ def mock_settings():
     return settings
 
 
-def test_create_message_fast_prefix_detection(client, mock_settings):
+def test_create_message_fast_prefix_detection(app, client, mock_settings):
     app.dependency_overrides[get_settings] = lambda: mock_settings
 
     payload = {
@@ -54,7 +57,7 @@ def test_create_message_fast_prefix_detection(client, mock_settings):
     app.dependency_overrides.clear()
 
 
-def test_create_message_quota_check_mock(client, mock_settings):
+def test_create_message_quota_check_mock(app, client, mock_settings):
     app.dependency_overrides[get_settings] = lambda: mock_settings
 
     payload = {
@@ -75,7 +78,7 @@ def test_create_message_quota_check_mock(client, mock_settings):
     app.dependency_overrides.clear()
 
 
-def test_create_message_title_generation_skip(client, mock_settings):
+def test_create_message_title_generation_skip(app, client, mock_settings):
     app.dependency_overrides[get_settings] = lambda: mock_settings
 
     payload = {
@@ -179,7 +182,7 @@ def test_count_tokens_error_returns_500(client):
     assert "token error" in response.json()["detail"]
 
 
-def test_stop_cli_with_messaging_workflow(client):
+def test_stop_cli_with_messaging_workflow(app, client):
     session_control = MagicMock()
     session_control.stop_all = AsyncMock(return_value=StopResult(cancelled_count=3))
     services = app.state.services
@@ -196,7 +199,7 @@ def test_stop_cli_with_messaging_workflow(client):
     session_control.stop_all.assert_awaited_once()
 
 
-def test_stop_cli_fallback_to_manager(client):
+def test_stop_cli_fallback_to_manager(app, client):
     session_control = MagicMock()
     session_control.stop_all = AsyncMock(return_value=StopResult(source="cli_manager"))
     services = app.state.services

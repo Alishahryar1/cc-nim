@@ -2,6 +2,7 @@
 
 import os
 import re
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -265,9 +266,9 @@ def atomic_write_managed_config(
         return rendered
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    temp_path = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with temp_path.open("w", encoding="utf-8", newline="\n") as handle:
+        with temp_path.open("x", encoding="utf-8", newline="\n") as handle:
             handle.write(rendered)
             handle.flush()
             os.fsync(handle.fileno())

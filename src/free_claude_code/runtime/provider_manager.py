@@ -1,7 +1,7 @@
 """Single-owner provider generations and application model catalog."""
 
 import asyncio
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -25,7 +25,7 @@ from free_claude_code.providers.runtime.model_cache import ProviderModelCache
 
 ProviderRuntimeFactory = Callable[[Settings], ProviderRuntime]
 ConnectedProviderIds = Callable[[], tuple[str, ...]]
-CommitConfig = Callable[[], None]
+CommitConfig = Callable[[], Awaitable[None]]
 
 
 class ModelCatalogPublisher(Protocol):
@@ -255,8 +255,8 @@ class ProviderRuntimeManager:
             candidate_runtime: ProviderRuntime | None = None
             try:
                 candidate_runtime = self._runtime_factory(settings)
-                commit()
-            except Exception as exc:
+                await commit()
+            except BaseException as exc:
                 trace_event(
                     stage="runtime",
                     event="provider_generation.replace_failed",
