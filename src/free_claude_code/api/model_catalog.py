@@ -29,6 +29,24 @@ class ModelCatalogView(StrEnum):
     RESPONSES = "responses"
 
 
+class MuseModelLimits(BaseModel):
+    context: int | None = None
+    output: int | None = None
+
+
+class MuseModelMetadata(BaseModel):
+    """Muse's native model visibility and capability metadata."""
+
+    name: str
+    is_hidden: Literal[False] = False
+    reasoning: bool | None = None
+    limit: MuseModelLimits | None = None
+
+
+class MuseMetadataEnvelope(BaseModel):
+    muse_code: MuseModelMetadata = Field(serialization_alias="muse-code")
+
+
 class ModelResponse(BaseModel):
     object: Literal["model"] = "model"
     created: int = 0
@@ -65,6 +83,7 @@ class ModelResponse(BaseModel):
     inference_idle_timeout_seconds: int | None = Field(
         default=None, serialization_alias="inferenceIdleTimeoutSecs"
     )
+    metadata: MuseMetadataEnvelope | None = None
 
 
 class ModelsListResponse(BaseModel):
@@ -138,6 +157,33 @@ def build_models_list_response(
     if view is ModelCatalogView.CLAUDE:
         return _build_claude_models_response(settings, runtime)
     return _build_direct_models_response(settings, runtime, view=view)
+
+
+def build_muse_models_list_response(
+    settings: Settings, runtime: RequestRuntimePort
+) -> ModelsListResponse:
+    """Keep routable IDs while making them visible to Muse's native picker."""
+    catalog = build_models_list_response(
+        settings, runtime, view=ModelCatalogView.RESPONSES
+    )
+    for model in catalog.data:
+        limits = (
+            MuseModelLimits(
+                context=model.context_window_tokens,
+                output=model.max_output_tokens,
+            )
+            if model.context_window_tokens is not None
+            or model.max_output_tokens is not None
+            else None
+        )
+        model.metadata = MuseMetadataEnvelope(
+            muse_code=MuseModelMetadata(
+                name=model.display_name,
+                reasoning=model.supports_reasoning,
+                limit=limits,
+            )
+        )
+    return catalog
 
 
 def _build_claude_models_response(

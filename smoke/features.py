@@ -205,7 +205,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
             "tests/cli/test_muse_launcher.py",
             "tests/api/test_model_listing.py",
         ),
-        ("test_muse_model_catalog_is_the_fixed_responses_projection",),
+        ("test_muse_model_catalog_marks_every_routable_model_visible",),
         ("test_muse_cli_headless_e2e",),
         ("clients",),
         ("Muse Code 0.2.1+",),

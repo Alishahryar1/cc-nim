@@ -823,6 +823,19 @@ def test_muse_cli_headless_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> Non
     assert auth_token not in combined
     assert "GET /v1/models?view=responses" in server_log
     assert "GET /muse-code/models" in server_log
+    # Muse accepts a generic OpenAI list but hides rows without its native
+    # metadata. Inspect the actual CLI's parsed catalog, not just HTTP success.
+    catalog_files = list(
+        (isolated_home / "data" / "muse" / "model-catalog").glob("*.json")
+    )
+    assert catalog_files, "Muse did not persist its parsed provider catalog"
+    visible_models = {
+        row["model_id"]
+        for catalog_file in catalog_files
+        for row in json.loads(catalog_file.read_text(encoding="utf-8"))["rows"]
+        if row["visibility"] == "visible"
+    }
+    assert full_model in visible_models, "Muse hides the configured FCC model"
     responses_count = server_log.count("POST /v1/responses")
     assert responses_count >= 1
     assert responses_count == len(provider_requests)
