@@ -130,9 +130,11 @@ class ProviderExecution:
     async def open_attempt(
         self,
         operation_kind: ProviderOperationKind,
+        *,
+        prepare: Callable[[], Awaitable[None]] | None = None,
     ) -> ProviderAttempt:
-        """Open the sole active physical call for this execution."""
-        return await self._controller._open_attempt(self, operation_kind)
+        """Admit, prepare current credentials, then charge one physical call."""
+        return await self._controller._open_attempt(self, operation_kind, prepare)
 
     async def run_call(
         self,
@@ -476,6 +478,7 @@ class ProviderAdmissionController:
         self,
         execution: ProviderExecution,
         operation_kind: ProviderOperationKind,
+        prepare: Callable[[], Awaitable[None]] | None = None,
     ) -> ProviderAttempt:
         """Wait for provider admission and hold one active-operation slot."""
         if not isinstance(operation_kind, ProviderOperationKind):
@@ -500,6 +503,11 @@ class ProviderAdmissionController:
                     continue
                 await self._concurrency_sem.acquire()
                 slot_acquired = True
+                if self._permit_is_current(execution, permit) and prepare is not None:
+                    # Preparation may wait on account I/O, but never spends an
+                    # inference attempt. Refresh again if admission changed while
+                    # it ran; no prepared snapshot survives another queue wait.
+                    await prepare()
                 if not self._permit_is_current(execution, permit):
                     self._concurrency_sem.release()
                     slot_acquired = False

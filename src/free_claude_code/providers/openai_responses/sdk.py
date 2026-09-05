@@ -17,7 +17,7 @@ from .execution import AuthenticationRecovery
 
 
 class SDKResponsesBackend:
-    """Borrow a provider client and prepare isolated credentials before admission."""
+    """Borrow a provider client and resolve isolated credentials at dispatch."""
 
     def __init__(
         self,

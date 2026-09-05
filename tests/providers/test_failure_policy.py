@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from types import ModuleType
 
 import httpx
 import httpx2
@@ -76,15 +77,18 @@ def test_stream_retry_classification_distinguishes_protocol_and_status() -> None
     assert not is_retryable_stream_error(_http_status_error(400, "bad request"))
 
 
-def test_stream_retry_classification_only_accepts_post_open_timeouts() -> None:
-    request = httpx.Request("POST", "https://provider.test/v1/messages")
+@pytest.mark.parametrize("http", [httpx, httpx2])
+def test_stream_retry_classification_only_accepts_post_open_timeouts(
+    http: ModuleType,
+) -> None:
+    request = http.Request("POST", "https://provider.test/v1/messages")
 
-    assert is_retryable_stream_error(httpx.ReadTimeout("read", request=request))
+    assert is_retryable_stream_error(http.ReadTimeout("read", request=request))
     assert not is_retryable_stream_error(
-        httpx.ConnectTimeout("connect", request=request)
+        http.ConnectTimeout("connect", request=request)
     )
-    assert not is_retryable_stream_error(httpx.WriteTimeout("write", request=request))
-    assert not is_retryable_stream_error(httpx.PoolTimeout("pool", request=request))
+    assert not is_retryable_stream_error(http.WriteTimeout("write", request=request))
+    assert not is_retryable_stream_error(http.PoolTimeout("pool", request=request))
 
 
 @pytest.mark.parametrize(

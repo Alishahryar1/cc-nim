@@ -1,6 +1,7 @@
 """Lifecycle ownership through both real Responses backends and client projections."""
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ from openai import AsyncOpenAI
 
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
@@ -21,6 +22,7 @@ from free_claude_code.providers.admission import (
     ProviderAttempt,
     ProviderExecution,
     ProviderExecutionState,
+    ProviderOperationKind,
 )
 from free_claude_code.providers.http import maybe_await_aclose
 from free_claude_code.providers.openai_codex.provider import OpenAICodexProvider
@@ -192,7 +194,7 @@ async def collect(stream: AsyncIterator[str]) -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["sdk", "codex"])
-async def test_decoded_error_accepts_attempt_before_classification(
+async def test_first_frame_rejection_does_not_accept_provider_recovery(
     backend: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     accepted: list[ProviderAttempt] = []
@@ -219,15 +221,260 @@ async def test_decoded_error_accepts_attempt_before_classification(
         )
         harness.bodies.append(Body(_sse(response_event("response.completed"))))
         await collect(harness.stream(True))
-        assert len(accepted) == 2
+        assert len(accepted) == 1
         assert len(harness.requests) == 2
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["sdk", "codex"])
 @pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize(
+    "details,kind,status,retryable",
+    [
+        ({"status": 401}, FailureKind.AUTHENTICATION, 401, False),
+        (
+            {"code": None, "type": "authentication_error"},
+            FailureKind.AUTHENTICATION,
+            401,
+            False,
+        ),
+        ({"status_code": "403"}, FailureKind.PERMISSION, 403, False),
+        ({"code": 429}, FailureKind.RATE_LIMIT, 429, True),
+        (
+            {"status": 429, "type": "rate_limit_error", "code": "quota_exceeded"},
+            FailureKind.RATE_LIMIT,
+            429,
+            True,
+        ),
+        (
+            {"status": 413, "code": "rate_limit_exceeded"},
+            FailureKind.INVALID_REQUEST,
+            413,
+            False,
+        ),
+        (
+            {"status": 429, "code": "context_length_exceeded"},
+            FailureKind.CONTEXT_WINDOW_EXCEEDED,
+            400,
+            False,
+        ),
+        ({"code": 402}, FailureKind.PERMISSION, 402, False),
+        (
+            {"status": 400, "type": "server_error"},
+            FailureKind.INVALID_REQUEST,
+            400,
+            False,
+        ),
+        ({"code": "unknown_error"}, FailureKind.UPSTREAM, 502, False),
+        ({"code": "overloaded_error"}, FailureKind.OVERLOADED, 529, True),
+    ],
+)
+async def test_structured_failure_keeps_classification_and_safe_diagnostics(
+    backend: str,
+    native: bool,
+    details: JsonObject,
+    kind: FailureKind,
+    status: int,
+    retryable: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with harness_for(backend, monkeypatch) as harness:
+        payload = auth_failure()
+        response = payload["response"]
+        assert isinstance(response, dict)
+        response["error"] = {
+            **details,
+            "message": "upstream rejected",
+            "api_key": "SECRET",
+        }
+        payload["request_id"] = "upstream-diagnostic-id"
+        harness.bodies.extend(Body(_sse(payload)) for _ in range(3))
+
+        # A presentation adapter may rewrite or even discard the native envelope.
+        def rewrite(event_type: str, data: JsonObject) -> JsonObject:
+            data.clear()
+            return {"type": event_type}
+
+        monkeypatch.setattr(
+            responses_events.ResponsesEventSource,
+            "normalize",
+            lambda self, event_type, data: rewrite(event_type, data),
+        )
+        with pytest.raises(ExecutionFailure) as caught:
+            await collect(harness.stream(native))
+        failure = caught.value
+        assert (failure.kind, failure.status_code, failure.retryable) == (
+            kind,
+            status,
+            retryable,
+        )
+        assert "upstream-diagnostic-id" in failure.message
+        assert "SECRET" not in failure.message and "<redacted>" in failure.message
+        refresh = backend == "sdk" and status in {401, 403}
+        assert len(harness.requests) == (3 if retryable else 2 if refresh else 1)
+        if backend == "sdk":
+            assert harness.context.calls == (
+                [False, True] if refresh else [False] * len(harness.requests)
+            )
+        else:
+            assert not harness.context.calls
+        assert harness.auth.recovery_calls == 0
+        assert all(body.closed for body in harness.bodies[: len(harness.requests)])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["sdk", "codex"])
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("phase", ["first_frame", "held", "committed"])
+@pytest.mark.parametrize(
+    "error_name", ["ReadTimeout", "ReadError", "RemoteProtocolError"]
+)
+async def test_transport_failure_retries_only_before_commit(
+    backend: str,
+    native: bool,
+    phase: str,
+    error_name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http = httpx2 if backend == "sdk" else httpx
+    error = getattr(http, error_name)("connection lost")
+    committed = phase == "committed"
+
+    class BrokenBody(Body):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield self.text.encode()
+            raise error
+
+    async with harness_for(backend, monkeypatch) as harness:
+        harness.bodies.extend(
+            [
+                BrokenBody(
+                    ""
+                    if phase == "first_frame"
+                    else _sse(
+                        response_event("response.created"),
+                        _text_delta("x" * 70_000 if committed else "hidden"),
+                    )
+                ),
+                Body(
+                    _sse(
+                        _text_delta("replacement"), response_event("response.completed")
+                    )
+                ),
+            ]
+        )
+        if committed and not native:
+            with pytest.raises(ExecutionFailure) as caught:
+                await collect(harness.stream(native))
+            assert caught.value.retryable
+            assert caught.value.__cause__ is error
+        else:
+            events = parse_sse_text(await collect(harness.stream(native)))
+            assert events[-1].event == (
+                "response.failed"
+                if committed
+                else "response.completed"
+                if native
+                else "message_stop"
+            )
+        assert len(harness.requests) == (1 if committed else 2)
+        assert harness.bodies[0].closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["sdk", "codex"])
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+async def test_sse_framing_preserves_unicode_across_single_byte_chunks(
+    backend: str,
+    native: bool,
+    newline: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = "A\u0085B\u2028C\u2029D"
+
+    class FragmentedBody(Body):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for byte in self.text.encode():
+                yield bytes([byte])
+
+    # Literal Unicode and split CRLF/UTF-8 bytes exercise framing, not JSON escapes.
+    arguments = json.dumps({"value": value}, ensure_ascii=False)
+    payloads = [
+        response_event("response.created"),
+        _text_delta(value),
+        {"type": "response.reasoning_summary_text.delta", "delta": value},
+        {
+            "type": "response.output_item.added",
+            "output_index": 1,
+            "item": {
+                "type": "function_call",
+                "id": "fc_unicode",
+                "call_id": "call_unicode",
+                "name": "inspect",
+                "arguments": "",
+            },
+        },
+        {
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_unicode",
+            "output_index": 1,
+            "delta": arguments,
+        },
+        response_event("response.completed"),
+    ]
+    wire = "\ufeff: comment" + newline + newline
+    wire += "".join(
+        "data: " + json.dumps(event, ensure_ascii=False) + newline * 2
+        for event in payloads
+    )
+    async with harness_for(backend, monkeypatch) as harness:
+        harness.bodies.extend(FragmentedBody(wire) for _ in range(3))
+        events = parse_sse_text(await collect(harness.stream(native)))
+        deltas = [event.data.get("delta") for event in events]
+        assert (
+            value in deltas
+            if native
+            else {"type": "text_delta", "text": value} in deltas
+        )
+        if native:
+            assert deltas.count(value) == 2 and arguments in deltas
+        else:
+            assert {"type": "thinking_delta", "thinking": value} in deltas
+            assert {"type": "input_json_delta", "partial_json": arguments} in deltas
+        assert len(harness.requests) == 1 and harness.bodies[0].closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["sdk", "codex"])
+async def test_rejected_probe_does_not_release_waiters_as_success(
+    backend: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with harness_for(backend, monkeypatch) as harness:
+        admission = harness.provider._admission
+        owner = admission.start_execution()
+        initial = await owner.open_attempt(ProviderOperationKind.GENERATION)
+        await initial.fail(httpx.ReadError("offline"))
+        await initial.aclose()
+        await owner.aclose()
+        failure = {
+            "type": "error",
+            "error": {"code": "rate_limit_exceeded", "message": "retry shortly"},
+        }
+        harness.bodies.extend(Body(_sse(failure)) for _ in range(3))
+        with pytest.raises(ExecutionFailure):
+            await collect(harness.stream(True))
+        assert admission._episode is not None
+        assert admission._episode.terminal_until is not None
+        assert len(harness.requests) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["sdk", "codex"])
+@pytest.mark.parametrize("native", [False, True])
 @pytest.mark.parametrize("complete", [False, True])
-async def test_parser_finishes_before_physical_response_release(
+async def test_attempt_release_finishes_parser_and_physical_response(
     backend: str, native: bool, complete: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     parsers: list[AsyncGeneratorType] = []
@@ -241,19 +488,26 @@ async def test_parser_finishes_before_physical_response_release(
         parsers.append(parser)
         return parser
 
-    class ParserAwareBody(Body):
-        async def aclose(self) -> None:
-            assert parsers and all(parser.ag_frame is None for parser in parsers)
-            await super().aclose()
-
     monkeypatch.setattr(responses_events, "_decode_sse", record)
     async with harness_for(backend, monkeypatch) as harness:
-        body = ParserAwareBody(
+        body = Body(
             _sse(response_event("response.completed"))
             if complete
             else _sse(response_event("response.created"), _text_delta("x" * 70_000))
         )
         harness.bodies.append(body)
+        release = harness.provider._admission._release_concurrency
+
+        def release_slot() -> None:
+            # httpx2 closes its physical response while unwinding the byte
+            # iterator. Both lifetimes must end before the attempt releases.
+            assert body.closed
+            assert parsers and all(parser.ag_frame is None for parser in parsers)
+            release()
+
+        monkeypatch.setattr(
+            harness.provider._admission, "_release_concurrency", release_slot
+        )
         stream = harness.stream(native)
         if complete:
             await collect(stream)

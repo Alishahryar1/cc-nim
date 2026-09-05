@@ -1,5 +1,6 @@
 """Translate upstream OpenAI Responses events into Anthropic Messages SSE."""
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,15 +16,15 @@ class ResponsesStreamFailure(RuntimeError):
         self,
         message: str,
         *,
-        code: str | None = None,
-        event_type: str | None = None,
-        payload: dict[str, Any] | None = None,
+        event_type: str,
+        payload: dict[str, Any],
     ) -> None:
         super().__init__(message)
-        self.message = message
-        self.code = code
+        # Classification and diagnostics keep the complete original evidence.
+        # A presenter may independently normalize or discard the native payload.
+        self.body = deepcopy(payload)
         self.event_type = event_type
-        self.payload = payload
+        self.payload: dict[str, Any] | None = payload
 
 
 @dataclass(slots=True)
@@ -250,12 +251,10 @@ def responses_stream_failure_from_event(
     response = response if isinstance(response, dict) else {}
     error = response.get("error", data.get("error"))
     if not isinstance(error, dict):
-        error = data if event_type == "error" else {}
+        error = data if event_type in {"error", "response.error"} else {}
     message = error.get("message")
-    code = error.get("code", error.get("type"))
     return ResponsesStreamFailure(
         message if isinstance(message, str) and message else "OpenAI response failed.",
-        code=code if isinstance(code, str) else None,
         event_type=event_type,
         payload=data,
     )

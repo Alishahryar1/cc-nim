@@ -7,14 +7,10 @@ from typing import Protocol
 
 from loguru import logger
 
-from free_claude_code.core.diagnostics import (
-    extract_upstream_error_detail,
-    redacted_exception_traceback,
-)
-from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.diagnostics import redacted_exception_traceback
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_responses import (
-    ResponsesStreamFailure,
     responses_stream_failure_from_event,
 )
 from free_claude_code.core.trace import trace_event
@@ -28,9 +24,7 @@ from free_claude_code.providers.failure_policy import (
     RetryableProviderProtocolError,
     classify_provider_failure,
     context_window_exceeded_provider_failure,
-    is_context_window_error_code,
     is_retryable_stream_error,
-    provider_authentication_status,
     reports_context_window_incomplete,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, close_provider_stream
@@ -83,7 +77,7 @@ async def run_responses_stream(
 
     def failure_for(raw_error: Exception) -> ExecutionFailure:
         return classify_provider_failure(
-            _effective_error(backend.normalize_error(raw_error)),
+            backend.normalize_error(raw_error),
             provider_name=provider_name,
             read_timeout_s=read_timeout_s,
             request_id=request_id,
@@ -102,29 +96,24 @@ async def run_responses_stream(
             transport="responses",
         )
         while execution.can_attempt:
-            # Credential I/O is not an inference attempt. Failure here is terminal
-            # for this execution, including a failed forced snapshot refresh.
-            await backend.prepare_attempt()
             presenter = presenter_factory()
             start_events = tuple(presenter.start())
             presenter_started = False
             scope: ProviderAttemptScope | None = None
             stream_opened = False
+            # Admission waits first. Credential preparation then checks current
+            # account authority without charging a generation attempt on failure.
+            # These failures escape the generation retry handler entirely.
+            attempt = await execution.open_attempt(
+                ProviderOperationKind.GENERATION, prepare=backend.prepare_attempt
+            )
             try:
-                attempt = await execution.open_attempt(ProviderOperationKind.GENERATION)
                 scope = ProviderAttemptScope(
                     attempt, provider_name=provider_name, request_id=request_id
                 )
                 source = await backend.open_attempt(scope)
                 stream_opened = True
                 async for event_type, payload in source:
-                    if not attempt.accepted:
-                        await attempt.accept()
-                    if not presenter_started:
-                        presenter_started = True
-                        for event in start_events:
-                            for held in recovery.push(event):
-                                yield held
                     if event_type in {"response.failed", "error", "response.error"}:
                         error = responses_stream_failure_from_event(event_type, payload)
                         try:
@@ -136,7 +125,15 @@ async def run_responses_stream(
                     if reports_context_window_incomplete(event_type, payload):
                         raise context_window_exceeded_provider_failure()
                     payload = source.normalize(event_type, payload)
-                    for event in presenter.feed(event_type, payload):
+                    events = tuple(presenter.feed(event_type, payload))
+                    if not attempt.accepted:
+                        await attempt.accept()
+                    if not presenter_started:
+                        presenter_started = True
+                        for event in start_events:
+                            for held in recovery.push(event):
+                                yield held
+                    for event in events:
                         for held in recovery.push(event):
                             yield held
                     if presenter.completed:
@@ -160,7 +157,7 @@ async def run_responses_stream(
             except asyncio.CancelledError, GeneratorExit:
                 raise
             except Exception as raw_error:
-                error = _effective_error(backend.normalize_error(raw_error))
+                error = backend.normalize_error(raw_error)
                 correction = (
                     backend.authentication_recovery(raw_error)
                     if scope is not None
@@ -274,33 +271,3 @@ async def run_responses_stream(
             )
         finally:
             await execution.aclose()
-
-
-def _effective_error(error: Exception) -> Exception:
-    if not isinstance(error, ResponsesStreamFailure):
-        return error
-    message = (
-        extract_upstream_error_detail(error).exception_text
-        or "Provider response failed."
-    )
-    if is_context_window_error_code(error.code):
-        return context_window_exceeded_provider_failure()
-    auth_status = provider_authentication_status(error)
-    if auth_status is not None:
-        return ExecutionFailure(
-            FailureKind.AUTHENTICATION
-            if auth_status == 401
-            else FailureKind.PERMISSION,
-            auth_status,
-            message,
-            False,
-        )
-    code = (error.code or "").lower()
-    if "rate" in code or "429" in code:
-        return ExecutionFailure(FailureKind.RATE_LIMIT, 429, message, True)
-    if any(marker in code for marker in ("overload", "capacity", "529")):
-        return ExecutionFailure(FailureKind.OVERLOADED, 529, message, True)
-    retryable = any(
-        marker in code for marker in ("server", "internal", "unavailable", "timeout")
-    )
-    return ExecutionFailure(FailureKind.UPSTREAM, 502, message, retryable)

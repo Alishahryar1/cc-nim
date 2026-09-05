@@ -116,61 +116,66 @@ class OpenAICodexProvider(BaseProvider):
     async def _list_models_payload(self) -> Any:
         """Fetch one Codex model catalog with each provider GET admitted once."""
         execution = self._admission.start_execution()
-        authentication_recovered = False
-        while execution.can_attempt:
-            scope: ProviderAttemptScope | None = None
-            try:
-                access = await self._auth.access()
-                attempt = await execution.open_attempt(
-                    ProviderOperationKind.MODEL_DISCOVERY
-                )
-                scope = ProviderAttemptScope(
-                    attempt,
-                    provider_name="OpenAI",
-                    request_id=execution.request_id,
-                )
-                response = scope.retain(
-                    await self._client.get(
-                        "models",
-                        params={"client_version": FCC_VERSION},
-                        headers={**self._client_headers, **auth_headers(access)},
+        try:
+            authentication_recovered = False
+            while execution.can_attempt:
+                scope: ProviderAttemptScope | None = None
+                try:
+                    access = await self._auth.access()
+                    attempt = await execution.open_attempt(
+                        ProviderOperationKind.MODEL_DISCOVERY
                     )
-                )
-                if response.status_code == 401 and not authentication_recovered:
-                    error = await response_status_error(response)
-                    correction = await scope.attempt.correct(error)
-                    closing_scope = scope
-                    scope = None
-                    await closing_scope.aclose(active_error=error)
-                    if correction is ProviderCorrectionAction.FINAL:
-                        raise error
-                    await self._auth.recover_unauthorized(access.access_token)
-                    authentication_recovered = True
-                    continue
-                if not response.is_success:
-                    raise await response_status_error(response)
-                payload = response.json()
-                await scope.attempt.accept()
-                execution.succeed()
-                return payload
-            except asyncio.CancelledError:
-                execution.abandon()
-                raise
-            except Exception as error:
-                if scope is not None and not scope.attempt.accepted:
-                    decision = await scope.attempt.fail(error)
-                    if decision.retry_allowed:
+                    scope = ProviderAttemptScope(
+                        attempt,
+                        provider_name="OpenAI",
+                        request_id=execution.request_id,
+                    )
+                    response = scope.retain(
+                        await self._client.get(
+                            "models",
+                            params={"client_version": FCC_VERSION},
+                            headers={**self._client_headers, **auth_headers(access)},
+                        )
+                    )
+                    if response.status_code == 401 and not authentication_recovered:
+                        error = await response_status_error(response)
+                        correction = await scope.attempt.correct(error)
+                        closing_scope = scope
+                        scope = None
+                        await closing_scope.aclose(active_error=error)
+                        if correction is ProviderCorrectionAction.FINAL:
+                            raise error
+                        await self._auth.recover_unauthorized(access.access_token)
+                        authentication_recovered = True
                         continue
-                execution.fail(error)
-                raise
-            finally:
-                if scope is not None:
-                    await scope.aclose(active_error=sys.exception())
+                    if not response.is_success:
+                        raise await response_status_error(response)
+                    payload = response.json()
+                    await scope.attempt.accept()
+                    execution.succeed()
+                    return payload
+                except asyncio.CancelledError:
+                    execution.abandon()
+                    raise
+                except Exception as error:
+                    if scope is not None and not scope.attempt.accepted:
+                        decision = await scope.attempt.fail(error)
+                        if decision.retry_allowed:
+                            continue
+                    execution.fail(error)
+                    raise
+                finally:
+                    if scope is not None:
+                        await scope.aclose(active_error=sys.exception())
 
-        if execution.last_failure is not None:
-            raise execution.last_failure
-        execution.abandon()
-        raise RuntimeError("OpenAI model discovery ended without an attempt outcome")
+            if execution.last_failure is not None:
+                raise execution.last_failure
+            execution.abandon()
+            raise RuntimeError(
+                "OpenAI model discovery ended without an attempt outcome"
+            )
+        finally:
+            await execution.aclose()
 
     def stream_messages(
         self,

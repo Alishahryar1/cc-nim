@@ -20,7 +20,10 @@ from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.admission import (
+    ProviderAdmissionController,
+    ProviderOperationKind,
+)
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_codex.auth import (
     OpenAIAccess,
@@ -28,6 +31,63 @@ from free_claude_code.providers.openai_codex.auth import (
 )
 from free_claude_code.providers.openai_codex.provider import OpenAICodexProvider
 from tests.providers.support import make_provider_config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_catalog_credential_exit_releases_idle_recovery_leader(
+    cancel: bool,
+) -> None:
+    preparing = asyncio.Event()
+    finish = asyncio.Event()
+
+    class InterruptedAuth(_FakeAuth):
+        async def access(self, *, force_refresh: bool = False) -> OpenAIAccess:
+            access = await super().access(force_refresh=force_refresh)
+            if self.access_calls == 2:
+                preparing.set()
+                await finish.wait()
+                raise RuntimeError("credential lookup failed")
+            return access
+
+    admission = _admission(max_concurrency=1)
+    async with httpx.AsyncClient(
+        base_url=_config().base_url,
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(503, json={"error": "unavailable"})
+        ),
+    ) as client:
+        provider = OpenAICodexProvider(
+            _config(), auth=InterruptedAuth(), admission=admission, client=client
+        )
+        first = asyncio.create_task(provider.list_model_infos())
+        follower = admission.start_execution()
+        waiting = None
+        try:
+            async with asyncio.timeout(2):
+                await preparing.wait()
+                waiting = asyncio.create_task(
+                    follower.open_attempt(ProviderOperationKind.GENERATION)
+                )
+                if cancel:
+                    first.cancel()
+                else:
+                    finish.set()
+                with pytest.raises(asyncio.CancelledError if cancel else RuntimeError):
+                    await first
+                probe = await waiting
+                await probe.accept()
+                await probe.aclose()
+        finally:
+            first.cancel()
+            if waiting is not None:
+                waiting.cancel()
+            await asyncio.gather(
+                first,
+                *([waiting] if waiting is not None else []),
+                return_exceptions=True,
+            )
+            await follower.aclose()
 
 
 class _FakeAuth(OpenAIAuthManager):

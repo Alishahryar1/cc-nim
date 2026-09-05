@@ -1053,7 +1053,7 @@ class _OpenAIChatStreamRunner:
                     if self._endpoint is not None:
                         await self._endpoint.aclose()
                 finally:
-                    execution.abandon()
+                    await execution.aclose()
 
     async def _run_execution(
         self,

@@ -32,10 +32,12 @@ from free_claude_code.core.reasoning import (
     ReasoningEffort,
     ReasoningPolicy,
 )
+from free_claude_code.providers.admission import ProviderOperationKind
 from free_claude_code.providers.anthropic_messages.request_policy import (
     MessagesModelCapabilities,
 )
 from free_claude_code.providers.endpoint import HttpEndpoint
+from free_claude_code.providers.github_copilot import broker as copilot_broker
 from free_claude_code.providers.github_copilot.auth import CopilotAuthManager
 from free_claude_code.providers.github_copilot.provider import GitHubCopilotProvider
 from free_claude_code.providers.github_copilot.types import (
@@ -54,6 +56,103 @@ from tests.providers.test_openai_responses_transport import (
 from tests.providers.test_openai_responses_transport import (
     _sse as responses_sse,
 )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["disconnect", "identity", "expiry"])
+async def test_queued_responses_revalidates_account_before_dispatch(
+    change: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = Harness(tmp_path, CopilotEgress.RESPONSES)
+    admission = immediate_admission(max_attempts=2, max_concurrency=1)
+    harness.provider._responses._admission = admission
+    now = 1_000.0
+    monkeypatch.setattr(copilot_broker.time, "time", lambda: now)
+    create_session = harness.runtime.session
+
+    async def session(model_id: str) -> FakeSession:
+        value = await create_session(model_id)
+        value.value = replace(value.value, expires_at=now + 60)
+        return value
+
+    monkeypatch.setattr(harness.runtime, "session", session)
+    occupied = admission.start_execution()
+    attempt = await occupied.open_attempt(ProviderOperationKind.GENERATION)
+    queued = asyncio.Event()
+    acquire = admission._concurrency_sem.acquire
+
+    async def acquire_slot() -> bool:
+        queued.set()
+        return await acquire()
+
+    monkeypatch.setattr(admission._concurrency_sem, "acquire", acquire_slot)
+    task = asyncio.create_task(_collect_queued_responses(harness))
+    disconnect: asyncio.Task[object] | None = None
+    try:
+        async with asyncio.timeout(3):
+            await queued.wait()
+            assert not harness.seen
+            if change == "disconnect":
+                disabled = asyncio.Event()
+                disable = harness.auth._disable
+
+                def record_disable() -> bool:
+                    result = disable()
+                    disabled.set()
+                    return result
+
+                monkeypatch.setattr(harness.auth, "_disable", record_disable)
+                disconnect = asyncio.create_task(harness.auth.disconnect())
+                await disabled.wait()
+            elif change == "identity":
+                harness.runtime.current_identity = None
+            else:
+                now += 90
+                active = harness.runtime.sessions[0]
+                active.value = replace(
+                    active.value,
+                    http=HttpEndpoint(
+                        "https://copilot.invalid", {}, "fresh-credential"
+                    ),
+                    expires_at=now + 60,
+                )
+            await attempt.aclose()
+            await occupied.aclose()
+            if change == "expiry":
+                await task
+                assert len(harness.seen) == 1
+                assert (
+                    harness.seen[0].headers["Authorization"]
+                    == "Bearer fresh-credential"
+                )
+            else:
+                with pytest.raises(ExecutionFailure) as caught:
+                    await task
+                assert caught.value.status_code == 401
+                assert not harness.seen
+            if disconnect is not None:
+                await disconnect
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await attempt.aclose()
+        await occupied.aclose()
+        await harness.provider.cleanup()
+        await harness.auth.close()
+        if disconnect is not None:
+            await disconnect
+    assert all(session.closed for session in harness.runtime.sessions)
+
+
+async def _collect_queued_responses(harness: Harness) -> list[str]:
+    return [
+        event
+        async for event in harness.provider.stream_responses(
+            OpenAIResponsesRequest(model=harness.runtime.name, input="hello")
+        )
+    ]
 
 
 class Wire(httpx.AsyncByteStream, httpx2.AsyncByteStream):

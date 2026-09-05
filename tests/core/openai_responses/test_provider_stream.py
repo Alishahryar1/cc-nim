@@ -311,7 +311,7 @@ def test_responses_provider_stream_surfaces_failed_event() -> None:
             },
         )
 
-    assert exc_info.value.code == "server_error"
+    assert exc_info.value.body["response"]["error"]["code"] == "server_error"
 
 
 def test_responses_provider_stream_restores_added_and_done_only_tool_names() -> None:

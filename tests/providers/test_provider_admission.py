@@ -68,6 +68,52 @@ async def _open(execution: ProviderExecution) -> ProviderAttempt:
     return await execution.open_attempt(ProviderOperationKind.GENERATION)
 
 
+@pytest.mark.asyncio
+async def test_preparation_is_repeated_when_admission_changes_before_dispatch() -> None:
+    controller = _controller(max_concurrency=2)
+    leader = controller.start_execution()
+    active = await _open(leader)
+    execution = controller.start_execution()
+    preparing = asyncio.Event()
+    finish = asyncio.Event()
+    snapshots = 0
+
+    async def prepare() -> None:
+        nonlocal snapshots
+        snapshots += 1
+        preparing.set()
+        await finish.wait()
+
+    pending = asyncio.create_task(
+        execution.open_attempt(ProviderOperationKind.GENERATION, prepare=prepare)
+    )
+    try:
+        async with asyncio.timeout(2):
+            await preparing.wait()
+            await active.fail(_status_error(503))
+            await active.aclose()
+            finish.set()
+            while (
+                controller._episode is not None
+                and execution not in controller._episode.waiters
+            ):
+                await asyncio.sleep(0)
+            assert execution.attempts_started == 0
+            assert snapshots == 1 and not pending.done()
+            probe = await _open(leader)
+            await probe.accept()
+            await probe.aclose()
+            admitted = await pending
+            assert execution.attempts_started == 1 and snapshots == 2
+            await admitted.aclose()
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await active.aclose()
+        await leader.aclose()
+        await execution.aclose()
+
+
 @pytest.mark.parametrize(
     ("factory", "message"),
     [

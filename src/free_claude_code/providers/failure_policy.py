@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 import httpx
+import httpx2
 import openai
 
 from free_claude_code.core.anthropic.errors import anthropic_status_for_error_type
@@ -17,6 +18,7 @@ from free_claude_code.core.diagnostics import (
     safe_exception_message,
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.openai_responses import ResponsesStreamFailure
 
 ProviderFailureOverride = Callable[[Exception], ExecutionFailure | None]
 
@@ -172,13 +174,16 @@ def retryable_transient_status(exc: BaseException) -> int | None:
     if isinstance(exc, ExecutionFailure):
         status = exc.status_code
         return status if exc.retryable and _is_retryable_status(status) else None
+    if isinstance(exc, ResponsesStreamFailure):
+        failure = _responses_stream_failure(exc)
+        return failure.status_code if failure.retryable else None
     if _reports_context_window_exceeded(exc):
         return None
     if _reported_status(exc) == 413:
         return None
     if isinstance(exc, openai.RateLimitError):
         return 429
-    if isinstance(exc, httpx.HTTPStatusError):
+    if isinstance(exc, httpx.HTTPStatusError | httpx2.HTTPStatusError):
         status = exc.response.status_code
         return status if _is_retryable_status(status) else None
 
@@ -228,6 +233,8 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
         return False
     if isinstance(exc, ExecutionFailure):
         return exc.retryable
+    if isinstance(exc, ResponsesStreamFailure):
+        return _responses_stream_failure(exc).retryable
     if isinstance(
         exc,
         openai.AuthenticationError
@@ -241,12 +248,9 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
         exc,
         (
             TimeoutError,
-            httpx.TimeoutException,
-            httpx.ConnectError,
-            httpx.ReadError,
-            httpx.WriteError,
-            httpx.RemoteProtocolError,
-            httpx.NetworkError,
+            httpx.TimeoutException | httpx2.TimeoutException,
+            httpx.RemoteProtocolError | httpx2.RemoteProtocolError,
+            httpx.NetworkError | httpx2.NetworkError,
             openai.APITimeoutError,
             openai.APIConnectionError,
             RetryableProviderProtocolError,
@@ -260,6 +264,8 @@ def is_retryable_stream_error(exc: BaseException) -> bool:
         return True
     if isinstance(exc, ExecutionFailure):
         return exc.retryable
+    if isinstance(exc, ResponsesStreamFailure):
+        return _responses_stream_failure(exc).retryable
     if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
         return False
     if retryable_transient_status(exc) is not None:
@@ -268,11 +274,9 @@ def is_retryable_stream_error(exc: BaseException) -> bool:
         exc,
         (
             TimeoutError,
-            httpx.ReadTimeout,
-            httpx.ReadError,
-            httpx.RemoteProtocolError,
-            httpx.ConnectError,
-            httpx.NetworkError,
+            httpx.ReadTimeout | httpx2.ReadTimeout,
+            httpx.RemoteProtocolError | httpx2.RemoteProtocolError,
+            httpx.NetworkError | httpx2.NetworkError,
             openai.APITimeoutError,
             openai.APIConnectionError,
         ),
@@ -295,13 +299,19 @@ def provider_error_message(
         exc = underlying_provider_error(exc)
     if isinstance(exc, ExecutionFailure):
         return exc.message
-    if isinstance(exc, httpx.ReadTimeout):
+    if isinstance(exc, httpx.ReadTimeout | httpx2.ReadTimeout):
         if read_timeout_s is not None:
             return f"Provider request timed out after {read_timeout_s:g}s."
         return "Provider request timed out."
-    if isinstance(exc, httpx.ConnectTimeout | httpx.ConnectError):
+    if isinstance(
+        exc,
+        httpx.ConnectTimeout
+        | httpx.ConnectError
+        | httpx2.ConnectTimeout
+        | httpx2.ConnectError,
+    ):
         return "Could not connect to provider."
-    if isinstance(exc, httpx.RemoteProtocolError):
+    if isinstance(exc, httpx.RemoteProtocolError | httpx2.RemoteProtocolError):
         return "Provider connection was interrupted before a response was received."
     if isinstance(exc, TimeoutError):
         if read_timeout_s is not None:
@@ -325,6 +335,8 @@ def _classify_provider_failure(
 ) -> ExecutionFailure:
     if isinstance(exc, ExecutionFailure):
         return exc
+    if isinstance(exc, ResponsesStreamFailure):
+        return _responses_stream_failure(exc)
 
     if _reports_context_window_exceeded(exc):
         return context_window_exceeded_provider_failure()
@@ -387,7 +399,7 @@ def _classify_provider_failure(
             is_retryable_provider_error(exc),
         )
 
-    if isinstance(exc, httpx.HTTPStatusError):
+    if isinstance(exc, httpx.HTTPStatusError | httpx2.HTTPStatusError):
         status = exc.response.status_code
         if status == 401:
             return _failure(
@@ -413,15 +425,66 @@ def _classify_provider_failure(
         )
 
     kind = FailureKind.UPSTREAM
-    if isinstance(exc, TimeoutError | httpx.TimeoutException):
+    if isinstance(exc, TimeoutError | httpx.TimeoutException | httpx2.TimeoutException):
         kind = FailureKind.TIMEOUT
-    elif isinstance(exc, httpx.ConnectError | httpx.NetworkError):
+    elif isinstance(exc, httpx.NetworkError | httpx2.NetworkError):
         kind = FailureKind.UNAVAILABLE
     return _failure(
         kind,
         502,
         provider_error_message(exc, read_timeout_s=read_timeout_s),
         is_retryable_provider_error(exc),
+    )
+
+
+def _responses_stream_failure(exc: ResponsesStreamFailure) -> ExecutionFailure:
+    """Interpret raw Responses evidence once for retry and final classification."""
+    if _reports_context_window_exceeded(exc):
+        return context_window_exceeded_provider_failure()
+    status = _reported_status(exc)
+    if status is None:
+        status = provider_authentication_status(exc)
+    if status in {None, 503}:
+        codes = " ".join(
+            value.casefold()
+            for item in _body_candidates(exc.body)
+            if isinstance(item, Mapping)
+            for key in ("code", "type")
+            if isinstance(value := item.get(key), str)
+        )
+        if any(marker in codes for marker in ("overload", "capacity")):
+            return overloaded_provider_failure()
+        if status is None and any(
+            marker in codes
+            for marker in ("server", "internal", "unavailable", "timeout")
+        ):
+            status = 502
+    match status:
+        case 400:
+            return _failure(
+                FailureKind.INVALID_REQUEST, 400, _INVALID_REQUEST_MESSAGE, False
+            )
+        case 401:
+            return _failure(
+                FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False
+            )
+        case 402:
+            return _failure(FailureKind.PERMISSION, 402, _BILLING_MESSAGE, False)
+        case 403:
+            return _failure(FailureKind.PERMISSION, 403, _PERMISSION_MESSAGE, False)
+        case 413:
+            return _failure(
+                FailureKind.INVALID_REQUEST, 413, _REQUEST_TOO_LARGE_MESSAGE, False
+            )
+        case 429:
+            return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
+        case 529:
+            return overloaded_provider_failure()
+    return _failure(
+        FailureKind.UPSTREAM,
+        status if status is not None and 400 <= status <= 599 else 502,
+        safe_exception_message(exc),
+        _is_retryable_status(status),
     )
 
 
@@ -482,13 +545,18 @@ def _reports_context_window_exceeded(exc: BaseException) -> bool:
 
 
 def _status_from_body(body: Any) -> int | None:
-    for item in _body_candidates(body):
+    candidates = _body_candidates(body)
+    # Explicit statuses win over type/code hints at every envelope depth.
+    for item in candidates:
         if not isinstance(item, Mapping):
             continue
         for key in ("status", "status_code", "code"):
             status = _coerce_status(item.get(key))
             if status is not None:
                 return status
+    for item in candidates:
+        if not isinstance(item, Mapping):
+            continue
         type_status = _status_from_type_fields(item)
         if type_status is not None:
             return type_status
@@ -504,15 +572,25 @@ def _body_candidates(body: Any) -> tuple[Any, ...]:
     if isinstance(body, bytes):
         return _body_candidates(body.decode("utf-8", errors="replace"))
     if isinstance(body, Mapping):
-        nested = body.get("error")
-        return (body, nested) if isinstance(nested, Mapping) else (body,)
+        response = body.get("response")
+        candidates = [body]
+        if isinstance(response, Mapping):
+            candidates.append(response)
+        return (
+            *candidates,
+            *(
+                item["error"]
+                for item in candidates
+                if isinstance(item.get("error"), Mapping)
+            ),
+        )
     return (body,)
 
 
 def _coerce_status(value: Any) -> int | None:
-    if isinstance(value, int):
+    if isinstance(value, int) and not isinstance(value, bool) and 400 <= value <= 599:
         return value
-    if isinstance(value, str) and value.isdigit():
+    if isinstance(value, str) and value.isdigit() and 400 <= int(value) <= 599:
         return int(value)
     return None
 

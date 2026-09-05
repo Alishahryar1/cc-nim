@@ -189,11 +189,12 @@ async def test_responses_credential_failure_is_outside_generation_budget(
 async def test_preparation_exit_releases_recovery_for_other_requests(
     cancel: bool,
     forced_refresh: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = 0
     preparing = asyncio.Event()
     finish_preparation = asyncio.Event()
-    healthy_prepared = asyncio.Event()
+    healthy_waiting = asyncio.Event()
 
     class InterruptedContext(Context):
         async def endpoint(self, *, force_refresh: bool = False) -> HttpEndpoint:
@@ -202,12 +203,6 @@ async def test_preparation_exit_releases_recovery_for_other_requests(
                 preparing.set()
                 await finish_preparation.wait()
                 raise httpx.ReadError("credential service unavailable")
-            return endpoint
-
-    class HealthyContext(Context):
-        async def endpoint(self, *, force_refresh: bool = False) -> HttpEndpoint:
-            endpoint = await super().endpoint(force_refresh=force_refresh)
-            healthy_prepared.set()
             return endpoint
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -231,14 +226,17 @@ async def test_preparation_exit_releases_recovery_for_other_requests(
         )
         async with asyncio.timeout(2):
             await preparing.wait()
+            wait_for_gate = transport._admission._wait_for_gate
+
+            async def enter_gate(execution: ProviderExecution):
+                healthy_waiting.set()
+                return await wait_for_gate(execution)
+
+            monkeypatch.setattr(transport._admission, "_wait_for_gate", enter_gate)
             waiting = asyncio.create_task(
-                _consume(
-                    _stream(
-                        transport, HealthyContext("healthy"), responses_ingress=True
-                    )
-                )
+                _consume(_stream(transport, Context("healthy"), responses_ingress=True))
             )
-            await healthy_prepared.wait()
+            await healthy_waiting.wait()
             assert not waiting.done()
             if cancel:
                 first.cancel()
