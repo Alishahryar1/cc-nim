@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.config.constants import DEFAULT_MODEL
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningPolicy
@@ -41,7 +42,10 @@ def test_retired_model_ingress_calls_default_provider(client, stream, prefix):
         assert kwargs["reasoning"] == ReasoningPolicy.off()
 
 
-app = create_test_app()
+@pytest.fixture
+def app():
+    return create_test_app(Settings())
+
 
 # Mock provider
 mock_provider = MagicMock(spec=NvidiaNimProvider)
@@ -89,8 +93,8 @@ def _terminal_json_error(response, *, status_code: int):
 mock_provider.stream_messages = _mock_stream_messages
 
 
-@pytest.fixture(scope="module")
-def client():
+@pytest.fixture
+def client(app):
     """HTTP client with provider resolution stubbed; patch only for this file."""
     with (
         patch(
@@ -536,7 +540,7 @@ def test_count_tokens_endpoint(client: TestClient):
     assert response.headers["request-id"].startswith("req_")
 
 
-def test_stop_endpoint_no_workflow_no_cli_503(client: TestClient):
+def test_stop_endpoint_no_workflow_no_cli_503(app, client: TestClient):
     """POST /stop without messaging workflow or cli_manager returns 503."""
     # Ensure no messaging workflow or cli_manager on app state
     if hasattr(app.state, "messaging_workflow"):
