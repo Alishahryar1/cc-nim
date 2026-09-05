@@ -19,6 +19,10 @@ from tests.runtime.test_application_runtime import _settings
 @pytest.mark.parametrize("cancel", [False, True])
 @pytest.mark.parametrize("fail", [False, True])
 async def test_shutdown_drains_initialization_worker(cancel, fail):
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled_errors = []
+    loop.set_exception_handler(lambda _loop, context: unhandled_errors.append(context))
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     store = ManagedConfigStore()
     manager = ProviderRuntimeManager(_settings("nvidia_nim/old"))
@@ -32,7 +36,7 @@ async def test_shutdown_drains_initialization_worker(cancel, fail):
         try:
             assert release.wait(5)
             if fail:
-                raise OSError("initialization failed")
+                raise OSError("private-initialization-detail")
             return consolidate(env)
         finally:
             finished.set()
@@ -73,6 +77,7 @@ async def test_shutdown_drains_initialization_worker(cancel, fail):
                 await asyncio.wait_for(start, 5)
             assert await asyncio.wait_for(close, 5)
             assert finished.is_set()
+            assert unhandled_errors == []
             assert store.path.exists() is not fail
             warm.assert_not_awaited()
             lock = InterprocessFileLock(config_lock_path())
@@ -86,6 +91,7 @@ async def test_shutdown_drains_initialization_worker(cancel, fail):
                 start, *([close] if close else []), return_exceptions=True
             )
             await runtime.close()
+            loop.set_exception_handler(previous_handler)
 
 
 @pytest.mark.asyncio

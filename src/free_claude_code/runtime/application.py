@@ -107,14 +107,13 @@ async def _await_owned_task[T](
     cancellation: asyncio.CancelledError | None = None
     while not task.done():
         try:
-            await asyncio.shield(task)
+            # wait never cancels the owned task or logs its exception on interruption.
+            await asyncio.wait({task})
         except asyncio.CancelledError as exc:
             if cancellation is None:
                 cancellation = exc
                 if cancel_on_interrupt is not None and cancel_on_interrupt():
                     task.cancel()
-        except Exception:
-            break
     try:
         result = task.result()
     except BaseException as exc:
