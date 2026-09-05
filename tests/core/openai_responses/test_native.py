@@ -231,6 +231,45 @@ def test_native_relay_preserves_payload_and_rewrites_only_response_model() -> No
     assert relay.terminal_type == "response.completed"
 
 
+@pytest.mark.parametrize(
+    ("timestamp", "expected_type"),
+    [
+        (1788587503.0, int),
+        (1788587503, int),
+        (1788587503.25, float),
+        (None, type(None)),
+    ],
+)
+@pytest.mark.parametrize("event_type", ["response.created", "response.failed"])
+def test_native_relay_serializes_whole_second_timestamps_as_integers(
+    timestamp: float | int | None, expected_type: type, event_type: str
+) -> None:
+    relay = NativeResponsesRelay(public_model="gateway-model")
+    original = {
+        "type": event_type,
+        "response": {
+            "id": "resp_upstream",
+            "created_at": timestamp,
+            "completed_at": timestamp,
+            "temperature": 1.0,
+            "metadata": {"created_at": 1788587503.0},
+        },
+    }
+
+    _, payload = _event_payload(relay.feed(event_type, original))
+
+    response = payload["response"]
+    assert isinstance(response, dict)
+    for key in ("created_at", "completed_at"):
+        assert type(response[key]) is expected_type
+        assert response[key] == timestamp
+        assert type(original["response"][key]) is type(timestamp)
+    assert type(response["temperature"]) is float
+    metadata = response["metadata"]
+    assert isinstance(metadata, dict)
+    assert type(metadata["created_at"]) is float
+
+
 def test_native_relay_rejects_events_after_one_terminal() -> None:
     relay = NativeResponsesRelay(public_model="gateway-model")
     relay.feed(
