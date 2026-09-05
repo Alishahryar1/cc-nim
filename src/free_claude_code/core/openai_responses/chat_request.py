@@ -23,6 +23,7 @@ from .reasoning import (
     encrypted_reasoning_from_item,
     reasoning_text_from_item,
 )
+from .reasoning_replay import reject_messages_reasoning_for_other_egress
 from .tools import (
     call_id_from_item,
     custom_tool_input_text,
@@ -309,6 +310,7 @@ def build_responses_chat_request(
     structured_reasoning_details: bool = False,
 ) -> ResponsesChatRequest:
     """Translate a Responses request directly into one Chat Completions body."""
+    reject_messages_reasoning_for_other_egress(request.input)
     builder = _ResponsesChatInputBuilder(
         reasoning_replay=reasoning_replay,
         structured_reasoning_details=structured_reasoning_details,

@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class _AnthropicBlockBase(BaseModel):
@@ -106,9 +106,12 @@ class Tool(_AnthropicBlockBase):
 
 
 class ThinkingConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     enabled: bool | None = True
     type: str | None = None
     budget_tokens: int | None = None
+    display: Literal["summarized", "omitted"] | None = None
 
 
 class MessagesRequest(BaseModel):
@@ -134,6 +137,13 @@ class MessagesRequest(BaseModel):
     mcp_servers: list[dict[str, Any]] | None = None
     extra_body: dict[str, Any] | None = None
     betas: list[str] | None = Field(default=None, exclude=True)
+
+    @field_validator("max_tokens", mode="before")
+    @classmethod
+    def _reject_boolean_output_limit(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("max_tokens must not be a boolean")
+        return value
 
 
 class TokenCountRequest(BaseModel):

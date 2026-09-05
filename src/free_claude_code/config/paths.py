@@ -101,3 +101,8 @@ def openai_auth_lock_path() -> Path:
     """Return the cross-process lock path for ChatGPT credentials."""
 
     return config_dir_path() / AUTH_DIRNAME / OPENAI_AUTH_LOCK_FILENAME
+
+
+def github_copilot_auth_path() -> Path:
+    """Return FCC connection state; native Copilot retains credentials."""
+    return config_dir_path() / AUTH_DIRNAME / "github_copilot.json"

@@ -56,6 +56,7 @@ from free_claude_code.providers.admission import (
     ProviderOperationKind,
 )
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
+from free_claude_code.providers.endpoint import EndpointContext, RequestEndpoint
 from free_claude_code.providers.failure_policy import (
     RetryableToolProtocolError,
     classify_provider_failure,
@@ -494,11 +495,14 @@ class OpenAIChatProvider(BaseProvider):
         admission: ProviderAdmissionController,
         default_headers: Mapping[str, str] | None = None,
         api_key_provider: OpenAIAsyncCredentialProvider | None = None,
+        client: AsyncOpenAI | None = None,
+        endpoint_transport: httpx2.AsyncBaseTransport | None = None,
     ):
         super().__init__(config)
         self._profile = profile
+        self._endpoint_transport = endpoint_transport
         self._provider_name = profile.provider_name
-        if config.api_key is None and api_key_provider is None:
+        if client is None and config.api_key is None and api_key_provider is None:
             raise ValueError(
                 f"{profile.provider_name} requires an API key or credential provider"
             )
@@ -515,12 +519,13 @@ class OpenAIChatProvider(BaseProvider):
             write=config.http_write_timeout,
         )
         http_client = None
-        if config.proxy:
+        if client is None and config.proxy:
             http_client = DefaultAsyncHttpx2Client(
                 proxy=config.proxy,
                 timeout=timeout,
             )
-        self._client = AsyncOpenAI(
+        self._owns_client = client is None
+        self._client = client or AsyncOpenAI(
             api_key=api_key_provider or self._api_key,
             base_url=self._base_url,
             max_retries=0,
@@ -532,7 +537,7 @@ class OpenAIChatProvider(BaseProvider):
     async def cleanup(self) -> None:
         """Release HTTP client resources."""
         client = getattr(self, "_client", None)
-        if client is not None:
+        if self._owns_client and client is not None:
             await client.close()
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
@@ -778,6 +783,7 @@ class OpenAIChatProvider(BaseProvider):
         operation_kind: ProviderOperationKind,
         *,
         used_retry_kinds: set[str] | None = None,
+        endpoint: RequestEndpoint | None = None,
     ) -> tuple[Any, dict, ProviderAttempt]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
@@ -790,7 +796,15 @@ class OpenAIChatProvider(BaseProvider):
             retain_attempt = False
             try:
                 create_body = self._prepare_create_body(body)
-                stream = await self._client.chat.completions.create(
+                client = (
+                    await endpoint.openai_client(self._client)
+                    if endpoint is not None
+                    else self._client
+                )
+                if endpoint is not None:
+                    create_body = create_body.copy()
+                    create_body["extra_headers"] = endpoint.openai_headers()
+                stream = await client.chat.completions.create(
                     **create_body,
                     stream=True,
                 )
@@ -800,6 +814,10 @@ class OpenAIChatProvider(BaseProvider):
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                if endpoint is not None and await endpoint.retry_authentication(
+                    error, attempt, execution
+                ):
+                    continue
                 retry_body = self._next_create_retry_body(error, body, used_retry_kinds)
                 if retry_body is not None:
                     correction = await attempt.correct(error)
@@ -900,6 +918,7 @@ class OpenAIChatProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
         body = self._build_request_body(request, reasoning=reasoning)
@@ -923,6 +942,7 @@ class OpenAIChatProvider(BaseProvider):
                 request.model if response_model is None else response_model
             ),
             reasoning=reasoning,
+            endpoint_context=endpoint_context,
         )
         return runner.run()
 
@@ -934,6 +954,7 @@ class OpenAIChatProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         """Stream a Chat upstream directly as OpenAI Responses SSE."""
         translated = self._build_responses_request_body(request, reasoning=reasoning)
@@ -957,6 +978,7 @@ class OpenAIChatProvider(BaseProvider):
             request_id=request_id,
             response_model=public_model,
             reasoning=reasoning,
+            endpoint_context=endpoint_context,
         )
         return runner.run()
 
@@ -977,6 +999,7 @@ class _OpenAIChatStreamRunner:
         request_id: str | None,
         response_model: str,
         reasoning: ReasoningPolicy,
+        endpoint_context: EndpointContext | None = None,
     ) -> None:
         self._provider = provider
         self._body = body
@@ -989,6 +1012,11 @@ class _OpenAIChatStreamRunner:
         self._response_model = response_model
         self._reasoning = reasoning
         self._terminal_failure: ExecutionFailure | None = None
+        self._endpoint = (
+            RequestEndpoint(endpoint_context, provider._endpoint_transport)
+            if endpoint_context is not None
+            else None
+        )
 
     async def run(self) -> AsyncIterator[str]:
         """Convert the upstream OpenAI-chat stream into Anthropic SSE."""
@@ -998,6 +1026,8 @@ class _OpenAIChatStreamRunner:
         provider_stream = self._run_execution(execution)
         try:
             async for event in provider_stream:
+                if self._endpoint is not None:
+                    self._endpoint.commit()
                 yield event
         except asyncio.CancelledError:
             raise
@@ -1010,8 +1040,14 @@ class _OpenAIChatStreamRunner:
             else:
                 execution.fail(self._terminal_failure)
         finally:
-            await maybe_await_aclose(provider_stream)
-            execution.abandon()
+            try:
+                await maybe_await_aclose(provider_stream)
+            finally:
+                try:
+                    if self._endpoint is not None:
+                        await self._endpoint.aclose()
+                finally:
+                    execution.abandon()
 
     async def _run_execution(
         self,
@@ -1052,6 +1088,7 @@ class _OpenAIChatStreamRunner:
                     execution,
                     ProviderOperationKind.GENERATION,
                     used_retry_kinds=used_retry_kinds,
+                    endpoint=self._endpoint,
                 )
                 scope = ProviderAttemptScope(
                     attempt,
@@ -1169,6 +1206,15 @@ class _OpenAIChatStreamRunner:
         req_tag: str,
     ) -> _OpenAIChatFailureResolution:
         """Resolve one failed generation attempt without owning retry policy."""
+        if (
+            scope is not None
+            and self._endpoint is not None
+            and await self._endpoint.retry_authentication(
+                error, scope.attempt, execution
+            )
+        ):
+            recovery.discard()
+            return _OpenAIChatFailureResolution(outcome=_OpenAIChatFailureOutcome.RETRY)
         attempt_failure = None
         if scope is not None and not scope.attempt.accepted:
             attempt_failure = await scope.attempt.fail(
@@ -1324,6 +1370,7 @@ class _OpenAIChatStreamRunner:
                     execution,
                     operation_kind,
                     used_retry_kinds=used_retry_kinds,
+                    endpoint=self._endpoint,
                 )
                 scope = ProviderAttemptScope(
                     attempt,

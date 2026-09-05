@@ -167,6 +167,12 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=OPENAI_CODEX_DEFAULT_BASE,
         proxy_attr="openai_proxy",
     ),
+    "github_copilot": ProviderDescriptor(
+        provider_id="github_copilot",
+        display_name="GitHub Copilot",
+        auth_kind=ProviderAuthKind.CONNECTED_ACCOUNT,
+        default_base_url="https://api.githubcopilot.com",
+    ),
     "xai": ProviderDescriptor(
         provider_id="xai",
         display_name="xAI (Grok)",

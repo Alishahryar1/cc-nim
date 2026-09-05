@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -334,32 +335,20 @@ def test_admin_api_fetches_bypass_browser_cache():
     assert 'cache: "no-store"' in script
 
 
-def test_admin_connected_account_login_preopens_sign_in_window():
-    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
-        encoding="utf-8"
-    )
-
-    assert 'window.open("about:blank", "_blank")' in script
-    assert "popup.location.replace(target)" in script
-    assert "if (popup) popup.close()" in script
-    assert '"Reconnect"' in script
-    assert '"Copy code"' in script
-    assert "Restart your agent to refresh its model picker." in script
-    assert 'window.confirm("Disconnect this ChatGPT account from FCC?")' in script
-
-
 class _FakeConnectedAccount:
-    def __init__(self) -> None:
+    def __init__(self, provider_id: str = "openai") -> None:
+        self.provider_id = provider_id
         self.connected = False
         self.revision = 0
         self.cancelled = False
+        self.started_modes: list[ConnectedAccountLoginMode] = []
 
     def is_connected(self) -> bool:
         return self.connected
 
     def status(self) -> ConnectedAccountStatus:
-        return ConnectedAccountStatus(
-            provider_id="openai",
+        status = ConnectedAccountStatus(
+            provider_id=self.provider_id,
             state=(
                 ConnectedAccountState.CONNECTED
                 if self.connected
@@ -367,20 +356,37 @@ class _FakeConnectedAccount:
             ),
             connected=self.connected,
             revision=self.revision,
-            email="safe@example.com" if self.connected else None,
         )
+        if self.provider_id == "github_copilot":
+            return replace(
+                status,
+                display_identity="octocat" if self.connected else None,
+                supported_login_modes=(ConnectedAccountLoginMode.DEVICE,),
+                default_login_mode=ConnectedAccountLoginMode.DEVICE,
+            )
+        return replace(status, email="safe@example.com" if self.connected else None)
 
     async def start_login(
         self, mode: ConnectedAccountLoginMode
     ) -> ConnectedAccountStatus:
-        return ConnectedAccountStatus(
-            provider_id="openai",
+        self.started_modes.append(mode)
+        return replace(
+            self.status(),
             state=ConnectedAccountState.CONNECTING,
             connected=False,
-            revision=self.revision,
             attempt_id="login_safe",
             mode=mode,
-            authorization_url="https://auth.openai.com/safe",
+            authorization_url=(
+                "https://auth.openai.com/safe"
+                if mode == ConnectedAccountLoginMode.BROWSER
+                else None
+            ),
+            verification_url=(
+                "https://github.com/login/device"
+                if mode == ConnectedAccountLoginMode.DEVICE
+                else None
+            ),
+            user_code="ABCD-1234" if mode == ConnectedAccountLoginMode.DEVICE else None,
         )
 
     async def cancel_login(self) -> ConnectedAccountStatus:
@@ -423,12 +429,113 @@ def test_admin_connected_account_routes_are_safe_loopback_only_and_uncached(
         "attempt_id": "login_safe",
         "mode": "browser",
         "authorization_url": "https://auth.openai.com/safe",
+        "supported_login_modes": ["browser", "device"],
+        "default_login_mode": "browser",
     }
     assert "token" not in login_response.text.lower()
     assert cancel_response.status_code == 200
     assert account.cancelled is True
     remote = TestClient(app, client=("203.0.113.10", 50000))
     assert remote.get("/admin/api/providers/openai/auth").status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "default_mode"),
+    [("openai", "browser"), ("github_copilot", "device")],
+)
+@pytest.mark.parametrize("payload", [{}, {"mode": None}])
+def test_admin_login_uses_the_provider_default(
+    monkeypatch,
+    tmp_path,
+    provider_id,
+    default_mode,
+    payload,
+):
+    _set_home(monkeypatch, tmp_path)
+    account = _FakeConnectedAccount(provider_id)
+    client = _local_client(
+        create_test_app(providers={}, connected_accounts={provider_id: account})
+    )
+
+    response = client.post(
+        f"/admin/api/providers/{provider_id}/auth/login", json=payload
+    )
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["mode"] == default_mode
+    assert account.started_modes == [ConnectedAccountLoginMode(default_mode)]
+    if default_mode == "device":
+        assert response.json()["user_code"] == "ABCD-1234"
+        assert response.json()["verification_url"] == "https://github.com/login/device"
+        assert "authorization_url" not in response.json()
+
+
+@pytest.mark.parametrize("mode", ["browser", "unrecognized"])
+def test_admin_rejects_unsupported_login_modes_before_starting(
+    monkeypatch, tmp_path, mode
+):
+    _set_home(monkeypatch, tmp_path)
+    account = _FakeConnectedAccount("github_copilot")
+    client = _local_client(
+        create_test_app(providers={}, connected_accounts={"github_copilot": account})
+    )
+
+    response = client.post(
+        "/admin/api/providers/github_copilot/auth/login", json={"mode": mode}
+    )
+
+    assert response.status_code == 422
+    assert response.headers["cache-control"] == "no-store"
+    assert account.started_modes == []
+
+
+def test_admin_connected_account_identity_modes_and_disconnect_are_independent(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    openai = _FakeConnectedAccount()
+    copilot = _FakeConnectedAccount("github_copilot")
+    openai.connected = copilot.connected = True
+    client = _local_client(
+        create_test_app(
+            providers={},
+            connected_accounts={"openai": openai, "github_copilot": copilot},
+        )
+    )
+
+    openai_status = client.get("/admin/api/providers/openai/auth").json()
+    copilot_status = client.get("/admin/api/providers/github_copilot/auth").json()
+    assert openai_status["email"] == "safe@example.com"
+    assert openai_status["supported_login_modes"] == ["browser", "device"]
+    assert copilot_status["display_identity"] == "octocat"
+    assert "email" not in copilot_status
+    assert copilot_status["supported_login_modes"] == ["device"]
+    assert copilot_status["default_login_mode"] == "device"
+    assert "token" not in str(copilot_status).lower()
+
+    cancelled = client.post("/admin/api/providers/github_copilot/auth/cancel")
+    assert cancelled.status_code == 200
+    assert copilot.cancelled is True
+    assert openai.cancelled is False
+    disconnected = client.delete("/admin/api/providers/github_copilot/auth")
+    assert disconnected.status_code == 200
+    assert disconnected.json()["connected"] is False
+    assert disconnected.json()["supported_login_modes"] == ["device"]
+    assert client.get("/admin/api/providers/openai/auth").json()["connected"] is True
+
+
+def test_admin_openai_keeps_explicit_device_login(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    account = _FakeConnectedAccount()
+    client = _local_client(create_test_app(connected_accounts={"openai": account}))
+
+    response = client.post(
+        "/admin/api/providers/openai/auth/login", json={"mode": "device"}
+    )
+
+    assert response.status_code == 200
+    assert account.started_modes == [ConnectedAccountLoginMode.DEVICE]
 
 
 def test_admin_rejects_auth_routes_for_non_connected_provider(monkeypatch, tmp_path):
