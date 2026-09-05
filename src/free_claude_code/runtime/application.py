@@ -246,6 +246,9 @@ class ApplicationRuntime:
         updates: Mapping[str, ConfigInputValue],
     ) -> JsonObject:
         """Apply one validated config update without splitting runtime ownership."""
+        caller = asyncio.current_task()
+        assert caller is not None
+        initial_cancellations = caller.cancelling()
         async with self._config_lock:
             if self._draining:
                 raise ApplicationUnavailableError(
@@ -281,6 +284,9 @@ class ApplicationRuntime:
 
             async def commit() -> JsonObject:
                 nonlocal persistence_started
+                # The caller's cancellation wakeup may run after finalization starts.
+                if caller.cancelling() > initial_cancellations:
+                    raise asyncio.CancelledError
                 persistence_started = True
                 return await self._commit_admin_update(prepared)
 

@@ -112,6 +112,74 @@ async def test_cancelled_commit_settles_before_shutdown(tmp_path, pending, fail)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("restart_required", [False, True])
+@pytest.mark.parametrize("cancel_during_apply", [False, True])
+@pytest.mark.parametrize("previous_cancellation", [False, True])
+async def test_cancellation_at_finalization_handoff_prevents_persistence(
+    monkeypatch, restart_required, cancel_during_apply, previous_cancellation
+):
+    monkeypatch.delenv("MODEL", raising=False)
+    monkeypatch.delenv("PORT", raising=False)
+    store = ManagedConfigStore()
+    store.initialize()
+    initial = store.read()
+    original_bytes = initial.path.read_bytes()
+    factory = TrackingFactory()
+    manager = ProviderRuntimeManager(initial.settings, runtime_factory=factory)
+    restart = MagicMock(return_value=None)
+    runtime = ApplicationRuntime(
+        manager,
+        configuration=ConfigurationService(store),
+        transcriber=None,
+        restart_callback=restart,
+    )
+    updates = {"PORT": "8123"} if restart_required else {"MODEL": "nvidia_nim/new"}
+
+    async def run_apply():
+        if previous_cancellation:
+            caller = asyncio.current_task()
+            assert caller is not None
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.sleep(0)
+        return await runtime.apply_admin_config(updates)
+
+    async def check_credentials(*_args):
+        if cancel_during_apply:
+            # Queue cancellation before finalization, with the caller's wakeup after it.
+            asyncio.get_running_loop().call_soon(apply.cancel)
+        return ()
+
+    with (
+        patch(
+            "free_claude_code.runtime.application.check_credentials", check_credentials
+        ),
+        patch.object(manager, "_refresh_generation_in_background", AsyncMock()),
+        patch.object(store, "commit", wraps=store.commit) as commit,
+    ):
+        apply = asyncio.create_task(run_apply())
+        try:
+            if cancel_during_apply:
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(apply, 5)
+                commit.assert_not_called()
+                assert initial.path.read_bytes() == original_bytes
+                assert manager.current_generation_id == 1
+                assert runtime._pending_fields == []
+                restart.assert_not_called()
+                assert all(item.cleanup_calls == 1 for item in factory.runtimes[1:])
+            else:
+                assert (await asyncio.wait_for(apply, 5))["applied"] is True
+                commit.assert_called_once()
+                assert manager.current_generation_id == (1 if restart_required else 2)
+                assert restart.call_count == int(restart_required)
+        finally:
+            apply.cancel()
+            await asyncio.gather(apply, return_exceptions=True)
+            await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_cancellation_waiting_for_replacement_does_not_persist(tmp_path):
     manager = ProviderRuntimeManager(_settings("nvidia_nim/old"))
     configuration = AsyncMock(spec=ConfigurationService)
