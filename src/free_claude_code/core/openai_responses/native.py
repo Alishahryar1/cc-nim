@@ -13,6 +13,7 @@ from .errors import openai_error_from_failure
 from .events import format_response_sse_event
 from .models import OpenAIResponsesRequest
 from .reasoning import responses_reasoning_config, responses_reasoning_policy
+from .reasoning_replay import reject_messages_reasoning_for_other_egress
 
 _TERMINAL_EVENT_TYPES = frozenset(
     {"response.completed", "response.incomplete", "response.failed"}
@@ -27,6 +28,7 @@ def build_native_responses_request(
 ) -> JsonObject:
     """Build the stateless upstream body without translating Responses input."""
 
+    reject_messages_reasoning_for_other_egress(request.input)
     body = cast(
         JsonObject,
         request.model_dump(mode="json", exclude_none=True),
