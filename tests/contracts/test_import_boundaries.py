@@ -122,6 +122,23 @@ class _ImportVisitor(ast.NodeVisitor):
         )
 
 
+def test_api_configuration_access_goes_through_runtime() -> None:
+    storage_modules = {
+        "free_claude_code.config.loader",
+        "free_claude_code.config.env_files",
+        "free_claude_code.config.env_migrations",
+    }
+    offenders = [
+        record.describe()
+        for record in _scan_imports(_PACKAGE_ROOT)
+        if record.importer.startswith("free_claude_code.api.")
+        and record.imported in storage_modules
+    ]
+    assert not offenders, (
+        "API config I/O belongs behind the async runtime port:\n" + "\n".join(offenders)
+    )
+
+
 def test_package_dependencies_follow_declarative_policy() -> None:
     modules = _module_paths(_PACKAGE_ROOT)
     records = _scan_imports(_PACKAGE_ROOT)

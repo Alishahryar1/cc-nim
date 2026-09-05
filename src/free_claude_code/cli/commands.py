@@ -13,9 +13,9 @@ from loguru import logger
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.process_registry import kill_all_best_effort
 from free_claude_code.config.loader import (
+    ManagedConfigStore,
     clear_settings_cache,
     get_settings,
-    repair_invalid_managed_provider_proxies,
 )
 from free_claude_code.config.paths import managed_env_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
@@ -203,7 +203,7 @@ def load_server_settings() -> Settings:
     """Return canonical settings after repairing invalid managed proxies."""
 
     settings = get_settings()
-    removed = repair_invalid_managed_provider_proxies()
+    removed = ManagedConfigStore().repair_invalid_provider_proxies()
     if not removed:
         return settings
 

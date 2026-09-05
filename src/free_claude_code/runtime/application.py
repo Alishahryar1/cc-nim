@@ -25,12 +25,9 @@ from free_claude_code.application.model_metadata import ProviderModelRefreshResu
 from free_claude_code.application.ports import StopResult
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
-    commit_prepared_admin_update,
-    prepare_admin_update,
 )
-from free_claude_code.config.admin.state import ConfigInputValue
+from free_claude_code.config.admin.state import ConfigInputValue, ValueState
 from free_claude_code.config.admin.status import provider_config_status
-from free_claude_code.config.admin.values import load_value_state
 from free_claude_code.config.loader import clear_settings_cache
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
@@ -49,6 +46,7 @@ from free_claude_code.providers.credential_validation import (
     check_credentials,
 )
 
+from .configuration import ConfigurationService
 from .provider_manager import ProviderRuntimeManager
 
 RestartCallback = Callable[[], Awaitable[None] | None]
@@ -107,12 +105,14 @@ class ApplicationRuntime:
         self,
         provider_manager: ProviderRuntimeManager,
         *,
+        configuration: ConfigurationService,
         transcriber: Transcriber | None,
         chat_service: ChatService | None = None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
     ) -> None:
         self.provider_manager = provider_manager
+        self._configuration = configuration
         self._chat_service = chat_service
         self._transcriber = transcriber
         self._restart_callback = restart_callback
@@ -150,6 +150,7 @@ class ApplicationRuntime:
             return
         logger.info("Starting Claude Code Proxy...")
         try:
+            await self._configuration.initialize()
             await self.provider_manager.warm_referenced_model_cache()
             self.provider_manager.start_model_list_refresh()
             if self._chat_service is not None:
@@ -178,11 +179,13 @@ class ApplicationRuntime:
             self._chat_service.begin_shutdown()
 
     async def close(self) -> bool:
+        self.begin_shutdown()
         async with self._close_lock:
             if self._closed:
                 return True
             logger.info("Shutdown requested, cleaning up...")
-            self._closed = await self._close_owned_resources()
+            async with self._config_lock:
+                self._closed = await self._close_owned_resources()
             if self._closed:
                 self._started = False
                 logger.info("Server shut down cleanly")
@@ -198,7 +201,11 @@ class ApplicationRuntime:
     ) -> JsonObject:
         """Apply one validated config update without splitting runtime ownership."""
         async with self._config_lock:
-            prepared = prepare_admin_update(updates)
+            if self._draining:
+                raise ApplicationUnavailableError(
+                    "Configuration runtime is shutting down."
+                )
+            prepared = await self._configuration.prepare(updates)
             if not prepared.valid:
                 return prepared.applied_response() | {"credential_checks": []}
             assert prepared.settings is not None
@@ -224,35 +231,80 @@ class ApplicationRuntime:
                     "credential_checks": check_response,
                 }
 
-            if prepared.pending_fields:
-                result = self._commit_admin_update(prepared)
-                result["credential_checks"] = check_response
-                restart = self._restart_metadata(
-                    prepared.pending_fields,
-                    prepared.settings,
-                )
-                result["restart"] = restart
-                self._pending_fields = (
-                    [] if restart["automatic"] else list(prepared.pending_fields)
-                )
-                return result
+            persistence_started = False
 
+            async def commit() -> JsonObject:
+                nonlocal persistence_started
+                persistence_started = True
+                return await self._commit_admin_update(prepared)
+
+            finalization = asyncio.create_task(
+                self._finalize_admin_update(prepared, check_response, commit)
+            )
+            cancellation: asyncio.CancelledError | None = None
+            while not finalization.done():
+                try:
+                    await asyncio.shield(finalization)
+                except asyncio.CancelledError as exc:
+                    if cancellation is None:
+                        cancellation = exc
+                        if not persistence_started:
+                            finalization.cancel()
+                except Exception:
+                    break  # Retrieve the retained task's failure below.
+            try:
+                result = finalization.result()
+            except BaseException as exc:
+                if cancellation is not None:
+                    if not isinstance(exc, asyncio.CancelledError):
+                        logger.warning(
+                            "Cancelled config Apply failed: exc_type={}",
+                            type(exc).__name__,
+                        )
+                    raise cancellation from exc
+                raise
+            if cancellation is not None:
+                raise cancellation
+            return result
+
+    async def _finalize_admin_update(
+        self,
+        prepared: PreparedAdminUpdate,
+        check_response: list[JsonObject],
+        commit: Callable[[], Awaitable[JsonObject]],
+    ) -> JsonObject:
+        assert prepared.settings is not None
+        if prepared.pending_fields:
+            result = await commit()
+        else:
             result: JsonObject = {}
 
-            def commit() -> None:
-                result.update(self._commit_admin_update(prepared))
+            async def publish_commit() -> None:
+                result.update(await commit())
 
             await self.provider_manager.replace(
                 prepared.settings,
-                commit=commit,
+                commit=publish_commit,
                 reason="admin_apply",
             )
-            self._pending_fields = []
-            result["restart"] = self._restart_metadata((), prepared.settings)
-            result["credential_checks"] = check_response
-            return result
+        restart = self._restart_metadata(prepared.pending_fields, prepared.settings)
+        result["restart"] = restart
+        result["credential_checks"] = check_response
+        self._pending_fields = (
+            [] if restart["automatic"] else list(prepared.pending_fields)
+        )
+        if restart["automatic"]:
+            await self.request_restart()
+        return result
 
-    def admin_status(self) -> JsonObject:
+    async def admin_config(self) -> JsonObject:
+        return await self._configuration.admin_config()
+
+    async def admin_values(self) -> ValueState:
+        return await self._configuration.admin_values()
+
+    async def admin_status(self) -> JsonObject:
+        values = await self.admin_values()
         settings = self.settings
         return {
             "status": "stopping" if self._draining else "running",
@@ -262,7 +314,7 @@ class ApplicationRuntime:
             "model": settings.model,
             "provider": parse_provider_type(settings.model),
             "pending_fields": list(self._pending_fields),
-            "provider_status": provider_config_status(load_value_state()),
+            "provider_status": provider_config_status(values),
             "cached_models": {
                 provider_id: sorted(model_ids)
                 for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
@@ -342,6 +394,7 @@ class ApplicationRuntime:
         return status
 
     async def request_restart(self) -> None:
+        """Signal restart promptly; callbacks must not await close or Apply locks."""
         callback = self._restart_callback
         if callback is None:
             return
@@ -358,11 +411,11 @@ class ApplicationRuntime:
             return StopResult(source="cli_manager")
         return None
 
-    def _commit_admin_update(
+    async def _commit_admin_update(
         self,
         prepared: PreparedAdminUpdate,
     ) -> JsonObject:
-        result = commit_prepared_admin_update(prepared)
+        result = await self._configuration.commit(prepared)
         clear_settings_cache()
         return result
 

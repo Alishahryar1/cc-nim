@@ -7,6 +7,7 @@ from pathlib import Path
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.application.chat import ChatService
+from free_claude_code.config.loader import ManagedConfigStore
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import (
     chat_database_path,
@@ -32,6 +33,7 @@ from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
 from .chat_sqlite import SQLiteChatStore
 from .codex_catalog import CodexModelCatalogPublisher
+from .configuration import ConfigurationService
 from .provider_manager import ProviderRuntimeManager
 
 
@@ -76,6 +78,7 @@ def build_asgi_app(
     )
     runtime = ApplicationRuntime(
         provider_manager,
+        configuration=ConfigurationService(ManagedConfigStore()),
         chat_service=chat_service,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,

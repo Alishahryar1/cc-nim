@@ -244,8 +244,8 @@ def test_load_server_settings_skips_reload_when_no_repair_occurs(
         caplog.at_level("WARNING"),
         patch.object(commands, "get_settings", return_value=settings) as get_settings,
         patch.object(
-            commands,
-            "repair_invalid_managed_provider_proxies",
+            commands.ManagedConfigStore,
+            "repair_invalid_provider_proxies",
             return_value=(),
         ) as repair,
         patch.object(commands, "clear_settings_cache") as clear_cache,
@@ -274,8 +274,8 @@ def test_load_server_settings_reloads_once_and_warns_after_repair(
         caplog.at_level("WARNING"),
         patch.object(commands, "get_settings", get_settings),
         patch.object(
-            commands,
-            "repair_invalid_managed_provider_proxies",
+            commands.ManagedConfigStore,
+            "repair_invalid_provider_proxies",
             return_value=("OPENAI_PROXY", "GROQ_PROXY"),
         ),
         patch.object(commands, "clear_settings_cache") as clear_cache,

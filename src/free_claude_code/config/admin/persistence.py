@@ -6,16 +6,14 @@ from pathlib import Path
 
 from free_claude_code.config.env_files import (
     FCC_CONFIG_SCHEMA_ENV,
-    dotenv_values_from_file,
 )
 from free_claude_code.config.env_migrations import (
     CONFIG_SCHEMA_VERSION,
-    atomic_write_managed_config,
     recognized_env_keys,
     render_managed_config,
 )
+from free_claude_code.config.loader import ManagedConfigSnapshot
 from free_claude_code.config.model_refs import normalize_retired_model_settings
-from free_claude_code.config.paths import managed_env_path
 from free_claude_code.config.provider_proxies import invalid_provider_proxy_keys
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.json_types import JsonObject
@@ -77,12 +75,12 @@ class PreparedAdminUpdate:
 
 def target_values_with_updates(
     updates: Mapping[str, ConfigInputValue],
+    snapshot: ManagedConfigSnapshot,
 ) -> dict[str, str]:
     """Return sparse managed state after applying valid partial-update semantics."""
 
-    state = load_value_state()
-    path = managed_env_path()
-    values = dotenv_values_from_file(path) if path.is_file() else {}
+    state = load_value_state(snapshot)
+    values = dict(snapshot.managed)
     known = recognized_env_keys()
     for key in tuple(values):
         if key in known and key != FCC_CONFIG_SCHEMA_ENV and not values[key].strip():
@@ -109,12 +107,13 @@ def target_values_with_updates(
 
 def changed_pending_fields(
     updates: Mapping[str, ConfigInputValue],
+    snapshot: ManagedConfigSnapshot,
     *,
     settings: Settings,
 ) -> list[str]:
     """Return changed fields that require manual runtime action."""
 
-    state = load_value_state()
+    state = load_value_state(snapshot)
     pending: list[str] = []
     for key, submitted in updates.items():
         field = FIELD_BY_KEY.get(key)
@@ -138,23 +137,24 @@ def changed_pending_fields(
 
 def prepare_admin_update(
     updates: Mapping[str, ConfigInputValue],
+    snapshot: ManagedConfigSnapshot,
 ) -> PreparedAdminUpdate:
     """Validate an update and construct its prospective Settings snapshot."""
 
     update_errors = _update_protocol_errors(updates)
-    target_values = target_values_with_updates(updates)
-    settings, settings_errors = settings_from_values(target_values)
+    target_values = target_values_with_updates(updates, snapshot)
+    settings, settings_errors = settings_from_values(target_values, snapshot.process)
     errors = (
         *update_errors,
         *settings_errors,
         *_provider_proxy_errors(target_values),
     )
     pending_fields = (
-        tuple(changed_pending_fields(updates, settings=settings))
+        tuple(changed_pending_fields(updates, snapshot, settings=settings))
         if settings is not None and not errors
         else ()
     )
-    state = load_value_state()
+    state = load_value_state(snapshot)
     changed_keys = tuple(
         key
         for key, submitted in updates.items()
@@ -171,18 +171,9 @@ def prepare_admin_update(
         settings=settings,
         errors=errors,
         pending_fields=pending_fields,
-        path=managed_env_path(),
+        path=snapshot.path,
         changed_keys=changed_keys,
     )
-
-
-def commit_prepared_admin_update(prepared: PreparedAdminUpdate) -> JsonObject:
-    """Atomically persist a previously validated Admin update."""
-
-    if not prepared.valid:
-        raise ValueError("Cannot commit an invalid Admin update")
-    atomic_write_managed_config(prepared.target_values, path=prepared.path)
-    return prepared.applied_response()
 
 
 def _update_protocol_errors(

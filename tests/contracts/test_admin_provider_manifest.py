@@ -115,10 +115,13 @@ def test_openai_proxy_override_applies_to_catalog_proxy_field() -> None:
 def test_provider_catalog_display_names_are_admin_status_source() -> None:
     from free_claude_code.config.admin.status import provider_config_status
     from free_claude_code.config.admin.values import load_value_state
+    from free_claude_code.config.loader import ManagedConfigStore
 
+    store = ManagedConfigStore()
+    store.initialize()
     status_by_provider = {
         entry["provider_id"]: entry
-        for entry in provider_config_status(load_value_state())
+        for entry in provider_config_status(load_value_state(store.read()))
     }
 
     assert set(status_by_provider) == set(PROVIDER_CATALOG)

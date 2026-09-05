@@ -1,12 +1,13 @@
 """Safe default logging tests for the application runtime owner."""
 
 import logging
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from free_claude_code.config.settings import Settings
 from free_claude_code.runtime.application import ApplicationRuntime, best_effort
+from free_claude_code.runtime.configuration import ConfigurationService
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 
 
@@ -22,6 +23,7 @@ async def test_messaging_start_failure_default_logs_exclude_traceback(caplog):
     )
     runtime = ApplicationRuntime(
         ProviderRuntimeManager(settings),
+        configuration=AsyncMock(spec=ConfigurationService),
         transcriber=None,
     )
 

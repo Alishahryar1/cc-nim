@@ -1,25 +1,27 @@
 """Only effective edits, against saved settings, request credential validation."""
 
 from free_claude_code.config.admin.persistence import (
-    commit_prepared_admin_update,
     prepare_admin_update,
 )
 from free_claude_code.config.admin.values import MASKED_SECRET
+from free_claude_code.config.loader import ManagedConfigStore
 
 
 def test_changed_keys_exclude_masks_noops_and_removals(monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    first = prepare_admin_update({"GROQ_API_KEY": " saved-key "})
+    store = ManagedConfigStore()
+    store.initialize()
+    first = prepare_admin_update({"GROQ_API_KEY": " saved-key "}, store.read())
     assert first.valid
     assert first.changed_keys == ("GROQ_API_KEY",)
-    commit_prepared_admin_update(first)
+    store.commit(first.target_values)
     # Compare to the saved value even if a running generation has not restarted.
     for value in ("saved-key", " saved-key ", MASKED_SECRET, "", "   ", None):
-        prepared = prepare_admin_update({"GROQ_API_KEY": value})
+        prepared = prepare_admin_update({"GROQ_API_KEY": value}, store.read())
         assert prepared.valid
         assert prepared.changed_keys == ()
     changed = prepare_admin_update(
-        {"GROQ_API_KEY": "new-key", "GROQ_PROXY": "http://localhost:8080"}
+        {"GROQ_API_KEY": "new-key", "GROQ_PROXY": "http://localhost:8080"}, store.read()
     )
     assert "GROQ_API_KEY" in changed.changed_keys
     assert changed.settings is not None
@@ -29,7 +31,9 @@ def test_changed_keys_exclude_masks_noops_and_removals(monkeypatch):
 
 def test_process_locked_key_is_not_a_change(monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "process-key")
-    prepared = prepare_admin_update({"GROQ_API_KEY": "submitted-key"})
+    store = ManagedConfigStore()
+    store.initialize()
+    prepared = prepare_admin_update({"GROQ_API_KEY": "submitted-key"}, store.read())
     assert prepared.valid
     assert prepared.changed_keys == ()
     assert prepared.settings is not None
