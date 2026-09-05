@@ -73,3 +73,11 @@ def test_openai_is_a_connected_account_without_api_key_configuration() -> None:
     assert descriptor.credential_env is None
     assert descriptor.configuration_attrs() == ()
     assert descriptor.default_base_url == "https://chatgpt.com/backend-api/codex"
+
+
+def test_copilot_is_connected_without_credential_configuration() -> None:
+    descriptor = PROVIDER_CATALOG["github_copilot"]
+    assert descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT
+    assert descriptor.credential_env is None
+    assert descriptor.configuration_attrs() == ()
+    assert descriptor.default_base_url == "https://api.githubcopilot.com"

@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 import openai
 
+from free_claude_code.core.anthropic.errors import anthropic_status_for_error_type
 from free_claude_code.core.diagnostics import (
     attached_upstream_error_body,
     extract_upstream_error_detail,
@@ -102,6 +103,27 @@ def classify_provider_failure(
 def overloaded_provider_failure() -> ExecutionFailure:
     """Return the canonical provider-overload meaning and stable wording."""
     return _failure(FailureKind.OVERLOADED, 529, _OVERLOADED_MESSAGE, True)
+
+
+def provider_authentication_status(exc: Exception) -> int | None:
+    """Recognize HTTP and structured stream authentication failures, never prose."""
+    status = _reported_status(exc)
+    if status is not None:
+        return status if status in {401, 403} else None
+    codes: list[object] = [getattr(exc, "code", None)]
+    for item in _body_candidates(getattr(exc, "body", None)):
+        if isinstance(item, Mapping):
+            codes.extend((item.get("code"), item.get("type")))
+    for code in codes:
+        if isinstance(code, str) and (
+            status := anthropic_status_for_error_type(code)
+        ) in {401, 403}:
+            return status
+    if any(code in ("invalid_api_key", "unauthorized") for code in codes):
+        return 401
+    if any(code in ("permission_denied", "forbidden") for code in codes):
+        return 403
+    return None
 
 
 def context_window_exceeded_provider_failure(
@@ -315,9 +337,9 @@ def _classify_provider_failure(
             False,
         )
 
-    if isinstance(exc, openai.AuthenticationError):
+    if provider_authentication_status(exc) == 401:
         return _failure(FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False)
-    if isinstance(exc, openai.PermissionDeniedError):
+    if provider_authentication_status(exc) == 403:
         return _failure(FailureKind.PERMISSION, 403, _PERMISSION_MESSAGE, False)
     if isinstance(exc, openai.RateLimitError):
         return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)

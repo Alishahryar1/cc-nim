@@ -69,7 +69,7 @@ class AdminConfigPayload(BaseModel):
 class ConnectedAccountLoginPayload(BaseModel):
     """Interactive connected-account login selection."""
 
-    mode: ConnectedAccountLoginMode = ConnectedAccountLoginMode.BROWSER
+    mode: ConnectedAccountLoginMode | None = None
 
 
 def _asset_path(filename: str) -> Path:
@@ -189,10 +189,15 @@ async def start_connected_account_login(
 ):
     require_loopback_admin(request)
     _require_connected_account_provider(provider_id)
-    try:
-        status = await services.admin.start_connected_account_login(
-            provider_id, payload.mode
+    account = await services.admin.connected_account_status(provider_id)
+    mode = payload.mode or account.default_login_mode
+    if mode not in account.supported_login_modes:
+        raise HTTPException(
+            status_code=422,
+            detail="Login mode is not supported by this provider.",
         )
+    try:
+        status = await services.admin.start_connected_account_login(provider_id, mode)
     except Exception as exc:
         raise HTTPException(
             status_code=502,

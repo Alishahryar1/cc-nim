@@ -169,7 +169,7 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "opencode_zen": _create_opencode_zen,
     "opencode_go": _create_opencode_go,
 }
-_INJECTED_PROVIDER_IDS = {"openai"}
+_INJECTED_PROVIDER_IDS = {"openai", "github_copilot"}
 
 
 def _required_setting(settings: Settings, attr_name: str) -> str:

@@ -3,9 +3,10 @@
 import asyncio
 import sys
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import cast
 
+import httpx2
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.responses import ResponseInputParam, ResponseStreamEvent
 from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
@@ -32,12 +33,14 @@ from free_claude_code.providers.admission import (
     ProviderExecution,
     ProviderOperationKind,
 )
+from free_claude_code.providers.endpoint import EndpointContext, RequestEndpoint
 from free_claude_code.providers.failure_policy import (
     RetryableProviderProtocolError,
     classify_provider_failure,
     context_window_exceeded_provider_failure,
     is_context_window_error_code,
     is_retryable_stream_error,
+    provider_authentication_status,
     reports_context_window_incomplete,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
@@ -52,6 +55,8 @@ from .presentation import (
     ResponsesExecutionOutcome,
     ResponsesPresenterFactory,
 )
+
+type ResponsesEventAdapter = Callable[[str, JsonObject], JsonObject]
 
 
 class _TruncatedResponsesStream(RetryableProviderProtocolError):
@@ -85,8 +90,12 @@ class OpenAIResponsesTransport:
         provider_name: str,
         read_timeout_s: float,
         log_raw_sse_events: bool,
+        endpoint_transport: httpx2.AsyncBaseTransport | None = None,
+        event_adapter_factory: Callable[[], ResponsesEventAdapter] | None = None,
     ) -> None:
         self._client = client
+        self._endpoint_transport = endpoint_transport
+        self._event_adapter_factory = event_adapter_factory
         self._admission = admission
         self._provider_name = provider_name
         self._read_timeout_s = read_timeout_s
@@ -108,12 +117,14 @@ class OpenAIResponsesTransport:
         request_id: str | None,
         response_model: str,
         reasoning: ReasoningPolicy,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         body = self._build_messages_body(request, reasoning=reasoning)
         tool_names = OpenAIToolNameCodec.from_request(request)
         message_id = f"msg_{uuid.uuid4()}"
         return self._run_stream(
             body,
+            endpoint_context=endpoint_context,
             request_id=request_id,
             response_model=response_model,
             presenter_factory=lambda: MessagesResponsesPresenter(
@@ -143,11 +154,13 @@ class OpenAIResponsesTransport:
         request_id: str | None,
         response_model: str,
         reasoning: ReasoningPolicy,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens
         body = self._build_native_body(request, reasoning=reasoning)
         return self._run_stream(
             body,
+            endpoint_context=endpoint_context,
             request_id=request_id,
             response_model=response_model,
             presenter_factory=lambda: NativeResponsesPresenter(
@@ -195,9 +208,15 @@ class OpenAIResponsesTransport:
         request_id: str | None,
         response_model: str,
         presenter_factory: ResponsesPresenterFactory,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         execution = self._admission.start_execution(request_id=request_id)
         outcome = ResponsesExecutionOutcome()
+        endpoint = (
+            RequestEndpoint(endpoint_context, self._endpoint_transport)
+            if endpoint_context is not None
+            else None
+        )
         provider_stream = self._run_execution(
             body,
             request_id=request_id,
@@ -205,9 +224,12 @@ class OpenAIResponsesTransport:
             presenter_factory=presenter_factory,
             execution=execution,
             outcome=outcome,
+            endpoint=endpoint,
         )
         try:
             async for event in provider_stream:
+                if endpoint is not None:
+                    endpoint.commit()
                 yield event
         except asyncio.CancelledError:
             raise
@@ -220,8 +242,14 @@ class OpenAIResponsesTransport:
             else:
                 execution.fail(outcome.failure)
         finally:
-            await maybe_await_aclose(provider_stream)
-            execution.abandon()
+            try:
+                await maybe_await_aclose(provider_stream)
+            finally:
+                try:
+                    if endpoint is not None:
+                        await endpoint.aclose()
+                finally:
+                    execution.abandon()
 
     async def _run_execution(
         self,
@@ -232,6 +260,7 @@ class OpenAIResponsesTransport:
         presenter_factory: ResponsesPresenterFactory,
         execution: ProviderExecution,
         outcome: ResponsesExecutionOutcome,
+        endpoint: RequestEndpoint | None = None,
     ) -> AsyncIterator[str]:
         recovery = RecoveryController()
         trace_event(
@@ -250,6 +279,11 @@ class OpenAIResponsesTransport:
             presenter = presenter_factory()
             start_events = tuple(presenter.start())
             presenter_started = False
+            adapt_event = (
+                self._event_adapter_factory()
+                if self._event_adapter_factory is not None
+                else None
+            )
 
             scope: ProviderAttemptScope | None = None
             stream_opened = False
@@ -260,7 +294,7 @@ class OpenAIResponsesTransport:
                     provider_name=self._provider_name,
                     request_id=request_id,
                 )
-                sdk_stream = await self._create_sdk_stream(body)
+                sdk_stream = await self._create_sdk_stream(body, endpoint=endpoint)
                 stream = scope.retain(_ClosableResponsesStream(sdk_stream))
                 stream_opened = True
 
@@ -290,6 +324,8 @@ class OpenAIResponsesTransport:
                         payload,
                     ):
                         raise context_window_exceeded_provider_failure()
+                    if adapt_event is not None:
+                        payload = adapt_event(upstream_event.type, payload)
                     for event in presenter.feed(upstream_event.type, payload):
                         for held in recovery.push(event):
                             yield held
@@ -314,6 +350,15 @@ class OpenAIResponsesTransport:
                 raise
             except Exception as raw_error:
                 error = _effective_error(raw_error)
+                if (
+                    scope is not None
+                    and endpoint is not None
+                    and await endpoint.retry_authentication(
+                        error, scope.attempt, execution
+                    )
+                ):
+                    recovery.discard()
+                    continue
                 attempt_failure = None
                 if scope is not None and not scope.attempt.accepted:
                     attempt_failure = await scope.attempt.fail(error)
@@ -385,6 +430,8 @@ class OpenAIResponsesTransport:
     async def _create_sdk_stream(
         self,
         body: JsonObject,
+        *,
+        endpoint: RequestEndpoint | None = None,
     ) -> AsyncStream[ResponseStreamEvent]:
         model = body.get("model")
         if not isinstance(model, str) or not model:
@@ -395,12 +442,18 @@ class OpenAIResponsesTransport:
             for key, value in body.items()
             if key not in {"model", "input", "stream", "store"}
         }
-        return await self._client.responses.create(
+        client = (
+            await endpoint.openai_client(self._client)
+            if endpoint is not None
+            else self._client
+        )
+        return await client.responses.create(
             model=model,
             input=input_value,
             stream=True,
             store=False,
             extra_body=extra_body or None,
+            extra_headers=endpoint.openai_headers() if endpoint is not None else None,
         )
 
 
@@ -413,6 +466,16 @@ def _effective_error(error: Exception) -> Exception:
     )
     if is_context_window_error_code(error.code):
         return context_window_exceeded_provider_failure()
+    auth_status = provider_authentication_status(error)
+    if auth_status is not None:
+        return ExecutionFailure(
+            FailureKind.AUTHENTICATION
+            if auth_status == 401
+            else FailureKind.PERMISSION,
+            auth_status,
+            message,
+            False,
+        )
     code = (error.code or "").lower()
     if "rate" in code or "429" in code:
         return ExecutionFailure(FailureKind.RATE_LIMIT, 429, message, True)
