@@ -309,7 +309,7 @@ def test_claude_model_view_does_not_expose_capability_fields():
     )
 
 
-def test_muse_model_catalog_is_the_fixed_responses_projection():
+def test_muse_model_catalog_marks_every_routable_model_visible():
     app = create_test_app(_settings(model_opus=None, model_haiku=None))
     manager = provider_manager_for_app(app)
     manager.cache_model_infos(
@@ -326,12 +326,60 @@ def test_muse_model_catalog_is_the_fixed_responses_projection():
 
     assert responses.status_code == 200
     assert muse.status_code == 200
-    assert muse.json() == responses.json()
+    assert all("metadata" not in row for row in responses.json()["data"])
+    for row in muse.json()["data"]:
+        metadata = row["metadata"]["muse-code"]
+        assert metadata["is_hidden"] is False
+        assert metadata["name"] == row["display_name"]
+        assert "limit" not in metadata
+        original = {key: value for key, value in row.items() if key != "metadata"}
+        assert original in responses.json()["data"]
     assert [row["id"] for row in muse.json()["data"]] == [
         "deepseek/deepseek-chat",
         "claude-3-freecc-no-thinking/open_router/plain-model",
         "open_router/reasoning-model",
     ]
+
+
+def test_muse_catalog_uses_native_metadata_for_known_limits_and_reasoning():
+    app = create_test_app(_settings(model_opus=None, model_haiku=None))
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo(
+                "reasoning-model",
+                supports_thinking=True,
+                context_window_tokens=131072,
+                max_output_tokens=8192,
+            ),
+            ProviderModelInfo(
+                "plain-model",
+                supports_thinking=False,
+                context_window_tokens=65536,
+            ),
+        },
+    )
+    rows = {
+        row["provider_model_ref"]: row["metadata"]["muse-code"]
+        for row in TestClient(app).get("/muse-code/models").json()["data"]
+    }
+
+    assert rows["open_router/reasoning-model"] == {
+        "name": "open_router/reasoning-model",
+        "is_hidden": False,
+        "reasoning": True,
+        "limit": {"context": 131072, "output": 8192},
+    }
+    assert rows["open_router/plain-model"] == {
+        "name": "open_router/plain-model (no thinking)",
+        "is_hidden": False,
+        "reasoning": False,
+        "limit": {"context": 65536},
+    }
+    assert rows["deepseek/deepseek-chat"] == {
+        "name": "deepseek/deepseek-chat",
+        "is_hidden": False,
+    }
 
 
 def test_responses_model_view_rounds_timeout_up_before_margin():
