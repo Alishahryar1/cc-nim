@@ -188,7 +188,7 @@ from more than one provider before succeeding.
 [GitHub Models retired on July 30, 2026](https://github.blog/changelog/2026-07-30-github-models-is-now-retired/). FCC automatically resets retired model
 selections to your configured default, or the built-in default when `MODEL` itself
 is retired. Configure that default provider in Admin if its credentials are missing.
-GitHub Copilot is a separate service and is not a replacement provider in FCC.
+GitHub Copilot is a separate service; connect it through **Connected accounts** in Admin.
 
 | Provider | Admin UI setting | Example `MODEL` |
 | --- | --- | --- |
