@@ -98,6 +98,39 @@ def startup_failure_message(settings: Settings, exc: Exception) -> str:
     return f"Server startup failed: exc_type={type(exc).__name__}"
 
 
+async def _await_owned_task[T](
+    task: asyncio.Task[T],
+    *,
+    cancel_on_interrupt: Callable[[], bool] | None = None,
+) -> T:
+    """Keep ownership until a task settles, then propagate caller cancellation."""
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+                if cancel_on_interrupt is not None and cancel_on_interrupt():
+                    task.cancel()
+        except Exception:
+            break
+    try:
+        result = task.result()
+    except BaseException as exc:
+        if cancellation is not None:
+            if not isinstance(exc, asyncio.CancelledError):
+                logger.warning(
+                    "Cancelled runtime operation failed: exc_type={}",
+                    type(exc).__name__,
+                )
+            raise cancellation from exc
+        raise
+    if cancellation is not None:
+        raise cancellation
+    return result
+
+
 class ApplicationRuntime:
     """Own every process-lifetime resource used by one server instance."""
 
@@ -134,7 +167,7 @@ class ApplicationRuntime:
         self._closed = False
         self._provider_manager_closed = False
         self._connected_accounts_closed = False
-        self._close_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
 
     @property
     def settings(self) -> Settings:
@@ -146,28 +179,42 @@ class ApplicationRuntime:
         return self._closed
 
     async def start(self) -> None:
-        if self._started:
-            return
-        logger.info("Starting Claude Code Proxy...")
         try:
-            await self._configuration.initialize()
-            await self.provider_manager.warm_referenced_model_cache()
-            self.provider_manager.start_model_list_refresh()
-            if self._chat_service is not None:
-                await self._chat_service.start()
-            await self._start_messaging_if_configured()
-            logging.getLogger("uvicorn.error").info(
-                "Admin UI: %s (local-only)",
-                local_admin_url(self.settings),
-            )
-            self._started = True
+            async with self._lifecycle_lock:
+                if self._draining:
+                    raise ApplicationUnavailableError(
+                        "Application runtime is shutting down."
+                    )
+                if self._started:
+                    return
+                logger.info("Starting Claude Code Proxy...")
+                await _await_owned_task(
+                    asyncio.create_task(self._configuration.initialize())
+                )
+                if self._draining:
+                    raise ApplicationUnavailableError(
+                        "Application runtime is shutting down."
+                    )
+                await self.provider_manager.warm_referenced_model_cache()
+                self.provider_manager.start_model_list_refresh()
+                if self._chat_service is not None:
+                    await self._chat_service.start()
+                await self._start_messaging_if_configured()
+                if self._draining:
+                    raise ApplicationUnavailableError(
+                        "Application runtime is shutting down."
+                    )
+                logging.getLogger("uvicorn.error").info(
+                    "Admin UI: %s (local-only)",
+                    local_admin_url(self.settings),
+                )
+                self._started = True
         except asyncio.CancelledError:
             await self.close()
             raise
         except Exception as exc:
             logger.error(
-                "Startup failed:\n{}",
-                startup_failure_message(self.settings, exc),
+                "Startup failed:\n{}", startup_failure_message(self.settings, exc)
             )
             await self.close()
             raise
@@ -180,7 +227,7 @@ class ApplicationRuntime:
 
     async def close(self) -> bool:
         self.begin_shutdown()
-        async with self._close_lock:
+        async with self._lifecycle_lock:
             if self._closed:
                 return True
             logger.info("Shutdown requested, cleaning up...")
@@ -205,7 +252,7 @@ class ApplicationRuntime:
                 raise ApplicationUnavailableError(
                     "Configuration runtime is shutting down."
                 )
-            prepared = await self._configuration.prepare(updates)
+            prepared = await self._configuration.prepare(updates, self.settings)
             if not prepared.valid:
                 return prepared.applied_response() | {"credential_checks": []}
             assert prepared.settings is not None
@@ -241,31 +288,10 @@ class ApplicationRuntime:
             finalization = asyncio.create_task(
                 self._finalize_admin_update(prepared, check_response, commit)
             )
-            cancellation: asyncio.CancelledError | None = None
-            while not finalization.done():
-                try:
-                    await asyncio.shield(finalization)
-                except asyncio.CancelledError as exc:
-                    if cancellation is None:
-                        cancellation = exc
-                        if not persistence_started:
-                            finalization.cancel()
-                except Exception:
-                    break  # Retrieve the retained task's failure below.
-            try:
-                result = finalization.result()
-            except BaseException as exc:
-                if cancellation is not None:
-                    if not isinstance(exc, asyncio.CancelledError):
-                        logger.warning(
-                            "Cancelled config Apply failed: exc_type={}",
-                            type(exc).__name__,
-                        )
-                    raise cancellation from exc
-                raise
-            if cancellation is not None:
-                raise cancellation
-            return result
+            return await _await_owned_task(
+                finalization,
+                cancel_on_interrupt=lambda: not persistence_started,
+            )
 
     async def _finalize_admin_update(
         self,

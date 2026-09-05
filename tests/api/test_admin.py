@@ -1872,6 +1872,77 @@ def test_restart_signal_failure_reports_saved_config_and_manual_restart(
     assert "private restart failure detail" not in response.text + caplog.text
 
 
+@pytest.mark.parametrize(
+    "followup",
+    [{"PORT": "9090"}, {"MODEL": "nvidia_nim/new"}, {"LOG_LEVEL": "WARNING"}],
+)
+@pytest.mark.parametrize("signal_recovers", [False, True])
+def test_pending_restart_survives_later_apply(
+    monkeypatch, tmp_path, followup, signal_recovers
+):
+    from unittest.mock import MagicMock
+
+    from free_claude_code.config.loader import ManagedConfigStore
+
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    store = ManagedConfigStore()
+    store.initialize()
+    settings = store.read().settings
+    callback = MagicMock(
+        side_effect=[
+            RuntimeError("first signal failed"),
+            None if signal_recovers else RuntimeError("still unavailable"),
+        ]
+    )
+    app = create_test_app(settings, restart_callback=callback)
+    client = _local_client(app)
+    assert client.post(
+        "/admin/api/config/apply", json={"values": {"PORT": "9090"}}
+    ).json()["restart"]["required"]
+    result = client.post("/admin/api/config/apply", json={"values": followup}).json()
+    fields = ["PORT", "LOG_LEVEL"] if "LOG_LEVEL" in followup else ["PORT"]
+    assert result["applied"] is True
+    assert result["restart"]["required"] is True
+    assert result["restart"]["automatic"] is signal_recovers
+    assert result["restart"]["fields"] == fields
+    assert callback.call_count == 2
+    status = client.get("/admin/api/status").json()
+    assert status["port"] == settings.port
+    assert status["pending_fields"] == ([] if signal_recovers else fields)
+    assert provider_manager_for_app(app).current_generation_id == 1
+
+
+def test_reverting_pending_restart_restores_hot_apply(monkeypatch, tmp_path):
+    from unittest.mock import MagicMock
+
+    from free_claude_code.config.loader import ManagedConfigStore
+
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    store = ManagedConfigStore()
+    store.initialize()
+    settings = store.read().settings
+    callback = MagicMock(side_effect=RuntimeError("restart failed"))
+    app = create_test_app(settings, restart_callback=callback)
+    client = _local_client(app)
+    client.post("/admin/api/config/apply", json={"values": {"PORT": "9090"}})
+    with patch.object(
+        provider_manager_for_app(app), "_refresh_generation_in_background", AsyncMock()
+    ):
+        result = client.post(
+            "/admin/api/config/apply",
+            json={"values": {"PORT": str(settings.port), "MODEL": "nvidia_nim/new"}},
+        ).json()
+    assert result["applied"] is True
+    assert result["restart"]["required"] is False
+    assert callback.call_count == 1
+    status = client.get("/admin/api/status").json()
+    assert status["pending_fields"] == []
+    assert status["port"] == settings.port
+    assert status["model"] == "nvidia_nim/new"
+
+
 def test_admin_process_env_values_are_locked_and_not_written(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)

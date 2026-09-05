@@ -26,7 +26,9 @@ def create_test_app(
     chat: ChatApplicationPort | None = None,
 ) -> FastAPI:
     """Build an API app with explicit in-memory runtime services."""
-    settings = settings or Settings()
+    store = ManagedConfigStore()
+    store.initialize()  # API-only tests do not run the production ASGI lifespan.
+    settings = settings or store.read().settings
     connected_accounts = dict(connected_accounts or {})
 
     def connected_provider_ids() -> tuple[str, ...]:
@@ -50,8 +52,6 @@ def create_test_app(
             ),
             connected_provider_ids=connected_provider_ids,
         )
-    store = ManagedConfigStore()
-    store.initialize()  # API-only tests do not run the production ASGI lifespan.
     runtime = ApplicationRuntime(
         manager,
         configuration=ConfigurationService(store),

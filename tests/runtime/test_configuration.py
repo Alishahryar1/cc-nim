@@ -44,7 +44,7 @@ def test_preparation_uses_captured_disk_and_process_state(monkeypatch):
     snapshot = store.read({"PORT": "8123"})
     monkeypatch.setenv("PORT", "9999")
     store.path.unlink()
-    prepared = prepare_admin_update({"PORT": "8124"}, snapshot)
+    prepared = prepare_admin_update({"PORT": "8124"}, snapshot, snapshot.settings)
     assert prepared.settings is not None
     assert prepared.settings.port == 8123
     assert "PORT" not in prepared.target_values
@@ -113,7 +113,8 @@ async def test_storage_work_does_not_block_event_loop(operation):
     store = ManagedConfigStore()
     store.initialize()
     service = ConfigurationService(store)
-    prepared = await service.prepare({"PORT": "8123"})
+    active = store.read().settings
+    prepared = await service.prepare({"PORT": "8123"}, active)
     entered = threading.Event()
     release = threading.Event()
     heartbeat = asyncio.Event()
@@ -138,7 +139,7 @@ async def test_storage_work_does_not_block_event_loop(operation):
     try:
         with patch.object(store, method, side_effect=blocked):
             if operation == "prepare":
-                await service.prepare({"PORT": "8124"})
+                await service.prepare({"PORT": "8124"}, active)
             elif operation == "commit":
                 await service.commit(prepared)
             else:

@@ -11,6 +11,7 @@ from free_claude_code.config.admin.persistence import (
 from free_claude_code.config.admin.state import ConfigInputValue, ValueState
 from free_claude_code.config.admin.values import load_config_response, load_value_state
 from free_claude_code.config.loader import ManagedConfigStore
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.json_types import JsonObject
 
 
@@ -28,10 +29,10 @@ class ConfigurationService:
         return load_value_state(await to_thread.run_sync(self._store.read))
 
     async def prepare(
-        self, updates: Mapping[str, ConfigInputValue]
+        self, updates: Mapping[str, ConfigInputValue], active_settings: Settings
     ) -> PreparedAdminUpdate:
         snapshot = await to_thread.run_sync(self._store.read)
-        return prepare_admin_update(updates, snapshot)
+        return prepare_admin_update(updates, snapshot, active_settings)
 
     async def commit(self, prepared: PreparedAdminUpdate) -> JsonObject:
         if not prepared.valid:

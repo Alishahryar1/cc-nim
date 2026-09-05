@@ -18,7 +18,7 @@ from free_claude_code.config.provider_proxies import invalid_provider_proxy_keys
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.json_types import JsonObject
 
-from .manifest import FIELD_BY_KEY
+from .manifest import FIELD_BY_KEY, FIELDS
 from .state import ConfigInputValue
 from .validation import settings_from_values
 from .values import MASKED_SECRET, is_locked_source, load_value_state, normalize_for_env
@@ -105,39 +105,30 @@ def target_values_with_updates(
     return normalize_retired_model_settings(values, preserve_empty_overrides=False)
 
 
-def changed_pending_fields(
-    updates: Mapping[str, ConfigInputValue],
-    snapshot: ManagedConfigSnapshot,
-    *,
-    settings: Settings,
-) -> list[str]:
-    """Return changed fields that require manual runtime action."""
-
-    state = load_value_state(snapshot)
-    pending: list[str] = []
-    for key, submitted in updates.items():
-        field = FIELD_BY_KEY.get(key)
-        if field is None or is_locked_source(state[key].source):
-            continue
-        if field.secret and (
-            submitted == MASKED_SECRET
-            or (isinstance(submitted, str) and not submitted.strip())
-        ):
-            continue
-        requires_restart = field.restart_required or field.session_sensitive
-        if not requires_restart:
-            requires_restart = _active_voice_credential(settings) == key
-        if not requires_restart:
-            continue
-        if normalize_for_env(submitted) == state[key].value:
-            continue
-        pending.append(key)
-    return pending
+def pending_restart_fields(active: Settings, prospective: Settings) -> tuple[str, ...]:
+    """Compare saved intent with the settings actually used by running resources."""
+    voice_credentials = {
+        _active_voice_credential(active),
+        _active_voice_credential(prospective),
+    }
+    return tuple(
+        field.key
+        for field in FIELDS
+        if field.settings_attr is not None
+        and (
+            field.restart_required
+            or field.session_sensitive
+            or field.key in voice_credentials
+        )
+        and getattr(active, field.settings_attr)
+        != getattr(prospective, field.settings_attr)
+    )
 
 
 def prepare_admin_update(
     updates: Mapping[str, ConfigInputValue],
     snapshot: ManagedConfigSnapshot,
+    active_settings: Settings,
 ) -> PreparedAdminUpdate:
     """Validate an update and construct its prospective Settings snapshot."""
 
@@ -150,7 +141,7 @@ def prepare_admin_update(
         *_provider_proxy_errors(target_values),
     )
     pending_fields = (
-        tuple(changed_pending_fields(updates, snapshot, settings=settings))
+        pending_restart_fields(active_settings, settings)
         if settings is not None and not errors
         else ()
     )
