@@ -475,7 +475,7 @@ async def test_restart_required_apply_commits_without_hot_publication(tmp_path) 
         _settings("nvidia_nim/old"),
         runtime_factory=factory,
     )
-    restart = AsyncMock()
+    restart = MagicMock(return_value=None)
     runtime = ApplicationRuntime(
         manager,
         configuration=AsyncMock(spec=ConfigurationService),
@@ -516,7 +516,7 @@ async def test_restart_required_apply_commits_without_hot_publication(tmp_path) 
         "fields": ["PORT"],
         "instance_id": instance_id,
     }
-    restart.assert_awaited_once()
+    restart.assert_called_once_with()
     await manager.close()
 
 

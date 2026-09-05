@@ -49,7 +49,7 @@ from free_claude_code.providers.credential_validation import (
 from .configuration import ConfigurationService
 from .provider_manager import ProviderRuntimeManager
 
-RestartCallback = Callable[[], Awaitable[None] | None]
+RestartCallback = Callable[[], None]
 
 _PROVIDER_CHECK_FAILURE_MESSAGE = (
     "Could not refresh this provider's models. Verify its configuration and access."
@@ -287,14 +287,16 @@ class ApplicationRuntime:
                 commit=publish_commit,
                 reason="admin_apply",
             )
-        restart = self._restart_metadata(prepared.pending_fields, prepared.settings)
-        result["restart"] = restart
-        result["credential_checks"] = check_response
-        self._pending_fields = (
-            [] if restart["automatic"] else list(prepared.pending_fields)
+        self._pending_fields = list(prepared.pending_fields)
+        automatic = bool(prepared.pending_fields and self._signal_restart())
+        if automatic:
+            self._pending_fields = []
+        result["restart"] = self._restart_metadata(
+            prepared.pending_fields,
+            prepared.settings,
+            automatic=automatic,
         )
-        if restart["automatic"]:
-            await self.request_restart()
+        result["credential_checks"] = check_response
         return result
 
     async def admin_config(self) -> JsonObject:
@@ -393,14 +395,28 @@ class ApplicationRuntime:
         self._connected_account_revisions[provider_id] = status.revision
         return status
 
-    async def request_restart(self) -> None:
-        """Signal restart promptly; callbacks must not await close or Apply locks."""
+    def _signal_restart(self) -> bool:
+        """Invoke a synchronous signal; failure leaves the saved change pending."""
         callback = self._restart_callback
         if callback is None:
-            return
-        result = callback()
-        if inspect.isawaitable(result):
-            await result
+            return False
+        try:
+            result = callback()
+            # Enforce the contract for dynamically supplied callbacks as well.
+            # Never execute an async callback that could await runtime.close().
+            if inspect.iscoroutine(result):
+                result.close()
+            if result is not None:
+                raise TypeError(
+                    "Restart callback must signal synchronously and return None."
+                )
+        except Exception as exc:
+            logger.warning(
+                "Config saved but restart signal failed: exc_type={}",
+                type(exc).__name__,
+            )
+            return False
+        return True
 
     async def stop_all(self) -> StopResult | None:
         if self._messaging_workflow is not None:
@@ -423,8 +439,9 @@ class ApplicationRuntime:
         self,
         fields: tuple[str, ...],
         settings: Settings,
+        *,
+        automatic: bool,
     ) -> JsonObject:
-        automatic = bool(fields and self._restart_callback is not None)
         result: JsonObject = {
             "required": bool(fields),
             "automatic": automatic,

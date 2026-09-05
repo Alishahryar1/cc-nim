@@ -1197,7 +1197,7 @@ def test_admin_apply_rejects_invalid_provider_proxy_without_side_effects(
     env_file.write_text("MODEL=open_router/test-model\n", encoding="utf-8")
     callbacks: list[str] = []
 
-    async def restart_callback() -> None:
+    def restart_callback() -> None:
         callbacks.append("restart")
 
     app = create_test_app(restart_callback=restart_callback)
@@ -1771,7 +1771,7 @@ def test_admin_apply_restart_required_reports_automatic_restart(monkeypatch, tmp
     _clear_process_config(monkeypatch)
     callbacks: list[str] = []
 
-    async def restart_callback() -> None:
+    def restart_callback() -> None:
         callbacks.append("restart")
 
     app = create_test_app(restart_callback=restart_callback)
@@ -1840,6 +1840,36 @@ def test_admin_apply_restart_required_reports_manual_fallback(monkeypatch, tmp_p
         "admin_url": None,
         "fields": ["PORT"],
     }
+
+
+def test_restart_signal_failure_reports_saved_config_and_manual_restart(
+    monkeypatch, tmp_path, caplog
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+
+    def restart_callback() -> None:
+        raise RuntimeError("private restart failure detail")
+
+    app = create_test_app(restart_callback=restart_callback)
+    client = _local_client(app)
+    original_port = client.get("/admin/api/status").json()["port"]
+    response = client.post("/admin/api/config/apply", json={"values": {"PORT": "9090"}})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert body["restart"] == {
+        "required": True,
+        "automatic": False,
+        "admin_url": None,
+        "fields": ["PORT"],
+    }
+    assert "PORT=9090" in (tmp_path / ".fcc" / ".env").read_text()
+    status = client.get("/admin/api/status").json()
+    assert status["port"] == original_port
+    assert status["pending_fields"] == ["PORT"]
+    assert "private restart failure detail" not in response.text + caplog.text
 
 
 def test_admin_process_env_values_are_locked_and_not_written(monkeypatch, tmp_path):

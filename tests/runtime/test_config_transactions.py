@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -10,6 +10,53 @@ from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.configuration import ConfigurationService
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 from tests.runtime.test_application_runtime import TrackingFactory, _prepared, _settings
+
+
+@pytest.mark.asyncio
+async def test_awaitable_restart_callback_is_not_executed_under_apply_lock(tmp_path):
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/old"))
+    configuration = AsyncMock(spec=ConfigurationService)
+    prepared = _prepared(
+        _settings("nvidia_nim/old", port=9090), tmp_path, pending_fields=("PORT",)
+    )
+    configuration.prepare.return_value = prepared
+    configuration.commit.return_value = prepared.applied_response()
+    callback_tasks = []
+
+    async def close_on_restart():
+        callback_tasks.append(asyncio.current_task())
+        await runtime.close()
+
+    # A dynamically supplied callback can evade static checking by returning a coroutine.
+    callback = MagicMock(side_effect=close_on_restart)
+    runtime = ApplicationRuntime(
+        manager,
+        configuration=configuration,
+        transcriber=None,
+        restart_callback=callback,
+    )
+    with patch(
+        "free_claude_code.runtime.application.check_credentials",
+        AsyncMock(return_value=()),
+    ):
+        apply = asyncio.create_task(runtime.apply_admin_config({"PORT": "9090"}))
+        try:
+            done, _ = await asyncio.wait({apply}, timeout=2)
+            assert apply in done, "restart callback deadlocked with runtime.close"
+            result = apply.result()
+            assert result["applied"] is True
+            restart = result["restart"]
+            assert isinstance(restart, dict)
+            assert restart["automatic"] is False
+            assert runtime._pending_fields == ["PORT"]
+            assert callback_tasks == []
+            callback.assert_called_once_with()
+        finally:
+            for task in callback_tasks:
+                task.cancel()
+            apply.cancel()
+            await asyncio.gather(apply, return_exceptions=True)
+            await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -33,7 +80,7 @@ async def test_cancelled_commit_settles_before_shutdown(tmp_path, pending, fail)
         return prepared.applied_response()
 
     configuration.commit.side_effect = commit
-    restart = AsyncMock()
+    restart = MagicMock(return_value=None)
     runtime = ApplicationRuntime(
         manager, configuration=configuration, transcriber=None, restart_callback=restart
     )
@@ -57,7 +104,7 @@ async def test_cancelled_commit_settles_before_shutdown(tmp_path, pending, fail)
         if fail:
             assert isinstance(error.value.__cause__, OSError)
         assert manager.current_generation_id == (2 if not pending and not fail else 1)
-        assert restart.await_count == (1 if pending and not fail else 0)
+        assert restart.call_count == (1 if pending and not fail else 0)
         assert await asyncio.wait_for(close, 5)
         with pytest.raises(ApplicationUnavailableError):
             await runtime.apply_admin_config({})
@@ -97,7 +144,7 @@ async def test_worker_commit_retains_ownership_against_queued_apply(
     store = ManagedConfigStore()
     store.initialize()
     manager = ProviderRuntimeManager(_settings("nvidia_nim/old"))
-    restart = AsyncMock()
+    restart = MagicMock(return_value=None)
     runtime = ApplicationRuntime(
         manager,
         configuration=ConfigurationService(store),
@@ -146,7 +193,7 @@ async def test_worker_commit_retains_ownership_against_queued_apply(
                 assert (await asyncio.wait_for(second, 5))["applied"]
             assert writes == (["WARNING"] if shutdown else ["WARNING", "ERROR"])
             assert store.read().settings.log_level == writes[-1]
-            assert restart.await_count == len(writes)
+            assert restart.call_count == len(writes)
         finally:
             release.set()
             await asyncio.gather(
