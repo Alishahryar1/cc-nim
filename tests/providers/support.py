@@ -84,13 +84,14 @@ def immediate_admission(
     *,
     provider_name: str = "TEST",
     max_attempts: int = 5,
+    max_concurrency: int = 1_000,
 ) -> ProviderAdmissionController:
     """Return a real controller with deterministic zero-delay recovery."""
     return ProviderAdmissionController(
         provider_name=provider_name,
         rate_limit=1_000_000,
         rate_window=1.0,
-        max_concurrency=1_000,
+        max_concurrency=max_concurrency,
         max_attempts=max_attempts,
         base_delay=0.0,
         max_delay=0.0,

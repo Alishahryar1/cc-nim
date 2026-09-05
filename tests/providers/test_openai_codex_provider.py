@@ -189,6 +189,99 @@ async def _collect(stream: AsyncIterator[str]) -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "trailing", ['data: {"type": "ping"}\n\n', "data: invalid\n\n"]
+)
+async def test_native_terminal_stops_before_trailing_data(trailing: str) -> None:
+    response = _CloseTrackingResponse(
+        200,
+        headers={"content-type": "text/event-stream"},
+        stream=_StaticAsyncBody(
+            (
+                _sse(
+                    (
+                        "response.completed",
+                        {
+                            "type": "response.completed",
+                            "response": {
+                                "id": "resp_done",
+                                "status": "completed",
+                                "output": [],
+                            },
+                        },
+                    )
+                )
+                + trailing
+            ).encode()
+        ),
+    )
+    async with httpx.AsyncClient(
+        base_url=_config().base_url,
+        transport=httpx.MockTransport(lambda request: response),
+    ) as client:
+        provider = OpenAICodexProvider(
+            _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        )
+        events = parse_sse_text(
+            await _collect(provider.stream_responses(_responses_request()))
+        )
+    assert [event.event for event in events] == ["response.completed"]
+    assert response.close_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize(
+    "code,status,kind",
+    [
+        ("invalid_api_key", 401, FailureKind.AUTHENTICATION),
+        ("permission_denied", 403, FailureKind.PERMISSION),
+    ],
+)
+async def test_structured_auth_failure_is_canonical_without_oauth_recovery(
+    native: bool, code: str, status: int, kind: FailureKind
+) -> None:
+    auth = _FakeAuth()
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(
+                (
+                    "response.failed",
+                    {
+                        "type": "response.failed",
+                        "response": {
+                            "id": "resp_failure",
+                            "error": {"code": code, "message": "credential rejected"},
+                        },
+                    },
+                )
+            ),
+        )
+
+    async with httpx.AsyncClient(
+        base_url=_config().base_url, transport=httpx.MockTransport(handler)
+    ) as client:
+        provider = OpenAICodexProvider(
+            _config(), auth=auth, admission=_admission(), client=client
+        )
+        with pytest.raises(ExecutionFailure) as caught:
+            await _collect(
+                provider.stream_responses(_responses_request())
+                if native
+                else provider.stream_messages(_request())
+            )
+    assert (caught.value.kind, caught.value.status_code) == (kind, status)
+    assert not caught.value.retryable
+    assert calls == 1 and auth.recovery_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_provider_uses_subscription_headers_and_visible_model_catalog() -> None:
     requests: list[httpx.Request] = []
 

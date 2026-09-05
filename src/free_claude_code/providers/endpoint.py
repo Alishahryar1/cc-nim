@@ -8,13 +8,6 @@ import httpx
 import httpx2
 from openai import AsyncOpenAI, Omit
 
-from free_claude_code.providers.admission import (
-    ProviderAttempt,
-    ProviderCorrectionAction,
-    ProviderExecution,
-)
-from free_claude_code.providers.failure_policy import provider_authentication_status
-
 
 @dataclass(frozen=True, slots=True)
 class HttpEndpoint:
@@ -42,7 +35,7 @@ class _BorrowedTransport(httpx2.AsyncBaseTransport):
 
 
 class RequestEndpoint:
-    """Resolve one request's credentials and permit one refresh before commitment."""
+    """Prepare an isolated connection view; callers own replay and refresh policy."""
 
     def __init__(
         self,
@@ -52,13 +45,12 @@ class RequestEndpoint:
         self._context = context
         self._transport = transport
         self._http: httpx2.AsyncClient | None = None
-        self._refreshed = False
         self._refresh_pending = False
-        self._committed = False
         self._omit_authorization = False
 
-    def commit(self) -> None:
-        self._committed = True
+    def request_refresh(self) -> None:
+        """Resolve a fresh credential snapshot at the next preparation."""
+        self._refresh_pending = True
 
     async def aclose(self) -> None:
         if self._http is not None:
@@ -103,20 +95,3 @@ class RequestEndpoint:
 
     def openai_headers(self) -> dict[str, str | Omit]:
         return {"Authorization": Omit()} if self._omit_authorization else {}
-
-    async def retry_authentication(
-        self, error: Exception, attempt: ProviderAttempt, execution: ProviderExecution
-    ) -> bool:
-        if self._refreshed or self._committed:
-            return False
-        status = provider_authentication_status(error)
-        if status not in {401, 403}:
-            return False
-        allowed = (
-            execution.can_attempt
-            if attempt.accepted
-            else await attempt.correct(error) is ProviderCorrectionAction.RETRY
-        )
-        if allowed:
-            self._refreshed = self._refresh_pending = True
-        return allowed

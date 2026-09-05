@@ -63,6 +63,7 @@ from free_claude_code.providers.failure_policy import (
     context_window_exceeded_provider_failure,
     is_context_window_finish_reason,
     is_retryable_stream_error,
+    provider_authentication_status,
     underlying_provider_error,
 )
 from free_claude_code.providers.http import (
@@ -784,6 +785,10 @@ class OpenAIChatProvider(BaseProvider):
         *,
         used_retry_kinds: set[str] | None = None,
         endpoint: RequestEndpoint | None = None,
+        recover_authentication: Callable[
+            [Exception, ProviderAttempt, ProviderExecution], Awaitable[bool]
+        ]
+        | None = None,
     ) -> tuple[Any, dict, ProviderAttempt]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
@@ -814,7 +819,7 @@ class OpenAIChatProvider(BaseProvider):
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                if endpoint is not None and await endpoint.retry_authentication(
+                if recover_authentication is not None and await recover_authentication(
                     error, attempt, execution
                 ):
                     continue
@@ -1012,6 +1017,8 @@ class _OpenAIChatStreamRunner:
         self._response_model = response_model
         self._reasoning = reasoning
         self._terminal_failure: ExecutionFailure | None = None
+        self._authentication_recovered = False
+        self._committed = False
         self._endpoint = (
             RequestEndpoint(endpoint_context, provider._endpoint_transport)
             if endpoint_context is not None
@@ -1026,8 +1033,7 @@ class _OpenAIChatStreamRunner:
         provider_stream = self._run_execution(execution)
         try:
             async for event in provider_stream:
-                if self._endpoint is not None:
-                    self._endpoint.commit()
+                self._committed = True
                 yield event
         except asyncio.CancelledError:
             raise
@@ -1089,6 +1095,7 @@ class _OpenAIChatStreamRunner:
                     ProviderOperationKind.GENERATION,
                     used_retry_kinds=used_retry_kinds,
                     endpoint=self._endpoint,
+                    recover_authentication=self._retry_authentication,
                 )
                 scope = ProviderAttemptScope(
                     attempt,
@@ -1194,6 +1201,23 @@ class _OpenAIChatStreamRunner:
         for event in recovery.flush():
             yield event
 
+    async def _retry_authentication(
+        self, error: Exception, attempt: ProviderAttempt, execution: ProviderExecution
+    ) -> bool:
+        if self._endpoint is None or self._authentication_recovered or self._committed:
+            return False
+        if provider_authentication_status(error) not in {401, 403}:
+            return False
+        allowed = (
+            execution.can_attempt
+            if attempt.accepted
+            else await attempt.correct(error) is ProviderCorrectionAction.RETRY
+        )
+        if allowed:
+            self._authentication_recovered = True
+            self._endpoint.request_refresh()
+        return allowed
+
     async def _resolve_attempt_failure(
         self,
         *,
@@ -1206,12 +1230,8 @@ class _OpenAIChatStreamRunner:
         req_tag: str,
     ) -> _OpenAIChatFailureResolution:
         """Resolve one failed generation attempt without owning retry policy."""
-        if (
-            scope is not None
-            and self._endpoint is not None
-            and await self._endpoint.retry_authentication(
-                error, scope.attempt, execution
-            )
+        if scope is not None and await self._retry_authentication(
+            error, scope.attempt, execution
         ):
             recovery.discard()
             return _OpenAIChatFailureResolution(outcome=_OpenAIChatFailureOutcome.RETRY)
@@ -1371,6 +1391,7 @@ class _OpenAIChatStreamRunner:
                     operation_kind,
                     used_retry_kinds=used_retry_kinds,
                     endpoint=self._endpoint,
+                    recover_authentication=self._retry_authentication,
                 )
                 scope = ProviderAttemptScope(
                     attempt,

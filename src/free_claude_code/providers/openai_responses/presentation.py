@@ -1,7 +1,6 @@
 """Client-protocol presenters shared by Responses upstream transports."""
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
 from typing import Protocol
 
 from free_claude_code.core.failures import ExecutionFailure
@@ -94,13 +93,6 @@ class NativeResponsesPresenter:
         ):
             return (self._relay.feed(raw_error.event_type, raw_error.payload),)
         return (self._relay.synthesize_failure(failure),)
-
-
-@dataclass(slots=True)
-class ResponsesExecutionOutcome:
-    """Provider outcome retained when terminal failure is consumed on-wire."""
-
-    failure: Exception | None = None
 
 
 type ResponsesPresenterFactory = Callable[[], ResponsesStreamPresenter]

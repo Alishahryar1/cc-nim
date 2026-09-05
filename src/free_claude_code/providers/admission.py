@@ -191,6 +191,13 @@ class ProviderExecution:
         if self._state is ProviderExecutionState.ACTIVE:
             self._state = ProviderExecutionState.ABANDONED
 
+    async def aclose(self) -> None:
+        """End the operation after its attempts close and release recovery ownership."""
+        if self._active_claim is not None:
+            raise RuntimeError("close the active provider attempt before its execution")
+        self.abandon()
+        await self._controller._release_execution(self)
+
     def _claim_attempt(
         self,
         operation_kind: ProviderOperationKind,
@@ -889,6 +896,19 @@ class ProviderAdmissionController:
                 return
             episode.leader = None
             self._condition.notify_all()
+
+    async def _release_execution(self, execution: ProviderExecution) -> None:
+        """An execution may finish between probes without opening another attempt."""
+        async with self._condition:
+            episode = self._episode
+            if episode is None:
+                return
+            episode.waiters.discard(execution)
+            if episode.leader is execution:
+                episode.leader = None
+                episode.probe_active = False
+                # Keep the provider's backoff; the next caller inherits its probe.
+                self._condition.notify_all()
 
     def _release_concurrency(self) -> None:
         self._concurrency_sem.release()

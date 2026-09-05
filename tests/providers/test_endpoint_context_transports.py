@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
+import httpx
 import httpx2
 import pytest
 from openai import AsyncOpenAI
@@ -13,6 +14,10 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
+from free_claude_code.providers.admission import (
+    ProviderExecution,
+    ProviderExecutionState,
+)
 from free_claude_code.providers.endpoint import HttpEndpoint
 from free_claude_code.providers.openai_chat import (
     NO_REASONING,
@@ -133,6 +138,119 @@ def _stream(
 
 async def _consume(stream: AsyncIterator[str]) -> None:
     assert [event async for event in stream]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("force_failure", [False, True])
+async def test_responses_credential_failure_is_outside_generation_budget(
+    force_failure: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = 0
+    executions: list[ProviderExecution] = []
+
+    class FailingContext(Context):
+        async def endpoint(self, *, force_refresh: bool = False) -> HttpEndpoint:
+            endpoint = await super().endpoint(force_refresh=force_refresh)
+            if force_refresh or not force_failure:
+                raise httpx.ReadError("credential service unavailable")
+            return endpoint
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return httpx2.Response(401, json={"error": {"message": "expired"}})
+
+    pool = httpx2.MockTransport(handler)
+    async with AsyncOpenAI(
+        api_key="base", http_client=httpx2.AsyncClient(transport=pool)
+    ) as client:
+        transport = _transport(client, responses=True, pool=pool)
+        start_execution = transport._admission.start_execution
+
+        def record_execution(*, request_id: str | None = None) -> ProviderExecution:
+            execution = start_execution(request_id=request_id)
+            executions.append(execution)
+            return execution
+
+        monkeypatch.setattr(transport._admission, "start_execution", record_execution)
+        context = FailingContext("a")
+        with pytest.raises(ExecutionFailure):
+            await _consume(_stream(transport, context, responses_ingress=True))
+    assert calls == int(force_failure)
+    assert context.calls == ([False, True] if force_failure else [False])
+    assert len(executions) == 1
+    assert executions[0].attempts_started == int(force_failure)
+    assert executions[0].state is ProviderExecutionState.FAILED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("forced_refresh", [False, True])
+async def test_preparation_exit_releases_recovery_for_other_requests(
+    cancel: bool,
+    forced_refresh: bool,
+) -> None:
+    calls = 0
+    preparing = asyncio.Event()
+    finish_preparation = asyncio.Event()
+    healthy_prepared = asyncio.Event()
+
+    class InterruptedContext(Context):
+        async def endpoint(self, *, force_refresh: bool = False) -> HttpEndpoint:
+            endpoint = await super().endpoint(force_refresh=force_refresh)
+            if force_refresh if forced_refresh else len(self.calls) == 2:
+                preparing.set()
+                await finish_preparation.wait()
+                raise httpx.ReadError("credential service unavailable")
+            return endpoint
+
+    class HealthyContext(Context):
+        async def endpoint(self, *, force_refresh: bool = False) -> HttpEndpoint:
+            endpoint = await super().endpoint(force_refresh=force_refresh)
+            healthy_prepared.set()
+            return endpoint
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx2.Response(503, json={"error": {"message": "unavailable"}})
+        if forced_refresh and calls == 2:
+            return httpx2.Response(401, json={"error": {"message": "expired"}})
+        return _response(request)
+
+    pool = httpx2.MockTransport(handler)
+    async with AsyncOpenAI(
+        api_key="base", http_client=httpx2.AsyncClient(transport=pool)
+    ) as client:
+        transport = _transport(client, responses=True, pool=pool)
+        first = asyncio.create_task(
+            _consume(
+                _stream(transport, InterruptedContext("a"), responses_ingress=True)
+            )
+        )
+        async with asyncio.timeout(2):
+            await preparing.wait()
+            waiting = asyncio.create_task(
+                _consume(
+                    _stream(
+                        transport, HealthyContext("healthy"), responses_ingress=True
+                    )
+                )
+            )
+            await healthy_prepared.wait()
+            assert not waiting.done()
+            if cancel:
+                first.cancel()
+            else:
+                finish_preparation.set()
+            with pytest.raises(asyncio.CancelledError if cancel else ExecutionFailure):
+                await first
+            await waiting
+            await _consume(
+                _stream(transport, Context("healthy"), responses_ingress=True)
+            )
+    assert calls == (4 if forced_refresh else 3)
 
 
 @pytest.mark.asyncio
