@@ -17,6 +17,20 @@ from free_claude_code.core.anthropic.sse_aggregation import (
 from free_claude_code.core.json_types import JsonObject
 
 
+def test_native_body_rejects_nonfinite_json_before_http_serialization() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "public",
+            "messages": [{"role": "user", "content": "hi"}],
+            "extra_body": {"extension": float("nan")},
+        }
+    )
+    with pytest.raises(NativeMessagesError, match="finite JSON"):
+        build_native_messages_request(
+            request, options=NativeMessagesOptions("native", 4096)
+        )
+
+
 def test_native_body_preserves_blocks_and_merges_leading_system_in_order() -> None:
     request = MessagesRequest.model_validate(
         {

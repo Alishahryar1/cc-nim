@@ -4,7 +4,7 @@ import re
 
 from ..stream_contracts import SSEEvent, parse_sse_text
 
-_EVENT_BOUNDARY = re.compile(r"\r?\n\r?\n")
+_EVENT_BOUNDARY = re.compile(r"(?>\r\n|\r|\n){2}")
 
 
 class AnthropicSSEDecoder:

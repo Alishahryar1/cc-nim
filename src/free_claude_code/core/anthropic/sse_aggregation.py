@@ -66,6 +66,13 @@ async def aggregate_anthropic_sse_to_message(
                 blocks[idx]["signature"] = str(blocks[idx].get("signature", "")) + str(
                     delta.get("signature", "")
                 )
+            elif dtype == "citations_delta":
+                citation = delta.get("citation")
+                citations = blocks[idx].get("citations")
+                if citations is None:
+                    citations = []
+                if isinstance(citation, dict) and isinstance(citations, list):
+                    blocks[idx]["citations"] = [*citations, dict(citation)]
         elif ptype == "message_delta":
             delta = payload.get("delta")
             if isinstance(delta, dict):

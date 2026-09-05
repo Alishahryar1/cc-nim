@@ -1,5 +1,6 @@
 """Native Messages wire preparation, without a cross-protocol intermediate."""
 
+import json
 import re
 from collections.abc import Mapping
 from copy import deepcopy
@@ -67,6 +68,17 @@ class NativeMessagesOptions:
 class PreparedMessagesRequest:
     body: JsonObject
     betas: tuple[str, ...] = ()
+
+
+def validate_messages_json(body: JsonObject) -> None:
+    """Reject values the HTTP JSON encoder cannot send before opening an attempt."""
+
+    try:
+        json.dumps(body, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise NativeMessagesError(
+            "Messages request must be finite JSON encodable as UTF-8."
+        ) from exc
 
 
 def apply_messages_options(body: JsonObject, options: NativeMessagesOptions) -> None:
@@ -168,4 +180,5 @@ def build_native_messages_request(
     betas = tuple(request.betas or ())
     if any(_BETA_NAME.fullmatch(beta) is None for beta in betas):
         raise NativeMessagesError("Messages beta names must be valid header tokens.")
+    validate_messages_json(body)
     return PreparedMessagesRequest(body=body, betas=tuple(dict.fromkeys(betas)))

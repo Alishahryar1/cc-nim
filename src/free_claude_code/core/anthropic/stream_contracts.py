@@ -4,6 +4,7 @@ Used by default CI contract tests and by opt-in live smoke scenarios.
 """
 
 import json
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -71,7 +72,8 @@ def parse_sse_lines(lines: Iterable[str]) -> list[SSEEvent]:
 
 
 def parse_sse_text(text: str) -> list[SSEEvent]:
-    return parse_sse_lines(text.splitlines())
+    # SSE uses CR/LF framing; Unicode line separators can occur inside JSON text.
+    return parse_sse_lines(re.split(r"\r\n|\r|\n", text))
 
 
 def _append_event(

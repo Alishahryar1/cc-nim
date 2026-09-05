@@ -120,6 +120,15 @@ Responses-to-Messages-to-Responses round trip.
 conversion, token estimation, and stream ledgers.
 [core/openai_responses](src/free_claude_code/core/openai_responses/) owns direct
 Responses conversion, native forwarding, and event/identity helpers.
+Native Messages request preparation and stream validation live in
+`core/anthropic/native.py` and `native_stream.py`. Direct Responses-to-Messages
+conversion, Responses presentation of Messages events, and signed-reasoning replay
+belong to `core/openai_responses/messages_request.py`, `messages_stream.py`, and
+`reasoning_replay.py`. These helpers keep transport and credential ownership in
+`providers/`. `providers/anthropic_messages/transport.py` borrows HTTP and endpoint
+resources, prepares each ingress directly, and owns native Messages attempts and
+recovery. The request endpoint context supplies credentials without mutating a
+shared client. Account/provider registration activates this transport separately.
 [Protocol-matrix tests](tests/contracts/test_protocol_matrix.py) exercise all
 four cells; [stream contracts](tests/contracts/test_stream_contracts.py) protect
 public event lifecycles.
