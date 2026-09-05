@@ -71,6 +71,10 @@ class ResponsesProviderStream:
 
         if self.completed:
             return []
+        if (
+            failure := responses_stream_failure_from_event(event_type, data)
+        ) is not None:
+            raise failure
         if event_type == "response.output_item.added":
             return self._item_added(data)
         if event_type in {
@@ -86,8 +90,6 @@ class ResponsesProviderStream:
             return self._item_done(data)
         if event_type in {"response.completed", "response.incomplete"}:
             return self._finish(data, incomplete=event_type == "response.incomplete")
-        if event_type in {"response.failed", "error", "response.error"}:
-            raise responses_stream_failure_from_event(event_type, data)
         return []
 
     def _item_added(self, data: dict[str, Any]) -> list[str]:
@@ -244,12 +246,20 @@ class ResponsesProviderStream:
 def responses_stream_failure_from_event(
     event_type: str,
     data: dict[str, Any],
-) -> ResponsesStreamFailure:
-    """Retain one native failure event for provider-owned retry decisions."""
+) -> ResponsesStreamFailure | None:
+    """Recognize failure evidence independently of transport event labels."""
 
     response = data.get("response")
     response = response if isinstance(response, dict) else {}
-    error = response.get("error", data.get("error"))
+    error = data.get("error")
+    if error is None:
+        error = response.get("error")
+    failure_types = ("response.failed", "error", "response.error")
+    payload_type = data.get("type")
+    if event_type not in failure_types and payload_type in failure_types:
+        event_type = payload_type
+    if error is None and event_type not in failure_types:
+        return None
     if not isinstance(error, dict):
         error = data if event_type in {"error", "response.error"} else {}
     message = error.get("message")

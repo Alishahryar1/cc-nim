@@ -155,6 +155,67 @@ async def _collect_queued_responses(harness: Harness) -> list[str]:
     ]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("responses", [False, True])
+@pytest.mark.parametrize("probing", [False, True])
+@pytest.mark.parametrize(
+    "label,payload_type",
+    [
+        (None, None),
+        ("message", None),
+        (None, "envelope"),
+        ("response.completed", "response.completed"),
+    ],
+)
+async def test_sse_labels_cannot_hide_copilot_authentication_failure(
+    responses: bool,
+    probing: bool,
+    label: str | None,
+    payload_type: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = Harness(tmp_path, CopilotEgress.RESPONSES)
+    admission = harness.provider._admission
+    payload: JsonObject = {
+        "error": {"code": "invalid_api_key", "message": "expired"},
+        "request_id": "upstream-auth-rejection",
+    }
+    if payload_type is not None:
+        payload["type"] = payload_type
+    harness.responses_content = (
+        (f"event: {label}\n" if label else "") + f"data: {json.dumps(payload)}\n\n"
+    ).encode()
+    if probing:
+        owner = admission.start_execution()
+        initial = await owner.open_attempt(ProviderOperationKind.GENERATION)
+        await initial.fail(httpx.ReadError("provider offline"))
+        await initial.aclose()
+        await owner.aclose()
+    accepted = 0
+    accept = admission._attempt_accepted
+
+    async def record_accept(execution, permit):
+        nonlocal accepted
+        accepted += 1
+        await accept(execution, permit)
+
+    monkeypatch.setattr(admission, "_attempt_accepted", record_accept)
+    try:
+        with pytest.raises(ExecutionFailure) as caught:
+            _ = [event async for event in harness.stream(responses)]
+        assert caught.value.status_code == 401 and not caught.value.retryable
+        assert "upstream-auth-rejection" in caught.value.message
+        assert len(harness.seen) == 2
+        assert harness.runtime.sessions[0].endpoint_calls == 2
+        assert not harness.auth.is_connected()
+        assert accepted == 0 and admission._episode is None
+        assert all(wire.closed for wire in harness.wires)
+    finally:
+        await harness.provider.cleanup()
+        await harness.auth.close()
+
+
 class Wire(httpx.AsyncByteStream, httpx2.AsyncByteStream):
     def __init__(self, content: bytes) -> None:
         self.content = content

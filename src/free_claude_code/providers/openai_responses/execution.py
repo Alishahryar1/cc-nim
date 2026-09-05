@@ -114,14 +114,20 @@ async def run_responses_stream(
                 source = await backend.open_attempt(scope)
                 stream_opened = True
                 async for event_type, payload in source:
-                    if event_type in {"response.failed", "error", "response.error"}:
-                        error = responses_stream_failure_from_event(event_type, payload)
+                    error = responses_stream_failure_from_event(event_type, payload)
+                    if error is not None:
                         try:
-                            error.payload = source.normalize(event_type, payload)
+                            error.payload = source.normalize(error.event_type, payload)
                         except RetryableProviderProtocolError:
                             # Partial failure identity must not hide the real error.
                             error.payload = None
                         raise error
+                    response_type = payload.get("type") or event_type
+                    if not isinstance(response_type, str) or not response_type:
+                        raise TruncatedProviderStreamError(
+                            "Provider returned an invalid Responses event type."
+                        )
+                    event_type = response_type
                     if reports_context_window_incomplete(event_type, payload):
                         raise context_window_exceeded_provider_failure()
                     payload = source.normalize(event_type, payload)

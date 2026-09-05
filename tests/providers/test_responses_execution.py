@@ -194,6 +194,32 @@ async def collect(stream: AsyncIterator[str]) -> str:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["sdk", "codex"])
+@pytest.mark.parametrize("native", [False, True])
+@pytest.mark.parametrize("label", ["message", "envelope"])
+async def test_responses_payload_type_controls_successful_presentation(
+    backend: str,
+    native: bool,
+    label: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wire = "".join(
+        f"event: {label}\ndata: {json.dumps(event)}\n\n"
+        for event in [
+            response_event("response.created"),
+            _text_delta("preserved"),
+            response_event("response.completed"),
+        ]
+    )
+    async with harness_for(backend, monkeypatch) as harness:
+        harness.bodies.extend(Body(wire) for _ in range(3))
+        events = parse_sse_text(await collect(harness.stream(native)))
+        assert events[-1].event == ("response.completed" if native else "message_stop")
+        assert "preserved" in json.dumps([event.data for event in events])
+        assert len(harness.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["sdk", "codex"])
 async def test_first_frame_rejection_does_not_accept_provider_recovery(
     backend: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

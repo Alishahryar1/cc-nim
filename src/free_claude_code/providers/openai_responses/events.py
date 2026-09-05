@@ -68,12 +68,11 @@ async def _decode_sse(
                     raise TruncatedProviderStreamError(
                         "Provider returned a non-object Responses event."
                     )
-                resolved_type = event_type or payload.get("type")
-                if not resolved_type and payload.get("error") is not None:
-                    resolved_type = "error"
+                # Framing carries the SSE label unchanged. The Responses
+                # interpreter owns payload types and structured error evidence.
+                resolved_type = event_type
                 event_type = ""
-                if isinstance(resolved_type, str) and resolved_type:
-                    yield resolved_type, payload
+                yield resolved_type, payload
                 continue
             field, _, value = line.partition(":")
             value = value.removeprefix(" ")
