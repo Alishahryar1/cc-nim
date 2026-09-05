@@ -169,6 +169,7 @@ async def test_native_responses_preserves_request_and_upstream_event_identity() 
     captured: list[dict[str, object]] = []
     created_response = {
         **_completed_response(model="upstream-model"),
+        "created_at": 1788587503,
         "status": "in_progress",
         "output": [],
         "usage": None,
@@ -179,7 +180,14 @@ async def test_native_responses_preserves_request_and_upstream_event_identity() 
         "response": created_response,
     }
     delta = _text_delta("hello", sequence=1)
-    completed = _completed_event(sequence=2)
+    completed = {
+        **_completed_event(sequence=2),
+        "response": {
+            **_completed_response(),
+            "created_at": 1788587503,
+            "completed_at": 1788587504,
+        },
+    }
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
@@ -224,8 +232,14 @@ async def test_native_responses_preserves_request_and_upstream_event_identity() 
     ]
     assert events[0].data["response"]["id"] == "resp_test"
     assert events[0].data["response"]["model"] == "public-model"
+    for event in (events[0], events[2]):
+        timestamp = event.data["response"]["created_at"]
+        assert type(timestamp) is int
+        assert timestamp == 1788587503
     assert events[1].data == delta
     assert events[2].data["response"]["model"] == "public-model"
+    assert type(events[2].data["response"]["completed_at"]) is int
+    assert events[2].data["response"]["completed_at"] == 1788587504
 
 
 @pytest.mark.asyncio

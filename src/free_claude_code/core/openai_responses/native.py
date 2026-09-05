@@ -68,7 +68,7 @@ class NativeResponsesRelay:
         return self._terminal_type is not None
 
     def feed(self, event_type: str, payload: Mapping[str, object]) -> str:
-        """Format one upstream event after rewriting FCC-owned model metadata."""
+        """Format public model metadata and canonical whole-second timestamps."""
 
         if self._terminal_type is not None:
             raise ValueError(
@@ -79,6 +79,12 @@ class NativeResponsesRelay:
         response = data.get("response")
         if isinstance(response, dict):
             response["model"] = self._public_model
+            # SDK models coerce integer timestamps to floats; strict clients
+            # require JSON integers. Preserve any actual fractional precision.
+            for field in ("created_at", "completed_at"):
+                timestamp = response.get(field)
+                if isinstance(timestamp, float) and timestamp.is_integer():
+                    response[field] = int(timestamp)
             self._response = cast(JsonObject, deepcopy(response))
             response_id = response.get("id")
             if isinstance(response_id, str) and response_id:
