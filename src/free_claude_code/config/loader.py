@@ -56,14 +56,14 @@ class ManagedConfigSnapshot:
 
 
 class ManagedConfigStore:
-    """Own managed configuration initialization, fresh reads, and serialized writes."""
+    """Own initialization and coordinate fresh reads with atomic writes."""
 
     def __init__(self) -> None:
         self.path = managed_env_path()
         self._lock_path = config_lock_path()
 
     @contextmanager
-    def _write_lock(self) -> Iterator[None]:
+    def _storage_lock(self) -> Iterator[None]:
         lock = InterprocessFileLock(self._lock_path)
         if not lock.acquire(wait=True, timeout=10.0):
             raise TimeoutError(
@@ -75,7 +75,7 @@ class ManagedConfigStore:
             lock.release()
 
     def initialize(self, env: Mapping[str, str] | None = None) -> None:
-        with self._write_lock():
+        with self._storage_lock():
             consolidate_managed_config(dict(os.environ if env is None else env))
 
     def _read_managed(self) -> dict[str, str]:
@@ -94,7 +94,9 @@ class ManagedConfigStore:
 
     def read(self, env: Mapping[str, str] | None = None) -> ManagedConfigSnapshot:
         process = dict(os.environ if env is None else env)
-        managed = self._read_managed()
+        # Windows readers deny replacement while their file handles remain open.
+        with self._storage_lock():
+            managed = self._read_managed()
         snapshot = compose_settings_snapshot(managed, process)
         return ManagedConfigSnapshot(
             snapshot.settings,
@@ -105,7 +107,7 @@ class ManagedConfigStore:
         )
 
     def commit(self, values: Mapping[str, str]) -> None:
-        with self._write_lock():
+        with self._storage_lock():
             self._read_managed()  # Never overwrite a newer schema or missing storage.
             atomic_write_managed_config(values, path=self.path)
 
@@ -116,7 +118,7 @@ class ManagedConfigStore:
         process = dict(os.environ if env is None else env)
         if not self.path.is_file():
             return ()
-        with self._write_lock():
+        with self._storage_lock():
             if not self.path.is_file():
                 return ()
             managed = self._read_managed()

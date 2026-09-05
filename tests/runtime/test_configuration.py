@@ -1,4 +1,5 @@
 import asyncio
+import io
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
@@ -50,11 +51,18 @@ def test_preparation_uses_captured_disk_and_process_state(monkeypatch):
     assert "PORT" not in prepared.target_values
 
 
-def test_reads_do_not_wait_for_write_lock():
+@pytest.mark.asyncio
+async def test_read_waits_for_storage_lock_without_blocking_event_loop():
     store = ManagedConfigStore()
     store.initialize()
+    service = ConfigurationService(store)
     with InterprocessFileLock(config_lock_path()):
-        assert store.read().settings is not None
+        reader = asyncio.create_task(service.admin_values())
+        done, _ = await asyncio.wait({reader}, timeout=0.1)
+    try:
+        assert not done
+    finally:
+        await asyncio.wait_for(reader, 5)
 
 
 @pytest.mark.parametrize("schema", ["", "999"])
@@ -102,6 +110,47 @@ def test_cooperative_commits_are_serialized_and_leave_complete_files():
         list(executor.map(write, range(8120, 8128)))
     assert len(seen) == 8
     assert store.read().managed["PORT"] == seen[-1]
+    assert not list(store.path.parent.glob("*.tmp"))
+
+
+def test_atomic_commit_waits_for_an_open_snapshot_reader(monkeypatch):
+    store = ManagedConfigStore()
+    store.initialize()
+    store.commit({"FCC_CONFIG_SCHEMA": "1", "PORT": "8123"})
+    opened, release = threading.Event(), threading.Event()
+    original_open = io.open
+    reader_thread = None
+
+    def hold_reader(path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        if path == store.path and threading.current_thread() is reader_thread:
+            opened.set()
+            if not release.wait(5):
+                handle.close()
+                raise TimeoutError("snapshot reader was not released")
+        return handle
+
+    def read_snapshot():
+        nonlocal reader_thread
+        reader_thread = threading.current_thread()
+        return store.read({})
+
+    monkeypatch.setattr(io, "open", hold_reader)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        reader = executor.submit(read_snapshot)
+        writer = None
+        try:
+            assert opened.wait(5)
+            writer = executor.submit(
+                store.commit, {"FCC_CONFIG_SCHEMA": "1", "PORT": "8124"}
+            )
+            with pytest.raises(TimeoutError):
+                writer.result(timeout=0.1)
+        finally:
+            release.set()
+        assert reader.result(timeout=5).settings.port == 8123
+        assert writer.result(timeout=5) is None
+    assert store.read({}).settings.port == 8124
     assert not list(store.path.parent.glob("*.tmp"))
 
 
