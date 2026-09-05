@@ -152,4 +152,33 @@ export default async function freeClaudeCode(pi: ExtensionAPI): Promise<void> {
 		api: "anthropic-messages",
 		models,
 	});
+
+	pi.on("before_provider_request", (event, ctx) => {
+		const payload = event.payload;
+		if (
+			ctx.model?.provider !== "free-claude-code" ||
+			ctx.model.api !== "anthropic-messages" ||
+			ctx.model.reasoning === false ||
+			!isRecord(payload) || payload.model !== ctx.model.id ||
+			!isRecord(payload.thinking) || payload.thinking.type !== "enabled" ||
+			optionalPositiveInteger(payload.thinking.budget_tokens) === undefined
+		) return;
+
+		const effort = pi.getThinkingLevel();
+		if (effort === "off") return;
+
+		// Pi synthesizes a token budget from this level. Send the original effort
+		// so FCC can choose the provider's supported thinking mode and encoding.
+		const thinking = { ...payload.thinking };
+		delete thinking.type;
+		delete thinking.budget_tokens;
+		return {
+			...payload,
+			thinking: Object.keys(thinking).length > 0 ? thinking : undefined,
+			output_config: {
+				...(isRecord(payload.output_config) ? payload.output_config : {}),
+				effort,
+			},
+		};
+	});
 }
