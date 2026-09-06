@@ -1,5 +1,7 @@
 const state = {
   config: null,
+  applying: false,
+  restart: null,
   fields: new Map(),
   modelOptions: [],
   modelComboboxes: new Set(),
@@ -276,7 +278,11 @@ function navigateToProviderConfiguration(provider, configuring) {
   input.focus({ preventScroll: true });
 }
 
-function renderConnectedAccountCard(provider, status = provider) {
+function connectedAccountName(provider) {
+  return provider.display_name || provider.provider_id;
+}
+
+function renderConnectedAccountCard(provider, status = null) {
   const card = document.createElement("article");
   card.className = "provider-card";
   card.dataset.provider = provider.provider_id;
@@ -285,15 +291,15 @@ function renderConnectedAccountCard(provider, status = provider) {
   const title = document.createElement("div");
   title.className = "provider-title";
   const name = document.createElement("strong");
-  name.textContent = provider.display_name || provider.provider_id;
+  name.textContent = connectedAccountName(provider);
   const pill = document.createElement("span");
-  pill.className = `status-pill ${statusClass(status.state || status.status)}`;
+  pill.className = `status-pill ${statusClass(status?.state)}`;
   pill.textContent = connectedAccountLabel(status);
   title.append(name, pill);
 
   const meta = document.createElement("div");
   meta.className = "provider-meta";
-  meta.textContent = connectedAccountMeta(status);
+  meta.textContent = connectedAccountMeta(provider, status);
 
   const actions = document.createElement("div");
   actions.className = "provider-actions";
@@ -303,35 +309,44 @@ function renderConnectedAccountCard(provider, status = provider) {
 }
 
 function connectedAccountLabel(status) {
+  if (!status) return "Loading";
   const labels = {
     disconnected: "Not connected",
     connecting: "Connecting",
     connected: "Connected",
     error: "Needs attention",
   };
-  return labels[status.state] || status.label || "Not connected";
+  return labels[status.state] || "Not connected";
 }
 
-function connectedAccountMeta(status) {
+function connectedAccountMeta(provider, status) {
+  if (!status) return "Checking account status…";
+  const providerName = connectedAccountName(provider);
+  if (status.state === "connecting") {
+    if (status.mode === "device" && status.user_code && status.verification_url) {
+      return `Enter code ${status.user_code} at ${status.verification_url}`;
+    }
+    return status.message || "Finish signing in, then return to this page.";
+  }
   if (status.connected) {
-    const identity = status.email || "ChatGPT subscription connected";
+    const identity = status.display_identity || status.email || `${providerName} account connected`;
     const models = Number.isInteger(status.model_count)
       ? `${status.model_count} model${status.model_count === 1 ? "" : "s"} available. `
       : "";
     const error = status.message ? `${status.message} ` : "";
     return `${identity}. ${models}${error}Restart your agent to refresh its model picker.`;
   }
-  if (status.mode === "device" && status.user_code) {
-    return `Enter code ${status.user_code} at ${status.verification_url}`;
-  }
-  if (status.state === "connecting") {
-    return "Finish signing in, then return to this page.";
-  }
-  return status.message || "Connect a ChatGPT account to discover subscription models.";
+  return status.message || `Connect your ${providerName} account to discover models.`;
 }
 
 function populateConnectedAccountActions(provider, status, actions) {
   const providerId = provider.provider_id;
+  if (!status) {
+    const loading = authButton("Loading…", () => {});
+    loading.disabled = true;
+    actions.appendChild(loading);
+    return;
+  }
   if (status.state === "connecting") {
     const target = status.authorization_url || status.verification_url;
     if (target) {
@@ -339,11 +354,7 @@ function populateConnectedAccountActions(provider, status, actions) {
     }
     if (status.mode === "device" && status.user_code) {
       actions.appendChild(
-        authButton(
-          "Copy code",
-          () => copyDeviceCode(status.user_code),
-          "secondary-button",
-        ),
+        authButton("Copy code", () => copyDeviceCode(status.user_code), "secondary-button"),
       );
     }
     actions.appendChild(
@@ -351,30 +362,32 @@ function populateConnectedAccountActions(provider, status, actions) {
     );
     return;
   }
-  if (status.connected) {
-    actions.appendChild(
-      authButton(
-        "Reconnect",
-        (button) => startConnectedAccountLogin(providerId, "browser", button),
-      ),
-    );
-    actions.appendChild(
-      authButton(
-        "Disconnect",
-        () => disconnectConnectedAccount(providerId),
-        "secondary-button",
-      ),
-    );
+  const modes = Array.isArray(status.supported_login_modes) ? status.supported_login_modes : [];
+  const defaultMode = status.default_login_mode;
+  if (!["browser", "device"].includes(defaultMode) || !modes.includes(defaultMode)) {
+    actions.appendChild(authButton("Retry", () => refreshConnectedAccount(provider)));
     return;
   }
   actions.appendChild(
-    authButton("Connect", (button) => startConnectedAccountLogin(providerId, "browser", button)),
     authButton(
-      "Use device code",
-      (button) => startConnectedAccountLogin(providerId, "device", button),
-      "secondary-button",
+      status.connected ? "Reconnect" : "Connect",
+      (button) => startConnectedAccountLogin(providerId, defaultMode, button),
     ),
   );
+  if (status.connected) {
+    actions.appendChild(
+      authButton("Disconnect", () => disconnectConnectedAccount(providerId), "secondary-button"),
+    );
+    return;
+  }
+  modes.filter((mode) => mode !== defaultMode).forEach((mode) => {
+    const label = { browser: "Use browser", device: "Use device code" }[mode];
+    if (label) {
+      actions.appendChild(
+        authButton(label, (button) => startConnectedAccountLogin(providerId, mode, button), "secondary-button"),
+      );
+    }
+  });
 }
 
 function authButton(label, action, className = "test-button") {
@@ -390,21 +403,23 @@ async function refreshConnectedAccounts() {
   const providers = (state.config?.provider_status || []).filter(
     (provider) => provider.kind === "connected_account",
   );
-  await Promise.all(
-    providers.map(async (provider) => {
-      try {
-        const status = await api(`/admin/api/providers/${provider.provider_id}/auth`);
-        updateConnectedAccountCard(provider, status);
-        if (status.state === "connecting") pollConnectedAccount(provider);
-      } catch (error) {
-        updateConnectedAccountCard(provider, {
-          state: "error",
-          connected: false,
-          message: error.message,
-        });
-      }
-    }),
-  );
+  await Promise.all(providers.map(refreshConnectedAccount));
+}
+
+async function refreshConnectedAccount(provider) {
+  clearConnectedAccountPoll(provider.provider_id);
+  updateConnectedAccountCard(provider, null);
+  try {
+    const status = await api(`/admin/api/providers/${provider.provider_id}/auth`);
+    updateConnectedAccountCard(provider, status);
+    if (status.state === "connecting") pollConnectedAccount(provider);
+  } catch (error) {
+    updateConnectedAccountCard(provider, {
+      state: "error",
+      connected: false,
+      message: error.message,
+    });
+  }
 }
 
 function updateConnectedAccountCard(provider, status) {
@@ -415,8 +430,10 @@ function updateConnectedAccountCard(provider, status) {
 }
 
 async function startConnectedAccountLogin(providerId, mode, button) {
-  button.disabled = true;
-  const popup = window.open("about:blank", "_blank");
+  const buttons = button.closest(".provider-actions").querySelectorAll("button");
+  buttons.forEach((action) => { action.disabled = true; });
+  clearConnectedAccountPoll(providerId);
+  const popup = mode === "browser" ? window.open("about:blank", "_blank") : null;
   if (popup) popup.opener = null;
   try {
     const status = await api(`/admin/api/providers/${providerId}/auth/login`, {
@@ -426,62 +443,79 @@ async function startConnectedAccountLogin(providerId, mode, button) {
     const provider = connectedAccountDescriptor(providerId);
     updateConnectedAccountCard(provider, status);
     const target = status.authorization_url || status.verification_url;
-    if (target && popup) {
-      popup.location.replace(target);
-    } else if (target) {
-      window.open(target, "_blank", "noopener");
-    } else if (popup) {
-      popup.close();
+    if (mode === "browser") {
+      if (target && popup) {
+        popup.location.replace(target);
+      } else if (target) {
+        window.open(target, "_blank", "noopener");
+      } else if (popup) {
+        popup.close();
+      }
     }
-    pollConnectedAccount(provider);
+    if (status.state === "connecting") pollConnectedAccount(provider);
+    else if (status.connected) await hydrateModelOptions();
   } catch (error) {
     if (popup) popup.close();
     showMessage(error.message, true);
-    button.disabled = false;
+    buttons.forEach((action) => { action.disabled = false; });
   }
 }
 
 async function cancelConnectedAccountLogin(providerId) {
   clearConnectedAccountPoll(providerId);
-  const status = await api(`/admin/api/providers/${providerId}/auth/cancel`, {
-    method: "POST",
-  });
-  updateConnectedAccountCard(connectedAccountDescriptor(providerId), status);
+  const provider = connectedAccountDescriptor(providerId);
+  try {
+    const status = await api(`/admin/api/providers/${providerId}/auth/cancel`, {
+      method: "POST",
+    });
+    updateConnectedAccountCard(provider, status);
+  } catch (error) {
+    showMessage(error.message, true);
+    pollConnectedAccount(provider);
+  }
 }
 
 async function disconnectConnectedAccount(providerId) {
-  if (!window.confirm("Disconnect this ChatGPT account from FCC?")) return;
+  const provider = connectedAccountDescriptor(providerId);
+  if (!window.confirm(`Disconnect this ${connectedAccountName(provider)} account from FCC?`)) return;
   clearConnectedAccountPoll(providerId);
-  const status = await api(`/admin/api/providers/${providerId}/auth`, {
-    method: "DELETE",
-  });
-  updateConnectedAccountCard(connectedAccountDescriptor(providerId), status);
-  await hydrateModelOptions();
+  try {
+    const status = await api(`/admin/api/providers/${providerId}/auth`, { method: "DELETE" });
+    updateConnectedAccountCard(provider, status);
+    await hydrateModelOptions();
+  } catch (error) {
+    showMessage(error.message, true);
+  }
 }
 
 function pollConnectedAccount(provider) {
-  clearConnectedAccountPoll(provider.provider_id);
+  const providerId = provider.provider_id;
+  clearConnectedAccountPoll(providerId);
+  const poller = { timer: null };
+  state.authPollers.set(providerId, poller);
   const poll = async () => {
     try {
-      const status = await api(`/admin/api/providers/${provider.provider_id}/auth`);
+      const status = await api(`/admin/api/providers/${providerId}/auth`);
+      if (state.authPollers.get(providerId) !== poller) return;
       updateConnectedAccountCard(provider, status);
       if (status.state === "connecting") {
-        state.authPollers.set(provider.provider_id, window.setTimeout(poll, 1000));
+        poller.timer = window.setTimeout(poll, 1000);
       } else {
-        state.authPollers.delete(provider.provider_id);
+        state.authPollers.delete(providerId);
         if (status.connected) await hydrateModelOptions();
       }
     } catch (error) {
-      state.authPollers.delete(provider.provider_id);
+      if (state.authPollers.get(providerId) !== poller) return;
+      state.authPollers.delete(providerId);
       showMessage(error.message, true);
     }
   };
-  state.authPollers.set(provider.provider_id, window.setTimeout(poll, 1000));
+  poller.timer = window.setTimeout(poll, 1000);
 }
 
 function clearConnectedAccountPoll(providerId) {
-  const timer = state.authPollers.get(providerId);
-  if (timer) window.clearTimeout(timer);
+  const poller = state.authPollers.get(providerId);
+  if (poller?.timer) window.clearTimeout(poller.timer);
   state.authPollers.delete(providerId);
 }
 
@@ -604,6 +638,7 @@ function renderField(field) {
   input.addEventListener("change", updateDirtyState);
   input.addEventListener("input", () => {
     input.dataset.remove = "false";
+    clearCredentialError(input);
   });
   if (field.type === "optional_model") {
     input.addEventListener("blur", () => {
@@ -633,6 +668,7 @@ function renderField(field) {
       input.dataset.remove = removing ? "true" : "false";
       input.readOnly = removing;
       removeButton.textContent = removing ? "Undo removal" : "Remove";
+      clearCredentialError(input);
       updateDirtyState();
     });
     wrapper.appendChild(removeButton);
@@ -884,36 +920,173 @@ function changedValues() {
 function updateDirtyState() {
   const count = Object.keys(changedValues()).length;
   byId("dirtyState").textContent =
-    count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
-  byId("applyButton").disabled = count === 0;
+    state.restart ? "Changes saved" : count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
+  byId("applyButton").disabled = state.applying || (!state.restart && count === 0);
+}
+
+function clearCredentialError(input) {
+  byId(`${input.id}-error`)?.remove();
+  input.removeAttribute("aria-invalid");
+  input.removeAttribute("aria-describedby");
+}
+
+function showCredentialErrors(checks) {
+  let first = null;
+  checks.forEach((check) => {
+    const input = byId(`field-${check.key}`);
+    if (!input) return;
+    clearCredentialError(input);
+    if (check.status !== "rejected") return;
+    const error = document.createElement("div");
+    error.id = `${input.id}-error`;
+    error.className = "field-error";
+    error.textContent = check.message;
+    input.closest(".field").appendChild(error);
+    input.setAttribute("aria-invalid", "true");
+    input.setAttribute("aria-describedby", error.id);
+    first ||= input;
+  });
+  return first;
+}
+
+function setApplying(applying) {
+  state.applying = applying;
+  VIEW_GROUPS.filter((view) => view.id !== "chat").forEach((view) => {
+    byId(`view-${view.id}`).inert = applying || !!state.restart;
+  });
+  if (applying) state.modelComboboxes.forEach((combobox) => combobox.close());
+  byId("applyButton").textContent = state.restart
+    ? applying ? "Reconnecting…" : "Reconnect"
+    : applying ? "Applying…" : "Apply";
+  updateDirtyState();
+}
+
+async function waitForRestart(restart, target) {
+  const deadline = performance.now() + 30_000;
+  const statusUrl = new URL("/admin/api/status", target);
+  while (performance.now() < deadline) {
+    try {
+      const response = await fetch(statusUrl, {
+        cache: "no-store",
+        credentials: "omit",
+        signal: AbortSignal.timeout(1500),
+      });
+      if (response.ok) {
+        const status = await response.json();
+        if (status.status === "running" && typeof status.instance_id === "string"
+          && status.instance_id !== restart.instance_id) return;
+      }
+    } catch {
+      // Closing listeners and unfinished startup are expected during a restart.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("The server has not reconnected yet.");
+}
+
+function appendAdminLink(target) {
+  const link = document.createElement("a");
+  link.href = target.href;
+  link.textContent = "Open Admin";
+  byId("messageArea").append(document.createElement("br"), link);
+}
+
+async function reconnectAfterRestart() {
+  const { restart, warnings } = state.restart;
+  const target = new URL(restart.admin_url || "/admin", window.location.href);
+  setApplying(true);
+  showMessage(["Applied. Reconnecting to the server…", ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+  try {
+    await waitForRestart(restart, target);
+    if (target.origin !== window.location.origin) {
+      // Carry only the safe warning text across an address change, never edits.
+      target.hash = new URLSearchParams({ "fcc-applied": JSON.stringify(warnings) }).toString();
+      window.location.replace(target.href);
+      return;
+    }
+    await load();
+    state.restart = null;
+    showMessage(["Applied", ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+  } catch (error) {
+    showMessage([`Settings were saved. ${error.message} Use Reconnect to try again.`, ...warnings].join("\n"), "warn");
+    appendAdminLink(target);
+  } finally {
+    setApplying(false);
+  }
+}
+
+function showRestartNotice() {
+  const url = new URL(window.location.href);
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  const notice = fragment.get("fcc-applied");
+  if (notice === null) return;
+  fragment.delete("fcc-applied");
+  url.hash = fragment.toString();
+  window.history.replaceState(window.history.state, "", url);
+  try {
+    const warnings = JSON.parse(notice);
+    if (Array.isArray(warnings) && warnings.every((warning) => typeof warning === "string")) {
+      showMessage(["Applied", ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+    }
+  } catch {
+    // A malformed navigation notice must not prevent normal Admin use.
+  }
 }
 
 async function apply() {
-  const result = await api("/admin/api/config/apply", {
-    method: "POST",
-    body: JSON.stringify({ values: changedValues() }),
+  if (state.applying) return;
+  if (state.restart) {
+    await reconnectAfterRestart();
+    return;
+  }
+  const values = changedValues();
+  if (!Object.keys(values).length) return;
+  const checkingKeys = Object.keys(values).some((key) => {
+    const field = state.fields.get(key);
+    return field?.secret && field.section === "providers" && values[key] !== null;
   });
-  if (!result.applied) {
-    showMessage(result.errors.join("; "), "error");
-    return;
-  }
-  const restart = result.restart || {};
-  if (restart.required && restart.automatic) {
-    showMessage("Applied. Restarting server...", "ok");
-    byId("applyButton").disabled = true;
-    setTimeout(() => {
-      window.location.href = restart.admin_url || "/admin";
-    }, 1600);
-    return;
-  }
-  const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
-  await load();
-  showMessage(
-    pending.length
+  let rejectedField = null;
+  let applied = false;
+  setApplying(true);
+  showMessage(checkingKeys ? "Checking API keys…" : "Applying…");
+  try {
+    const result = await api("/admin/api/config/apply", {
+      method: "POST",
+      body: JSON.stringify({ values }),
+    });
+    const checks = result.credential_checks || [];
+    if (!result.applied) {
+      rejectedField = showCredentialErrors(checks);
+      showMessage(rejectedField ? "Not applied. Check the highlighted API keys." : result.errors.join("; "), "error");
+      return;
+    }
+    applied = true;
+    const warnings = checks.filter((check) => check.status === "unverified").map((check) =>
+      `${state.fields.get(check.key)?.label || check.key}: ${check.message}`
+    );
+    const restart = result.restart || {};
+    if (restart.required && restart.automatic) {
+      state.restart = { restart, warnings };
+      await reconnectAfterRestart();
+      return;
+    }
+    const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
+    await load();
+    const message = pending.length
       ? `Applied. Restart fcc-server to use: ${pending.join(", ")}`
-      : "Applied",
-    "ok",
-  );
+      : "Applied";
+    showMessage([message, ...warnings].join("\n"), warnings.length ? "warn" : "ok");
+  } catch (error) {
+    showMessage(applied ? `Applied, but could not reload settings: ${error.message}` : `Could not apply settings: ${error.message}`, "error");
+  } finally {
+    setApplying(false);
+    if (rejectedField) {
+      navigateToView("providers");
+      rejectedField.closest(".settings-section")?.classList.add("show-advanced");
+      rejectedField.scrollIntoView({ block: "center", behavior: "instant" });
+      rejectedField.focus();
+    }
+  }
 }
 
 async function refreshLocalStatus() {
@@ -1057,6 +1230,6 @@ window.addEventListener("popstate", () => {
   setActiveView(viewId, { scroll: false });
 });
 
-load().catch((error) => {
+load().then(showRestartNotice).catch((error) => {
   showMessage(error.message, "error");
 });

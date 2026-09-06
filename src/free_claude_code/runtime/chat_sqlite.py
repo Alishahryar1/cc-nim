@@ -89,6 +89,61 @@ class SQLiteChatStore:
     async def load_preferences(self) -> ChatPreferences:
         return await self._run(self._load_preferences)
 
+    async def repair_retired_model_selections(
+        self,
+        *,
+        retired_provider_ids: frozenset[str],
+        default_model: str,
+        disable_reasoning: bool,
+    ) -> int:
+        """Repair current selections atomically, preserving historical model facts."""
+
+        def operation(connection: sqlite3.Connection) -> int:
+            connection.execute("BEGIN IMMEDIATE")
+            repaired = 0
+            now = _now_ms()
+            for provider_id in sorted(retired_provider_ids):
+                prefix = f"{provider_id}/"
+                cursor = connection.execute(
+                    """
+                    UPDATE chat_sessions
+                    SET model = ?, reasoning = CASE WHEN ? THEN 'off' ELSE reasoning END,
+                        revision = revision + 1, updated_at = ?
+                    WHERE substr(model, 1, ?) = ? AND length(trim(substr(model, ?))) > 0
+                    """,
+                    (
+                        default_model,
+                        disable_reasoning,
+                        now,
+                        len(prefix),
+                        prefix,
+                        len(prefix) + 1,
+                    ),
+                )
+                repaired += cursor.rowcount
+                connection.execute(
+                    """
+                    UPDATE chat_settings
+                    SET last_model = ?,
+                        last_reasoning = CASE WHEN ? THEN 'off' ELSE last_reasoning END,
+                        updated_at = ?
+                    WHERE substr(last_model, 1, ?) = ?
+                        AND length(trim(substr(last_model, ?))) > 0
+                    """,
+                    (
+                        default_model,
+                        disable_reasoning,
+                        now,
+                        len(prefix),
+                        prefix,
+                        len(prefix) + 1,
+                    ),
+                )
+            connection.commit()
+            return repaired
+
+        return await self._run(operation)
+
     async def save_system_prompt(self, system_prompt: str) -> ChatPreferences:
         def operation(connection: sqlite3.Connection) -> ChatPreferences:
             now = _now_ms()

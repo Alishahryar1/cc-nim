@@ -14,6 +14,7 @@ from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.endpoint import EndpointContext
 from free_claude_code.providers.http import close_provider_stream
 from free_claude_code.providers.openai_chat import (
     NO_REASONING,
@@ -162,6 +163,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         return self._dispatch_stream(
             request,
@@ -169,6 +171,7 @@ class OpenCodeProvider(OpenAIChatProvider):
             request_id=request_id,
             response_model=response_model or request.model,
             reasoning=reasoning,
+            endpoint_context=endpoint_context,
         )
 
     async def _dispatch_stream(
@@ -179,6 +182,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         request_id: str | None,
         response_model: str,
         reasoning: ReasoningPolicy,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         snapshot = await self._catalog.snapshot(request_id=request_id)
         route = self._require_route(snapshot, request.model)
@@ -193,6 +197,7 @@ class OpenCodeProvider(OpenAIChatProvider):
                     request_id=request_id,
                     response_model=response_model,
                     reasoning=reasoning,
+                    endpoint_context=endpoint_context,
                 )
             else:
                 super().preflight_messages(routed, reasoning=reasoning)
@@ -202,6 +207,7 @@ class OpenCodeProvider(OpenAIChatProvider):
                     request_id=request_id,
                     response_model=response_model,
                     reasoning=reasoning,
+                    endpoint_context=endpoint_context,
                 )
             async for event in selected_stream:
                 yield event
@@ -222,6 +228,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         return self._dispatch_responses_stream(
             request,
@@ -229,6 +236,7 @@ class OpenCodeProvider(OpenAIChatProvider):
             request_id=request_id,
             response_model=response_model or request.model,
             reasoning=reasoning,
+            endpoint_context=endpoint_context,
         )
 
     async def _dispatch_responses_stream(
@@ -239,6 +247,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         request_id: str | None,
         response_model: str,
         reasoning: ReasoningPolicy,
+        endpoint_context: EndpointContext | None = None,
     ) -> AsyncIterator[str]:
         snapshot = await self._catalog.snapshot(request_id=request_id)
         route = self._require_route(snapshot, request.model)
@@ -253,6 +262,7 @@ class OpenCodeProvider(OpenAIChatProvider):
                     request_id=request_id,
                     response_model=response_model,
                     reasoning=reasoning,
+                    endpoint_context=endpoint_context,
                 )
             else:
                 super().preflight_responses(routed, reasoning=reasoning)
@@ -262,6 +272,7 @@ class OpenCodeProvider(OpenAIChatProvider):
                     request_id=request_id,
                     response_model=response_model,
                     reasoning=reasoning,
+                    endpoint_context=endpoint_context,
                 )
             async for event in selected_stream:
                 yield event

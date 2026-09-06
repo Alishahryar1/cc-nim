@@ -1,8 +1,10 @@
 """Implementations for installed Free Claude Code commands."""
 
+import socket
 import threading
 import time
 import webbrowser
+from collections.abc import Callable
 from enum import StrEnum
 
 import uvicorn
@@ -11,9 +13,9 @@ from loguru import logger
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.process_registry import kill_all_best_effort
 from free_claude_code.config.loader import (
+    ManagedConfigStore,
     clear_settings_cache,
     get_settings,
-    repair_invalid_managed_provider_proxies,
 )
 from free_claude_code.config.paths import managed_env_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
@@ -35,6 +37,20 @@ class ServerStatus(StrEnum):
     RUNNING = "Running"
     STOPPING = "Stopping"
     STOPPED = "Stopped"
+
+
+class RuntimeServer(uvicorn.Server):
+    """Notify the runtime before Uvicorn waits for long-lived HTTP responses."""
+
+    def __init__(
+        self, config: uvicorn.Config, *, begin_shutdown: Callable[[], None]
+    ) -> None:
+        super().__init__(config)
+        self._begin_shutdown = begin_shutdown
+
+    async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        self._begin_shutdown()
+        await super().shutdown(sockets)
 
 
 class ServerSupervisor:
@@ -162,7 +178,7 @@ class ServerSupervisor:
             ),
             timeout_graceful_shutdown=SERVER_GRACEFUL_SHUTDOWN_SECONDS,
         )
-        server = uvicorn.Server(config)
+        server = RuntimeServer(config, begin_shutdown=asgi_app.runtime.begin_shutdown)
         with self._lock:
             self._server = server
             if self._stop_requested or self._restart_generation != restart_generation:
@@ -187,7 +203,7 @@ def load_server_settings() -> Settings:
     """Return canonical settings after repairing invalid managed proxies."""
 
     settings = get_settings()
-    removed = repair_invalid_managed_provider_proxies()
+    removed = ManagedConfigStore().repair_invalid_provider_proxies()
     if not removed:
         return settings
 

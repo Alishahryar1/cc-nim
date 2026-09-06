@@ -31,6 +31,14 @@ class ChatStorePort(Protocol):
 
     async def close(self) -> None: ...
 
+    async def repair_retired_model_selections(
+        self,
+        *,
+        retired_provider_ids: frozenset[str],
+        default_model: str,
+        disable_reasoning: bool,
+    ) -> int: ...
+
     async def load_preferences(self) -> ChatPreferences: ...
 
     async def save_system_prompt(self, system_prompt: str) -> ChatPreferences: ...

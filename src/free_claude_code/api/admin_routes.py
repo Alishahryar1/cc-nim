@@ -5,7 +5,13 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+)
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -15,7 +21,6 @@ from free_claude_code.application.connected_accounts import (
 )
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
-from free_claude_code.config.admin.values import load_config_response, load_value_state
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
@@ -62,7 +67,7 @@ class AdminConfigPayload(BaseModel):
 class ConnectedAccountLoginPayload(BaseModel):
     """Interactive connected-account login selection."""
 
-    mode: ConnectedAccountLoginMode = ConnectedAccountLoginMode.BROWSER
+    mode: ConnectedAccountLoginMode | None = None
 
 
 def _asset_path(filename: str) -> Path:
@@ -99,39 +104,48 @@ async def admin_asset(version: str, filename: str, request: Request):
 
 
 @router.get("/admin/api/config")
-async def get_admin_config(request: Request):
+async def get_admin_config(
+    request: Request, services: ApiServices = Depends(get_services)
+):
     require_loopback_admin(request)
-    return load_config_response()
+    return await services.admin.admin_config()
 
 
 @router.post("/admin/api/config/apply")
 async def apply_admin_config(
     payload: AdminConfigPayload,
     request: Request,
-    background_tasks: BackgroundTasks,
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
     result = await services.admin.apply_admin_config(_filtered_values(payload.values))
-    restart = result.get("restart")
-    if isinstance(restart, dict) and restart.get("automatic"):
-        background_tasks.add_task(services.admin.request_restart)
     return result
 
 
 @router.get("/admin/api/status")
 async def admin_status(
     request: Request,
+    response: Response,
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    return services.admin.admin_status()
+    # A local Admin page may reconnect after Apply changes the listening port.
+    # The existing security check admits only loopback callers and origins.
+    if origin := request.headers.get("origin"):
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+    return await services.admin.admin_status()
 
 
 @router.get("/admin/api/providers/local-status")
-async def local_provider_status(request: Request):
+async def local_provider_status(
+    request: Request, services: ApiServices = Depends(get_services)
+):
     require_loopback_admin(request)
-    values = {key: entry.value or "" for key, entry in load_value_state().items()}
+    values = {
+        key: entry.value or ""
+        for key, entry in (await services.admin.admin_values()).items()
+    }
     checks = await asyncio.gather(
         *(
             _check_local_provider(
@@ -176,10 +190,15 @@ async def start_connected_account_login(
 ):
     require_loopback_admin(request)
     _require_connected_account_provider(provider_id)
-    try:
-        status = await services.admin.start_connected_account_login(
-            provider_id, payload.mode
+    account = await services.admin.connected_account_status(provider_id)
+    mode = payload.mode or account.default_login_mode
+    if mode not in account.supported_login_modes:
+        raise HTTPException(
+            status_code=422,
+            detail="Login mode is not supported by this provider.",
         )
+    try:
+        status = await services.admin.start_connected_account_login(provider_id, mode)
     except Exception as exc:
         raise HTTPException(
             status_code=502,

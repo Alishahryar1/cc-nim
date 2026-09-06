@@ -13,6 +13,7 @@ from .errors import openai_error_from_failure
 from .events import format_response_sse_event
 from .models import OpenAIResponsesRequest
 from .reasoning import responses_reasoning_config, responses_reasoning_policy
+from .reasoning_replay import reject_messages_reasoning_for_other_egress
 
 _TERMINAL_EVENT_TYPES = frozenset(
     {"response.completed", "response.incomplete", "response.failed"}
@@ -27,6 +28,7 @@ def build_native_responses_request(
 ) -> JsonObject:
     """Build the stateless upstream body without translating Responses input."""
 
+    reject_messages_reasoning_for_other_egress(request.input)
     body = cast(
         JsonObject,
         request.model_dump(mode="json", exclude_none=True),
@@ -66,7 +68,7 @@ class NativeResponsesRelay:
         return self._terminal_type is not None
 
     def feed(self, event_type: str, payload: Mapping[str, object]) -> str:
-        """Format one upstream event after rewriting FCC-owned model metadata."""
+        """Format public model metadata and canonical whole-second timestamps."""
 
         if self._terminal_type is not None:
             raise ValueError(
@@ -77,6 +79,12 @@ class NativeResponsesRelay:
         response = data.get("response")
         if isinstance(response, dict):
             response["model"] = self._public_model
+            # SDK models coerce integer timestamps to floats; strict clients
+            # require JSON integers. Preserve any actual fractional precision.
+            for field in ("created_at", "completed_at"):
+                timestamp = response.get(field)
+                if isinstance(timestamp, float) and timestamp.is_integer():
+                    response[field] = int(timestamp)
             self._response = cast(JsonObject, deepcopy(response))
             response_id = response.get("id")
             if isinstance(response_id, str) and response_id:

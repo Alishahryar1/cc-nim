@@ -68,7 +68,6 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "bedrock": "bedrock/openai.gpt-oss-120b",
     "huggingface": "huggingface/openai/gpt-oss-120b:fastest",
     "cohere": "cohere/command-a-plus-05-2026",
-    "github_models": "github_models/openai/gpt-4.1",
     "zai": "zai/glm-5.2",
     "zai_api": "zai_api/glm-4.7-flash",
     "gemini": "gemini/models/gemini-3.1-flash-lite",

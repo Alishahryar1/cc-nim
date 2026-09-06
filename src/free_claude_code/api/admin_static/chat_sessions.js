@@ -602,14 +602,17 @@
       if (!state.session && chatIsVisible()) renderLibraryItems();
       return;
     }
-    selectVisibleOperation();
     if (type === "operation.failed") {
+      selectVisibleOperation();
       if (payload.kind === "send") rejectSubmittedDraft(operationId);
       renderSessionPreservingScroll();
       setNotice(payload.message || "Chat operation failed.", "error");
       return;
     }
+    // Keep the visible answer until the saved turns replace it.
     await reloadSession();
+    selectVisibleOperation();
+    refreshComposerState();
     if (type === "compaction.failed") {
       setNotice(payload.message || "Compaction failed.", "error");
     }

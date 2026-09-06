@@ -27,6 +27,7 @@ from .model_catalog import (
     ModelCatalogView,
     ModelsListResponse,
     build_models_list_response,
+    build_muse_models_list_response,
 )
 from .ports import ApiServices
 from .request_errors import ordinary_application_error_response
@@ -219,11 +220,7 @@ async def list_muse_models(
 ):
     """List the direct Responses models expected by Muse Code."""
     trace_event(stage="ingress", event="free_claude_code.api.models.list", source="api")
-    return build_models_list_response(
-        settings,
-        services.requests,
-        view=ModelCatalogView.RESPONSES,
-    )
+    return build_muse_models_list_response(settings, services.requests)
 
 
 @router.post("/stop")

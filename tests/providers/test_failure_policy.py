@@ -1,7 +1,7 @@
 """Raw provider failure classification into the canonical neutral model."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import httpx
 import httpx2
@@ -74,6 +74,39 @@ def test_stream_retry_classification_distinguishes_protocol_and_status() -> None
     assert is_retryable_stream_error(httpx.ReadError("disconnected"))
     assert is_retryable_stream_error(_http_status_error(503, "unavailable"))
     assert not is_retryable_stream_error(_http_status_error(400, "bad request"))
+
+
+@pytest.mark.parametrize(
+    "error_name",
+    [
+        "ReadError",
+        "ReadTimeout",
+        "ConnectError",
+        "ConnectTimeout",
+        "WriteError",
+        "WriteTimeout",
+        "PoolTimeout",
+        "RemoteProtocolError",
+    ],
+)
+def test_http_client_network_errors_have_the_same_failure_policy(
+    error_name: str,
+) -> None:
+    errors = [
+        getattr(module, error_name)("connection interrupted")
+        for module in (httpx, httpx2)
+    ]
+    failures = [
+        classify_provider_failure(
+            error, provider_name="TEST", read_timeout_s=10, request_id="request"
+        )
+        for error in errors
+    ]
+    assert asdict(failures[0]) == asdict(failures[1])
+    assert is_retryable_provider_error(errors[0]) == is_retryable_provider_error(
+        errors[1]
+    )
+    assert is_retryable_stream_error(errors[0]) == is_retryable_stream_error(errors[1])
 
 
 def test_stream_retry_classification_only_accepts_post_open_timeouts() -> None:

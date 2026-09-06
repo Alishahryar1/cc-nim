@@ -1,7 +1,7 @@
 import json
 import re
 
-from playwright.sync_api import Page, Request, expect
+from playwright.sync_api import Page, Request, Route, expect
 
 
 def _new_chat(page: Page, admin_base_url: str) -> None:
@@ -33,6 +33,25 @@ def _hold_next_chat_operation(page: Page, action: str) -> None:
         """,
         action,
     )
+
+
+def test_stale_chat_selection_reloads_as_default(page: Page, admin_base_url: str):
+    session = page.request.post(
+        f"{admin_base_url}/admin/api/chat/sessions", data={}
+    ).json()
+    response = page.request.patch(
+        f"{admin_base_url}/admin/api/chat/sessions/{session['id']}",
+        data={
+            "expected_revision": session["revision"],
+            "model": "github_models/openai/old",
+        },
+    )
+    assert response.ok
+    page.goto(f"{admin_base_url}/admin/chat/{session['id']}")
+    expect(page.get_by_role("combobox", name="Selected model")).to_have_value(
+        "open_router/e2e-default"
+    )
+    expect(page.get_by_role("textbox", name="Message", exact=True)).to_be_visible()
 
 
 def _select_model(page: Page, model_ref: str) -> None:
@@ -936,6 +955,7 @@ def test_long_transcript_keeps_composer_visible_and_preserves_reader_scroll_posi
     message.fill(long_message)
     page.get_by_role("button", name="Send").click()
     expect(page.get_by_role("button", name="Stop")).to_be_visible()
+    expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
     scroller = page.locator("#chatTranscript")
     page.wait_for_function(
         """() => {
@@ -943,17 +963,37 @@ def test_long_transcript_keeps_composer_visible_and_preserves_reader_scroll_posi
           return node && node.scrollHeight > node.clientHeight;
         }"""
     )
-    composer_is_fully_visible = message.evaluate(
-        "node => { const box = node.getBoundingClientRect(); "
-        "return box.top >= 0 && box.bottom <= window.innerHeight; }"
-    )
-    scroller.evaluate("node => { node.scrollTop = 0; }")
+    expect(message).to_be_in_viewport(ratio=1)
+    page.evaluate("document.getElementById('chatTranscript').scrollTop = 0")
 
-    page.get_by_role("button", name="Stop").click()
+    session_id = page.url.rsplit("/", 1)[-1]
+    detail_url = f"{admin_base_url}/admin/api/chat/sessions/{session_id}"
+    held_details: list[Route] = []
+    page.route(detail_url, lambda route: held_details.append(route))
+    try:
+        with page.expect_request(detail_url):
+            page.get_by_role("button", name="Stop").click()
+
+        detail = page.request.get(detail_url).json()
+        renamed = page.request.patch(
+            detail_url,
+            data={
+                "expected_revision": detail["session"]["revision"],
+                "title": "Renamed while the stopped conversation reloads",
+            },
+        )
+        assert renamed.ok
+        expect(page.get_by_label("Chat title")).to_have_value(
+            "Renamed while the stopped conversation reloads"
+        )
+        expect(scroller).to_contain_text(long_message)
+    finally:
+        for held_detail in held_details:
+            held_detail.continue_()
+        page.unroute(detail_url)
 
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
-    assert composer_is_fully_visible
-    assert scroller.evaluate("node => node.scrollTop") < 10
+    assert page.evaluate("document.getElementById('chatTranscript').scrollTop") < 10
 
 
 def test_chat_composer_is_one_compact_surface_and_grows_to_six_lines(

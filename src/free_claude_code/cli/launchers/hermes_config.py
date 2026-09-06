@@ -38,10 +38,9 @@ class HermesManagedConfig:
     """Secret-free managed overlay for one attached Hermes process."""
 
     config: JsonObject = field(repr=False)
-    provider_key: str
     provider_ref: str
     key_env: str
-    selected_model: str
+    default_model: str
 
 
 def build_hermes_managed_config(
@@ -49,7 +48,6 @@ def build_hermes_managed_config(
     *,
     proxy_root_url: str,
     nonce: str,
-    selected_model: str | None = None,
 ) -> HermesManagedConfig:
     """Translate an FCC catalog into one invocation-specific Hermes overlay."""
 
@@ -59,9 +57,7 @@ def build_hermes_managed_config(
         raise ValueError("Hermes configuration nonce must be alphanumeric")
 
     wire_slugs = tuple(model.wire_slug for model in models)
-    active_model = selected_model or wire_slugs[0]
-    if active_model not in wire_slugs:
-        raise ValueError(f"model is not in the FCC catalog: {active_model}")
+    active_model = wire_slugs[0]
 
     provider_key = f"{HERMES_PROVIDER_PREFIX}{nonce.lower()}"
     provider_ref = f"custom:{provider_key}"
@@ -105,10 +101,9 @@ def build_hermes_managed_config(
         config["model_overrides"] = {"custom": model_overrides}
     return HermesManagedConfig(
         config=config,
-        provider_key=provider_key,
         provider_ref=provider_ref,
         key_env=key_env,
-        selected_model=active_model,
+        default_model=active_model,
     )
 
 

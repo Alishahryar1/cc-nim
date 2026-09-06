@@ -169,6 +169,7 @@ async def test_native_responses_preserves_request_and_upstream_event_identity() 
     captured: list[dict[str, object]] = []
     created_response = {
         **_completed_response(model="upstream-model"),
+        "created_at": 1788587503,
         "status": "in_progress",
         "output": [],
         "usage": None,
@@ -179,7 +180,14 @@ async def test_native_responses_preserves_request_and_upstream_event_identity() 
         "response": created_response,
     }
     delta = _text_delta("hello", sequence=1)
-    completed = _completed_event(sequence=2)
+    completed = {
+        **_completed_event(sequence=2),
+        "response": {
+            **_completed_response(),
+            "created_at": 1788587503,
+            "completed_at": 1788587504,
+        },
+    }
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(request.content)
@@ -224,8 +232,14 @@ async def test_native_responses_preserves_request_and_upstream_event_identity() 
     ]
     assert events[0].data["response"]["id"] == "resp_test"
     assert events[0].data["response"]["model"] == "public-model"
+    for event in (events[0], events[2]):
+        timestamp = event.data["response"]["created_at"]
+        assert type(timestamp) is int
+        assert timestamp == 1788587503
     assert events[1].data == delta
     assert events[2].data["response"]["model"] == "public-model"
+    assert type(events[2].data["response"]["completed_at"]) is int
+    assert events[2].data["response"]["completed_at"] == 1788587504
 
 
 @pytest.mark.asyncio
@@ -727,6 +741,64 @@ async def test_early_truncated_retry_has_one_visible_lifecycle() -> None:
     assert sum(event.event == "message_start" for event in parsed) == 1
     assert sum(event.event == "message_stop" for event in parsed) == 1
     assert_anthropic_stream_contract(parsed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["messages", "responses"])
+@pytest.mark.parametrize("buffered", [False, True])
+@pytest.mark.parametrize(
+    "error_type", [httpx2.ReadError, httpx2.ReadTimeout, httpx2.RemoteProtocolError]
+)
+async def test_sdk_stream_interruptions_retry_before_commit(
+    wire_api: str,
+    buffered: bool,
+    error_type: type[Exception],
+) -> None:
+    class InterruptedBody(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            if buffered:
+                yield _sse(
+                    {
+                        "type": "response.created",
+                        "sequence_number": 0,
+                        "response": {**_completed_response(), "status": "in_progress"},
+                    }
+                ).encode()
+            raise error_type("connection interrupted")
+
+    requests = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal requests
+        requests += 1
+        if requests == 1:
+            return httpx2.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=InterruptedBody(),
+            )
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(_text_delta("recovered"), _completed_event()),
+        )
+
+    client = _client(handler)
+    try:
+        transport = _transport(client, max_attempts=2)
+        chunks = (
+            await _collect(transport)
+            if wire_api == "messages"
+            else await _collect_native(
+                transport, OpenAIResponsesRequest(model="upstream-model", input="hello")
+            )
+        )
+    finally:
+        await client.close()
+    assert requests == 2
+    events = parse_sse_text("".join(chunks))
+    terminal = "message_stop" if wire_api == "messages" else "response.completed"
+    assert [event.event for event in events].count(terminal) == 1
 
 
 @pytest.mark.asyncio

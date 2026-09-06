@@ -125,16 +125,6 @@ def _create_vertex(
     )
 
 
-def _create_github_models(
-    config: ProviderConfig,
-    _settings: Settings,
-    admission: ProviderAdmissionController,
-) -> BaseProvider:
-    from free_claude_code.providers.github_models import GitHubModelsProvider
-
-    return GitHubModelsProvider(config, admission=admission)
-
-
 def _create_groq(
     config: ProviderConfig,
     _settings: Settings,
@@ -175,12 +165,11 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "cloudflare": _create_cloudflare,
     "gemini": _create_gemini,
     "vertex": _create_vertex,
-    "github_models": _create_github_models,
     "groq": _create_groq,
     "opencode_zen": _create_opencode_zen,
     "opencode_go": _create_opencode_go,
 }
-_INJECTED_PROVIDER_IDS = {"openai"}
+_INJECTED_PROVIDER_IDS = {"openai", "github_copilot"}
 
 
 def _required_setting(settings: Settings, attr_name: str) -> str:

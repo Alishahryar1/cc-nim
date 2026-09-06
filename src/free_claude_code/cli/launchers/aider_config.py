@@ -33,28 +33,28 @@ def build_aider_config(
     if _AIDER_API_KEY_ENV_PATTERN.fullmatch(api_key_env) is None:
         raise ValueError("invalid Aider proxy-auth environment variable name")
 
-    settings: list[JsonObject] = [
-        {
-            "name": "aider/extra_params",
+    by_name = {model.wire_slug: model for model in models}
+    for model in models:
+        by_name.setdefault(f"anthropic/{model.wire_slug}", model)
+    settings: list[JsonObject] = []
+    metadata: JsonObject = {}
+    for name, model in by_name.items():
+        entry: JsonObject = {
+            "name": name,
+            "weak_model_name": name,
+            "editor_model_name": name,
             "extra_params": {
+                "model": f"anthropic/{model.wire_slug}",
                 "api_base": messages_url,
                 "api_key": f"os.environ/{api_key_env}",
             },
         }
-    ]
-    settings.extend(
-        {
-            "name": f"anthropic/{model.wire_slug}",
-            "accepts_settings": (
+        if model.supports_reasoning is not None:
+            entry["accepts_settings"] = (
                 ["reasoning_effort"] if model.supports_reasoning else []
-            ),
-        }
-        for model in models
-        if model.supports_reasoning is not None
-    )
-    metadata: JsonObject = {
-        f"anthropic/{model.wire_slug}": _model_metadata(model) for model in models
-    }
+            )
+        settings.append(entry)
+        metadata[name] = _model_metadata(model)
     return AiderConfig(settings=settings, metadata=metadata)
 
 

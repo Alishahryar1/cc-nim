@@ -59,5 +59,3 @@ GitHub CI runs Ruff in check-only mode and also bans `# type: ignore`, `# ty: ig
 ## Versioning
 
 Changes to runtime code, packaging, dependencies, or install/CI scripts require a semantic version bump in `pyproject.toml` and a matching `uv lock` update in the same commit. Documentation, tests, smoke coverage, and repository configuration do not require a version bump by themselves.
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for extension checklists and the full system design.

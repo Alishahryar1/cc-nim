@@ -1,4 +1,4 @@
-"""Client-protocol presenters shared by Responses upstream transports."""
+"""Client-protocol presenters for the shared Responses transport."""
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass

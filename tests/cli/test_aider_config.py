@@ -46,47 +46,43 @@ def test_aider_config_projects_messages_route_and_canonical_catalog() -> None:
         api_key_env="FCC_AIDER_PROXY_AUTH_A1B2C3",
     )
 
-    assert config.settings == [
-        {
-            "name": "aider/extra_params",
-            "extra_params": {
-                "api_base": "http://127.0.0.1:9191/v1/messages",
-                "api_key": "os.environ/FCC_AIDER_PROXY_AUTH_A1B2C3",
-            },
-        },
-        {
-            "name": "anthropic/nvidia_nim/vendor/model",
-            "accepts_settings": ["reasoning_effort"],
-        },
-        {
-            "name": "anthropic/ollama_cloud/qwen3-coder:480b",
-            "accepts_settings": [],
-        },
-    ]
-    assert list(config.metadata) == [
-        "anthropic/nvidia_nim/vendor/model",
-        "anthropic/ollama_cloud/qwen3-coder:480b",
-        "anthropic/future_provider/unknown-model",
-    ]
-    assert config.metadata == {
-        "anthropic/nvidia_nim/vendor/model": {
+    expected_metadata = {
+        "nvidia_nim/vendor/model": {
             "litellm_provider": "anthropic",
             "mode": "chat",
             "supports_vision": True,
             "max_input_tokens": 131072,
             "max_output_tokens": 8192,
         },
-        "anthropic/ollama_cloud/qwen3-coder:480b": {
+        "ollama_cloud/qwen3-coder:480b": {
             "litellm_provider": "anthropic",
             "mode": "chat",
             "supports_vision": False,
             "max_output_tokens": 4096,
         },
-        "anthropic/future_provider/unknown-model": {
+        "future_provider/unknown-model": {
             "litellm_provider": "anthropic",
             "mode": "chat",
         },
     }
+    entries = {entry["name"]: entry for entry in config.settings}
+    assert len(entries) == len(config.metadata) == 6
+    for wire_name, metadata in expected_metadata.items():
+        for name in (wire_name, f"anthropic/{wire_name}"):
+            assert config.metadata[name] == metadata
+            entry = entries[name]
+            assert entry["weak_model_name"] == name
+            assert entry["editor_model_name"] == name
+            assert entry["extra_params"] == {
+                "model": f"anthropic/{wire_name}",
+                "api_base": "http://127.0.0.1:9191/v1/messages",
+                "api_key": "os.environ/FCC_AIDER_PROXY_AUTH_A1B2C3",
+            }
+    assert entries["nvidia_nim/vendor/model"]["accepts_settings"] == [
+        "reasoning_effort"
+    ]
+    assert entries["ollama_cloud/qwen3-coder:480b"]["accepts_settings"] == []
+    assert "accepts_settings" not in entries["future_provider/unknown-model"]
 
     serialized = json.dumps({"settings": config.settings, "metadata": config.metadata})
     assert json.loads(serialized) == {
@@ -111,6 +107,25 @@ def test_aider_config_rejects_empty_catalog() -> None:
             messages_url="http://127.0.0.1:9191/v1/messages",
             api_key_env="FCC_AIDER_PROXY_AUTH_A1B2C3",
         )
+
+
+def test_aider_catalog_ids_take_precedence_over_generated_transport_spellings() -> None:
+    models = (
+        ClientModel("provider/model", "provider/model", "First", None),
+        ClientModel(
+            "anthropic/provider/model", "anthropic/provider/model", "Second", None
+        ),
+    )
+    config = build_aider_config(
+        models,
+        messages_url="http://localhost:8182/v1/messages",
+        api_key_env="FCC_AIDER_PROXY_AUTH_COLLISION",
+    )
+    entries = {entry["name"]: entry for entry in config.settings}
+    extra = entries["anthropic/provider/model"]["extra_params"]
+    assert isinstance(extra, dict)
+    assert extra["model"] == "anthropic/anthropic/provider/model"
+    assert len(entries) == 3
 
 
 @pytest.mark.parametrize(

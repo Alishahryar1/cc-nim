@@ -19,6 +19,154 @@ from free_claude_code.application.chat import (
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disable_reasoning", [True, False])
+@pytest.mark.parametrize("healthy_preference", [True, False])
+async def test_retirement_repairs_current_selections_only(
+    tmp_path, disable_reasoning, healthy_preference
+):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        retired = await store.create_session(
+            session_id=_id(),
+            model="github_models/vendor/old",
+            reasoning=ChatReasoning.HIGH,
+        )
+        generation_id = _id()
+        await store.begin_send(
+            retired.id,
+            expected_revision=retired.revision,
+            turn_id=_id(),
+            generation_id=generation_id,
+            operation_id=_id(),
+            user_text="Keep history",
+            requested_model=retired.model,
+            reasoning=retired.reasoning,
+            effective_output_limit=100,
+        )
+        await store.set_generation_actual_model(generation_id, retired.model)
+        await store.finish_generation(
+            generation_id,
+            status=GenerationStatus.COMPLETED,
+            stop_reason="end_turn",
+            error_code=None,
+            error_message=None,
+        )
+        await store.upsert_compaction(
+            retired.id,
+            covered_through_sequence=1,
+            summary="Keep summary",
+            estimated_tokens=5,
+            requested_model=retired.model,
+            actual_model=retired.model,
+        )
+        before = await store.get_transcript(retired.id)
+        untouched = [
+            await store.create_session(
+                session_id=_id(), model=model, reasoning=ChatReasoning.MEDIUM
+            )
+            for model in ("githubXmodels/old", "github_models/", "groq/healthy")
+        ]
+        if not healthy_preference:
+            temporary = await store.create_session(
+                session_id=_id(), model=retired.model, reasoning=ChatReasoning.HIGH
+            )
+            await store.delete_session(
+                temporary.id, expected_revision=temporary.revision
+            )
+        preferences = await store.load_preferences()
+        assert (
+            await store.repair_retired_model_selections(
+                retired_provider_ids=frozenset({"github_models"}),
+                default_model="groq/default",
+                disable_reasoning=disable_reasoning,
+            )
+            == 1
+        )
+        after = await store.get_transcript(retired.id)
+        assert after.session.model == "groq/default"
+        assert after.session.revision == before.session.revision + 1
+        assert after.session.reasoning is (
+            ChatReasoning.OFF if disable_reasoning else ChatReasoning.HIGH
+        )
+        assert after.session.title == before.session.title
+        assert after.turns == before.turns
+        assert after.compaction == before.compaction
+        for session in untouched:
+            assert await store.get_session(session.id) == session
+        updated_preferences = await store.load_preferences()
+        if healthy_preference:
+            assert updated_preferences == preferences
+        else:
+            assert updated_preferences.last_model == "groq/default"
+            assert updated_preferences.last_reasoning is (
+                ChatReasoning.OFF if disable_reasoning else ChatReasoning.HIGH
+            )
+        assert (
+            await store.repair_retired_model_selections(
+                retired_provider_ids=frozenset({"github_models"}),
+                default_model="groq/default",
+                disable_reasoning=disable_reasoning,
+            )
+            == 0
+        )
+        assert await store.get_transcript(retired.id) == after
+        assert await store.load_preferences() == updated_preferences
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_retirement_repairs_global_preference_without_sessions(tmp_path):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="github_models/old", reasoning=ChatReasoning.HIGH
+        )
+        await store.delete_session(session.id, expected_revision=session.revision)
+        assert (
+            await store.repair_retired_model_selections(
+                retired_provider_ids=frozenset({"github_models"}),
+                default_model="groq/default",
+                disable_reasoning=True,
+            )
+            == 0
+        )
+        preferences = await store.load_preferences()
+        assert preferences.last_model == "groq/default"
+        assert preferences.last_reasoning is ChatReasoning.OFF
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_retirement_rolls_back_sessions_when_preference_update_fails(tmp_path):
+    store = _store(tmp_path)
+    await store.start()
+    try:
+        session = await store.create_session(
+            session_id=_id(), model="github_models/old", reasoning=ChatReasoning.HIGH
+        )
+        before = await store.load_preferences()
+        with closing(sqlite3.connect(tmp_path / "chat.db")) as connection:
+            connection.execute(
+                "CREATE TRIGGER fail_preference BEFORE UPDATE ON chat_settings BEGIN SELECT RAISE(ABORT, 'injected'); END"
+            )
+            connection.commit()
+        with pytest.raises(ChatUnavailableError):
+            await store.repair_retired_model_selections(
+                retired_provider_ids=frozenset({"github_models"}),
+                default_model="groq/default",
+                disable_reasoning=True,
+            )
+        assert await store.get_session(session.id) == session
+        assert await store.load_preferences() == before
+    finally:
+        await store.close()
+
+
 def _id() -> str:
     return str(uuid.uuid4())
 

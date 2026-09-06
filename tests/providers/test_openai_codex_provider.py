@@ -5,7 +5,9 @@ from typing import Any
 from unittest.mock import patch
 
 import httpx
+import httpx2
 import pytest
+from openai import AuthenticationError
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
@@ -15,7 +17,6 @@ from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
 )
-from free_claude_code.core.diagnostics import ERROR_DETAIL_DISPLAY_CAP_BYTES
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
@@ -25,9 +26,10 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_codex.auth import (
     OpenAIAccess,
     OpenAIAuthManager,
+    OpenAIReconnectRequired,
 )
 from free_claude_code.providers.openai_codex.provider import OpenAICodexProvider
-from tests.providers.support import make_provider_config
+from tests.providers.support import immediate_admission, make_provider_config
 
 
 class _FakeAuth(OpenAIAuthManager):
@@ -47,7 +49,7 @@ class _FakeAuth(OpenAIAuthManager):
         return OpenAIAccess(self.current_token, "account_1", False)
 
 
-class _CloseTrackingResponse(httpx.Response):
+class _CloseTrackingResponse(httpx2.Response):
     """HTTPX response that records close order and can fail during cleanup."""
 
     def __init__(
@@ -68,7 +70,7 @@ class _CloseTrackingResponse(httpx.Response):
             raise self._close_error
 
 
-class _StaticAsyncBody(httpx.AsyncByteStream):
+class _StaticAsyncBody(httpx2.AsyncByteStream):
     def __init__(self, body: bytes) -> None:
         self._body = body
 
@@ -82,7 +84,7 @@ class _CloseAwareAuth(_FakeAuth):
         self._responses = responses
 
     async def recover_unauthorized(self, rejected_token: str) -> OpenAIAccess:
-        assert self._responses[-1].close_calls == 1
+        assert self._responses[-1].is_closed
         return await super().recover_unauthorized(rejected_token)
 
 
@@ -189,13 +191,82 @@ async def _collect(stream: AsyncIterator[str]) -> str:
 
 
 @pytest.mark.asyncio
-async def test_provider_uses_subscription_headers_and_visible_model_catalog() -> None:
-    requests: list[httpx.Request] = []
+@pytest.mark.parametrize("responses_ingress", [False, True])
+async def test_completion_followed_by_ping_stays_successful(
+    responses_ingress: bool,
+) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_complete_stream("hello") + _sse(("ping", {"type": "ping"})),
+        )
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    pool = httpx2.MockTransport(handler)
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=_FakeAuth(),
+        admission=immediate_admission(max_attempts=1),
+        transport=pool,
+    )
+    stream = (
+        provider.stream_responses(_responses_request())
+        if responses_ingress
+        else provider.stream_messages(_request())
+    )
+    events = parse_sse_text(await _collect(stream))
+    await provider.cleanup()
+    terminal = "response.completed" if responses_ingress else "message_stop"
+    assert [event.event for event in events].count(terminal) == 1
+    assert events[-1].event == terminal
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("responses_ingress", [False, True])
+async def test_streamed_authentication_error_has_authentication_status(
+    responses_ingress: bool,
+) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(
+                (
+                    "error",
+                    {"type": "error", "code": "invalid_api_key", "message": "expired"},
+                ),
+            ),
+        )
+
+    auth = _FakeAuth()
+    pool = httpx2.MockTransport(handler)
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=auth,
+        admission=immediate_admission(max_attempts=1),
+        transport=pool,
+    )
+    stream = (
+        provider.stream_responses(_responses_request())
+        if responses_ingress
+        else provider.stream_messages(_request())
+    )
+    with pytest.raises(ExecutionFailure) as failure:
+        await _collect(stream)
+    await provider.cleanup()
+    assert failure.value.status_code == 401
+    assert failure.value.kind is FailureKind.AUTHENTICATION
+    assert auth.recovery_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_provider_uses_subscription_headers_and_visible_model_catalog() -> None:
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         if request.url.path.endswith("/models"):
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "models": [
@@ -223,19 +294,16 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
                 request=request,
             )
         assert request.url.path.endswith("/responses")
-        return httpx.Response(
+        return httpx2.Response(
             200,
             content=_complete_stream("hello").encode(),
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     auth = _FakeAuth()
     provider = OpenAICodexProvider(
-        _config(), auth=auth, admission=_admission(), client=client
+        _config(), auth=auth, admission=_admission(), transport=pool
     )
 
     infos = await provider.list_model_infos()
@@ -275,56 +343,14 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
     events = parse_sse_text(body)
     assert_anthropic_stream_contract(events)
     assert text_content(events) == "hello"
-    await client.aclose()
-
-
-@pytest.mark.asyncio
-async def test_model_discovery_close_failure_preserves_success_and_permit() -> None:
-    responses: list[_CloseTrackingResponse] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        response = _CloseTrackingResponse(
-            200,
-            json={
-                "models": [
-                    {
-                        "slug": "gpt-visible",
-                        "visibility": "list",
-                        "supported_in_api": False,
-                    }
-                ]
-            },
-            request=request,
-            close_error=RuntimeError("cleanup failed"),
-        )
-        responses.append(response)
-        return response
-
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
-    provider = OpenAICodexProvider(
-        _config(),
-        auth=_FakeAuth(),
-        admission=_admission(max_concurrency=1),
-        client=client,
-    )
-
-    first = await asyncio.wait_for(provider.list_model_infos(), timeout=1)
-    second = await asyncio.wait_for(provider.list_model_infos(), timeout=1)
-
-    assert {info.model_id for info in first} == {"gpt-visible"}
-    assert {info.model_id for info in second} == {"gpt-visible"}
-    assert [response.close_calls for response in responses] == [1, 1]
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
 async def test_generation_close_failure_preserves_success_and_permit() -> None:
     responses: list[_CloseTrackingResponse] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         response = _CloseTrackingResponse(
             200,
             text=_complete_stream("hello"),
@@ -335,15 +361,12 @@ async def test_generation_close_failure_preserves_success_and_permit() -> None:
         responses.append(response)
         return response
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     provider = OpenAICodexProvider(
         _config(),
         auth=_FakeAuth(),
         admission=_admission(max_concurrency=1),
-        client=client,
+        transport=pool,
     )
 
     first = await asyncio.wait_for(
@@ -357,15 +380,15 @@ async def test_generation_close_failure_preserves_success_and_permit() -> None:
 
     assert text_content(parse_sse_text(first)) == "hello"
     assert text_content(parse_sse_text(second)) == "hello"
-    assert [response.close_calls for response in responses] == [1, 1]
-    await client.aclose()
+    assert all(response.is_closed for response in responses)
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
 async def test_generation_close_failure_preserves_provider_failure() -> None:
     responses: list[_CloseTrackingResponse] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         response = _CloseTrackingResponse(
             400,
             json={"error": {"message": "original provider failure"}},
@@ -375,12 +398,9 @@ async def test_generation_close_failure_preserves_provider_failure() -> None:
         responses.append(response)
         return response
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        _config(), auth=_FakeAuth(), admission=_admission(), transport=pool
     )
 
     with pytest.raises(ExecutionFailure) as exc_info:
@@ -395,29 +415,26 @@ async def test_generation_close_failure_preserves_provider_failure() -> None:
     assert exc_info.value.status_code == 400
     assert "original provider failure" in exc_info.value.message
     assert "cleanup failed" not in exc_info.value.message
-    assert [response.close_calls for response in responses] == [1]
-    await client.aclose()
+    assert all(response.is_closed for response in responses)
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
 async def test_provider_accepts_claude_client_controls_before_upstream_io() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=_complete_stream("hello"),
             headers={"content-type": "text/event-stream"},
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        _config(), auth=_FakeAuth(), admission=_admission(), transport=pool
     )
     request = _client_control_request()
     original_request = request.model_dump()
@@ -447,28 +464,25 @@ async def test_provider_accepts_claude_client_controls_before_upstream_io() -> N
     assert "output_config" not in payload
     assert request.model_dump() == original_request
     assert_anthropic_stream_contract(parse_sse_text(body))
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
 async def test_provider_relays_native_responses_with_private_field_policy() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=_complete_stream("hello"),
             headers={"content-type": "text/event-stream"},
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        _config(), auth=_FakeAuth(), admission=_admission(), transport=pool
     )
     request = _responses_request()
     original = request.model_dump()
@@ -505,7 +519,7 @@ async def test_provider_relays_native_responses_with_private_field_policy() -> N
     assert events[0].data["response"]["model"] == "openai/gpt-test"
     assert events[-1].data["response"]["id"] == "resp_1"
     assert events[-1].data["response"]["model"] == "openai/gpt-test"
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
@@ -536,18 +550,15 @@ async def test_provider_preflight_rejects_unrepresentable_client_controls(
     value: object,
     error_path: str,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(500, request=request)
+        return httpx2.Response(500, request=request)
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        _config(), auth=_FakeAuth(), admission=_admission(), transport=pool
     )
     payload = {
         "model": "gpt-test",
@@ -559,7 +570,7 @@ async def test_provider_preflight_rejects_unrepresentable_client_controls(
         provider.preflight_messages(MessagesRequest.model_validate(payload))
 
     assert requests == []
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
@@ -581,7 +592,7 @@ async def test_provider_round_trips_portable_tool_name_alias() -> None:
     )
     payloads: list[dict[str, Any]] = []
 
-    def handler(http_request: httpx.Request) -> httpx.Response:
+    def handler(http_request: httpx2.Request) -> httpx2.Response:
         payload = json.loads(http_request.content)
         payloads.append(payload)
         alias = payload["tools"][0]["name"]
@@ -622,19 +633,16 @@ async def test_provider_round_trips_portable_tool_name_alias() -> None:
                 },
             ),
         )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=body,
             headers={"content-type": "text/event-stream"},
             request=http_request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        _config(), auth=_FakeAuth(), admission=_admission(), transport=pool
     )
 
     body = await _collect(provider.stream_messages(request))
@@ -653,130 +661,26 @@ async def test_provider_round_trips_portable_tool_name_alias() -> None:
     )
     assert tool_start["name"] == original
     assert alias not in body
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
-async def test_early_truncated_attempt_is_retried_without_duplicate_output() -> None:
+async def test_non_streaming_success_cannot_complete_generation() -> None:
     attempts = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
-        if attempts == 1:
-            body = _sse(
-                (
-                    "response.created",
-                    {"type": "response.created", "response": {"id": "first"}},
-                ),
-                (
-                    "response.output_text.delta",
-                    {"type": "response.output_text.delta", "delta": "abandoned"},
-                ),
-            )
-        else:
-            body = _complete_stream("kept")
-        return httpx.Response(
+        return httpx2.Response(
             200,
-            text=body,
-            headers={"content-type": "text/event-stream"},
-            request=request,
-        )
-
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
-    provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
-    )
-
-    body = await _collect(
-        provider.stream_messages(
-            _request(),
-            request_id="req_retry",
-            response_model="claude-opus-4",
-        )
-    )
-
-    events = parse_sse_text(body)
-    assert_anthropic_stream_contract(events)
-    assert attempts == 2
-    assert text_content(events) == "kept"
-    assert "abandoned" not in body
-    await client.aclose()
-
-
-@pytest.mark.asyncio
-async def test_pre_stream_retry_discards_held_message_start() -> None:
-    attempts = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            return httpx.Response(
-                429,
-                json={"error": {"message": "try again"}},
-                request=request,
-            )
-        return httpx.Response(
-            200,
-            text=_complete_stream("kept"),
-            headers={"content-type": "text/event-stream"},
-            request=request,
-        )
-
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
-    provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
-    )
-
-    body = await _collect(
-        provider.stream_messages(
-            _request(),
-            request_id="req_pre_stream",
-            response_model="claude-opus-4",
-        )
-    )
-
-    events = parse_sse_text(body)
-    assert_anthropic_stream_contract(events)
-    assert attempts == 2
-    assert body.count("event: message_start") == 1
-    assert text_content(events) == "kept"
-    await client.aclose()
-
-
-@pytest.mark.asyncio
-async def test_non_streaming_success_is_retried_then_reports_bounded_body() -> None:
-    attempts = 0
-    tail_sentinel = "must-not-escape-the-diagnostic-cap"
-    upstream_body = (
-        "upstream contract changed\n"
-        + "x" * ERROR_DETAIL_DISPLAY_CAP_BYTES
-        + tail_sentinel
-    ).encode()
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal attempts
-        attempts += 1
-        return httpx.Response(
-            200,
-            content=upstream_body,
+            json={"message": "upstream contract changed"},
             headers={"content-type": "application/json"},
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        _config(), auth=_FakeAuth(), admission=_admission(), transport=pool
     )
 
     with pytest.raises(ExecutionFailure) as exc_info:
@@ -789,110 +693,253 @@ async def test_non_streaming_success_is_retried_then_reports_bounded_body() -> N
         )
 
     assert attempts > 1
-    assert "upstream contract changed" in exc_info.value.message
-    assert f"truncated after {ERROR_DETAIL_DISPLAY_CAP_BYTES} bytes" in (
-        exc_info.value.message
-    )
-    assert tail_sentinel not in exc_info.value.message
+    assert exc_info.value.status_code == 502
     assert "Request ID: req_non_stream" in exc_info.value.message
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
-async def test_truncated_attempt_after_commit_is_not_retried_or_duplicated() -> None:
-    attempts = 0
-    committed_text = "x" * 70_000
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal attempts
-        attempts += 1
-        return httpx.Response(
-            200,
-            text=_sse(
-                (
-                    "response.created",
-                    {"type": "response.created", "response": {"id": "first"}},
-                ),
-                (
-                    "response.output_text.delta",
-                    {
-                        "type": "response.output_text.delta",
-                        "delta": committed_text,
-                    },
-                ),
-            ),
-            headers={"content-type": "text/event-stream"},
-            request=request,
-        )
-
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
-    provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
-    )
-    chunks: list[str] = []
-
-    with pytest.raises(ExecutionFailure):
-        async for chunk in provider.stream_messages(
-            _request(),
-            request_id="req_committed",
-            response_model="claude-opus-4",
-        ):
-            chunks.extend((chunk,))
-
-    body = "".join(chunks)
-    assert attempts == 1
-    assert body.count(committed_text) == 1
-    assert body.count("event: message_start") == 1
-    await client.aclose()
-
-
-@pytest.mark.asyncio
-async def test_unauthorized_response_forces_one_auth_refresh() -> None:
+@pytest.mark.parametrize("responses_ingress", [False, True])
+@pytest.mark.parametrize("rejection", ["http_401", "http_403", "flat", "wrapped"])
+async def test_unauthorized_response_forces_one_auth_refresh(
+    responses_ingress: bool,
+    rejection: str,
+) -> None:
     authorizations: list[str] = []
+    sessions: list[str] = []
     unauthorized_responses: list[_CloseTrackingResponse] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         authorizations.append(request.headers["authorization"])
+        sessions.append(request.headers["session_id"])
         if len(authorizations) == 1:
+            error = {"code": "invalid_api_key", "message": "expired"}
+            if rejection.startswith("http_"):
+                status = int(rejection.removeprefix("http_"))
+                body = json.dumps({"error": error})
+            else:
+                status = 200
+                payload = (
+                    {"error": error}
+                    if rejection == "wrapped"
+                    else {"type": "error", **error}
+                )
+                body = f"data: {json.dumps(payload)}\n\n"
             response = _CloseTrackingResponse(
-                401,
-                json={"error": {"message": "expired"}},
+                status,
+                stream=_StaticAsyncBody(body.encode()),
+                headers={"content-type": "text/event-stream"},
                 request=request,
             )
             unauthorized_responses.append(response)
             return response
-        return httpx.Response(
+        return httpx2.Response(
             200,
             text=_complete_stream("recovered"),
             headers={"content-type": "text/event-stream"},
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     auth = _CloseAwareAuth(unauthorized_responses)
     provider = OpenAICodexProvider(
-        _config(), auth=auth, admission=_admission(), client=client
+        _config(), auth=auth, admission=_admission(), transport=pool
     )
 
     body = await _collect(
-        provider.stream_messages(
-            _request(),
-            request_id="req_auth",
-            response_model="claude-opus-4",
-        )
+        provider.stream_responses(_responses_request(), request_id="req_auth")
+        if responses_ingress
+        else provider.stream_messages(_request(), request_id="req_auth")
     )
 
     assert authorizations == ["Bearer access_1", "Bearer access_2"]
     assert auth.recovery_calls == 1
-    assert unauthorized_responses[0].close_calls == 1
-    assert text_content(parse_sse_text(body)) == "recovered"
-    await client.aclose()
+    assert sessions[0] == sessions[1]
+    assert unauthorized_responses[0].is_closed
+    if responses_ingress:
+        assert [event.event for event in parse_sse_text(body)].count(
+            "response.completed"
+        ) == 1
+    else:
+        assert text_content(parse_sse_text(body)) == "recovered"
+    await provider.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_credentials_keep_request_identity_and_pool_ownership() -> (
+    None
+):
+    class ConcurrentAuth(_FakeAuth):
+        async def access(self, *, force_refresh: bool = False) -> OpenAIAccess:
+            self.access_calls += 1
+            return OpenAIAccess(
+                f"access_{self.access_calls}", f"account_{self.access_calls}", False
+            )
+
+        async def recover_unauthorized(self, rejected_token: str) -> OpenAIAccess:
+            assert rejected_token == "access_1"
+            self.recovery_calls += 1
+            return OpenAIAccess("access_3", "account_3", True)
+
+        async def close(self) -> None:
+            raise AssertionError("Provider must not close the runtime-owned account")
+
+    class Pool(httpx2.MockTransport):
+        closes = 0
+
+        async def aclose(self) -> None:
+            self.closes += 1
+            await super().aclose()
+
+    second_started = asyncio.Event()
+    requests: dict[str, httpx2.Request] = {}
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        token = request.headers["authorization"]
+        requests[token] = request
+        if token == "Bearer access_1":
+            await second_started.wait()
+            return httpx2.Response(401, json={"error": {"message": "expired"}})
+        if token == "Bearer access_2":
+            second_started.set()
+        return httpx2.Response(
+            200,
+            text=_complete_stream("hello"),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    auth = ConcurrentAuth()
+    pool = Pool(handler)
+    provider = OpenAICodexProvider(
+        _config(), auth=auth, admission=_admission(), transport=pool
+    )
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                _collect(provider.stream_messages(_request())),
+                _collect(provider.stream_messages(_request())),
+            ),
+            timeout=3,
+        )
+        assert all(
+            text_content(parse_sse_text(result)) == "hello" for result in results
+        )
+        first, second, refreshed = (
+            requests[f"Bearer access_{number}"] for number in (1, 2, 3)
+        )
+        assert first.headers["session_id"] == refreshed.headers["session_id"]
+        assert first.headers["session_id"] != second.headers["session_id"]
+        for number, request in enumerate((first, second, refreshed), start=1):
+            assert request.headers["chatgpt-account-id"] == f"account_{number}"
+        assert "x-openai-fedramp" not in first.headers
+        assert "x-openai-fedramp" not in second.headers
+        assert refreshed.headers["x-openai-fedramp"] == "true"
+        assert auth.recovery_calls == 1
+        assert pool.closes == 0
+    finally:
+        await provider.cleanup()
+    assert pool.closes == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("responses_ingress", [False, True])
+@pytest.mark.parametrize("code", [None, "token_expired"])
+@pytest.mark.parametrize(
+    ("error_type", "status", "kind"),
+    [
+        ("authentication_error", 401, FailureKind.AUTHENTICATION),
+        ("permission_error", 403, FailureKind.PERMISSION),
+    ],
+)
+async def test_nested_authentication_error_keeps_its_type(
+    responses_ingress: bool,
+    code: str | None,
+    error_type: str,
+    status: int,
+    kind: FailureKind,
+) -> None:
+    authorizations: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        authorizations.append(request.headers["authorization"])
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(
+                (
+                    "response.failed",
+                    {
+                        "type": "response.failed",
+                        "response": {
+                            "id": "resp_failed",
+                            "status": "failed",
+                            "error": {
+                                "code": code,
+                                "type": error_type,
+                                "message": "expired",
+                            },
+                        },
+                    },
+                )
+            ),
+        )
+
+    auth = _FakeAuth()
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=auth,
+        admission=immediate_admission(max_attempts=2),
+        transport=httpx2.MockTransport(handler),
+    )
+    try:
+        stream = (
+            provider.stream_responses(_responses_request())
+            if responses_ingress
+            else provider.stream_messages(_request())
+        )
+        with pytest.raises(ExecutionFailure) as failure:
+            await _collect(stream)
+        assert failure.value.status_code == status
+        assert failure.value.kind is kind
+        assert auth.recovery_calls == 1
+        assert authorizations == ["Bearer access_1", "Bearer access_2"]
+    finally:
+        await provider.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["messages", "responses", "catalog"])
+async def test_disconnected_account_never_opens_or_refreshes_a_request(
+    operation: str,
+) -> None:
+    class DisconnectedAuth(_FakeAuth):
+        async def access(self, *, force_refresh: bool = False) -> OpenAIAccess:
+            self.access_calls += 1
+            raise OpenAIReconnectRequired("Reconnect in Admin.")
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise AssertionError("Disconnected accounts must not send a provider request")
+
+    auth = DisconnectedAuth()
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=auth,
+        admission=_admission(),
+        transport=httpx2.MockTransport(handler),
+    )
+    try:
+        with pytest.raises(ExecutionFailure, match="Reconnect in Admin") as failure:
+            if operation == "catalog":
+                await provider.list_model_infos()
+            elif operation == "responses":
+                await _collect(provider.stream_responses(_responses_request()))
+            else:
+                await _collect(provider.stream_messages(_request()))
+        assert failure.value.kind is FailureKind.AUTHENTICATION
+        assert auth.access_calls == 1
+        assert auth.recovery_calls == 0
+    finally:
+        await provider.cleanup()
 
 
 @pytest.mark.asyncio
@@ -900,13 +947,13 @@ async def test_model_discovery_re_request_is_a_second_admitted_attempt() -> None
     authorizations: list[str] = []
     unauthorized_responses: list[_CloseTrackingResponse] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         authorizations.append(request.headers["authorization"])
         if len(authorizations) == 1:
             response = _CloseTrackingResponse(401, request=request)
             unauthorized_responses.append(response)
             return response
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "models": [
@@ -921,13 +968,10 @@ async def test_model_discovery_re_request_is_a_second_admitted_attempt() -> None
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     auth = _CloseAwareAuth(unauthorized_responses)
     provider = OpenAICodexProvider(
-        _config(), auth=auth, admission=_admission(), client=client
+        _config(), auth=auth, admission=_admission(), transport=pool
     )
 
     with patch("free_claude_code.providers.admission.trace_event") as trace:
@@ -936,7 +980,7 @@ async def test_model_discovery_re_request_is_a_second_admitted_attempt() -> None
     assert {info.model_id for info in infos} == {"gpt-visible"}
     assert authorizations == ["Bearer access_1", "Bearer access_2"]
     assert auth.recovery_calls == 1
-    assert unauthorized_responses[0].close_calls == 1
+    assert unauthorized_responses[0].is_closed
     attempt_rows = [
         call.kwargs
         for call in trace.call_args_list
@@ -956,7 +1000,7 @@ async def test_model_discovery_re_request_is_a_second_admitted_attempt() -> None
         "accepted",
     ]
     assert len({row["execution_id"] for row in attempt_rows}) == 1
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
@@ -972,25 +1016,22 @@ async def test_auth_refresh_failure_does_not_repeat_rejected_provider_call() -> 
 
     authorizations: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         authorization = request.headers["authorization"]
         authorizations.append(authorization)
         if authorization == "Bearer access_1":
-            return httpx.Response(401, request=request)
-        return httpx.Response(
+            return httpx2.Response(401, request=request)
+        return httpx2.Response(
             200,
             text=_complete_stream("recovered"),
             headers={"content-type": "text/event-stream"},
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     auth = FailingRecoveryAuth()
     provider = OpenAICodexProvider(
-        _config(), auth=auth, admission=_admission(), client=client
+        _config(), auth=auth, admission=_admission(), transport=pool
     )
 
     with pytest.raises(ExecutionFailure, match="refresh interrupted") as exc_info:
@@ -1005,28 +1046,25 @@ async def test_auth_refresh_failure_does_not_repeat_rejected_provider_call() -> 
     assert isinstance(exc_info.value.__cause__, httpx.ReadError)
     assert authorizations == ["Bearer access_1"]
     assert auth.recovery_calls == 1
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
 async def test_second_unauthorized_response_is_terminal_without_refresh_loop() -> None:
     authorizations: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         authorizations.append(request.headers["authorization"])
-        return httpx.Response(
+        return httpx2.Response(
             401,
             json={"error": {"message": "still expired"}},
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     auth = _FakeAuth()
     provider = OpenAICodexProvider(
-        _config(), auth=auth, admission=_admission(), client=client
+        _config(), auth=auth, admission=_admission(), transport=pool
     )
 
     with pytest.raises(ExecutionFailure) as exc_info:
@@ -1041,30 +1079,27 @@ async def test_second_unauthorized_response_is_terminal_without_refresh_loop() -
     assert exc_info.value.status_code == 401
     assert authorizations == ["Bearer access_1", "Bearer access_2"]
     assert auth.recovery_calls == 1
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
 async def test_final_attempt_unauthorized_preserves_the_provider_401() -> None:
     attempts = 0
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         nonlocal attempts
         attempts += 1
         status = 503 if attempts < 5 else 401
-        return httpx.Response(
+        return httpx2.Response(
             status,
             json={"error": {"message": f"attempt {attempts}"}},
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     auth = _FakeAuth()
     provider = OpenAICodexProvider(
-        _config(), auth=auth, admission=_admission(), client=client
+        _config(), auth=auth, admission=_admission(), transport=pool
     )
 
     with pytest.raises(ExecutionFailure) as exc_info:
@@ -1080,15 +1115,15 @@ async def test_final_attempt_unauthorized_preserves_the_provider_401() -> None:
     assert auth.recovery_calls == 0
     assert exc_info.value.status_code == 401
     assert "Request ID: req_final_401" in str(exc_info.value)
-    assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+    assert isinstance(exc_info.value.__cause__, AuthenticationError)
     assert exc_info.value.__cause__.response.status_code == 401
-    await client.aclose()
+    await provider.cleanup()
 
 
 @pytest.mark.asyncio
 async def test_stream_failure_redacts_credentials_from_customer_diagnostic() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             text=_sse(
                 (
@@ -1111,12 +1146,9 @@ async def test_stream_failure_redacts_credentials_from_customer_diagnostic() -> 
             request=request,
         )
 
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
+    pool = httpx2.MockTransport(handler)
     provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+        _config(), auth=_FakeAuth(), admission=_admission(), transport=pool
     )
 
     with pytest.raises(ExecutionFailure) as exc_info:
@@ -1130,198 +1162,4 @@ async def test_stream_failure_redacts_credentials_from_customer_diagnostic() -> 
 
     assert "sk-this-must-never-be-returned" not in exc_info.value.message
     assert "Authorization: <redacted>" in exc_info.value.message
-    await client.aclose()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("wire_api", ["messages", "responses"])
-@pytest.mark.parametrize(
-    ("event_type", "response_fields"),
-    [
-        (
-            "response.failed",
-            {
-                "status": "failed",
-                "error": {
-                    "code": "context_length_exceeded",
-                    "message": "maximum context length exceeded",
-                },
-            },
-        ),
-        (
-            "response.incomplete",
-            {
-                "status": "incomplete",
-                "incomplete_details": {"reason": "model_context_window_exceeded"},
-                "usage": {"input_tokens": 10, "output_tokens": 0},
-            },
-        ),
-    ],
-)
-async def test_context_terminals_have_canonical_failure_semantics(
-    wire_api: str,
-    event_type: str,
-    response_fields: dict[str, Any],
-) -> None:
-    calls = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(
-            200,
-            text=_sse(
-                (
-                    event_type,
-                    {
-                        "type": event_type,
-                        "response": {"id": "resp_context", **response_fields},
-                    },
-                )
-            ),
-            headers={"content-type": "text/event-stream"},
-            request=request,
-        )
-
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
-    provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
-    )
-
-    stream = (
-        provider.stream_messages(
-            _request(),
-            request_id=f"req_context_{wire_api}",
-            response_model="claude-opus-4",
-        )
-        if wire_api == "messages"
-        else provider.stream_responses(
-            _responses_request(),
-            request_id=f"req_context_{wire_api}",
-            response_model="openai/gpt-test",
-        )
-    )
-    with pytest.raises(ExecutionFailure) as exc_info:
-        await _collect(stream)
-
-    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
-    assert exc_info.value.retryable is False
-    assert calls == 1
-    await client.aclose()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("wire_api", ["messages", "responses"])
-async def test_top_level_context_error_has_canonical_failure_semantics(
-    wire_api: str,
-) -> None:
-    calls = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(
-            200,
-            text=_sse(
-                (
-                    "error",
-                    {
-                        "type": "error",
-                        "sequence_number": 0,
-                        "code": "context_length_exceeded",
-                        "message": "maximum context length exceeded",
-                        "param": None,
-                    },
-                )
-            ),
-            headers={"content-type": "text/event-stream"},
-            request=request,
-        )
-
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
-    provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
-    )
-
-    stream = (
-        provider.stream_messages(
-            _request(),
-            request_id=f"req_top_level_context_{wire_api}",
-            response_model="claude-opus-4",
-        )
-        if wire_api == "messages"
-        else provider.stream_responses(
-            _responses_request(),
-            request_id=f"req_top_level_context_{wire_api}",
-            response_model="openai/gpt-test",
-        )
-    )
-    with pytest.raises(ExecutionFailure) as exc_info:
-        await _collect(stream)
-
-    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
-    assert exc_info.value.retryable is False
-    assert calls == 1
-    await client.aclose()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("wire_api", ["messages", "responses"])
-async def test_streamed_context_http_error_has_canonical_failure_semantics(
-    wire_api: str,
-) -> None:
-    calls = 0
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(
-            400,
-            stream=_StaticAsyncBody(
-                json.dumps(
-                    {
-                        "error": {
-                            "code": "context_length_exceeded",
-                            "message": "maximum context length exceeded",
-                        }
-                    }
-                ).encode()
-            ),
-            headers={"content-type": "application/json"},
-            request=request,
-        )
-
-    client = httpx.AsyncClient(
-        base_url="https://chatgpt.com/backend-api/codex/",
-        transport=httpx.MockTransport(handler),
-    )
-    provider = OpenAICodexProvider(
-        _config(), auth=_FakeAuth(), admission=_admission(), client=client
-    )
-
-    stream = (
-        provider.stream_messages(
-            _request(),
-            request_id=f"req_context_http_{wire_api}",
-            response_model="claude-opus-4",
-        )
-        if wire_api == "messages"
-        else provider.stream_responses(
-            _responses_request(),
-            request_id=f"req_context_http_{wire_api}",
-            response_model="openai/gpt-test",
-        )
-    )
-    with pytest.raises(ExecutionFailure) as exc_info:
-        await _collect(stream)
-
-    assert exc_info.value.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
-    assert exc_info.value.retryable is False
-    assert calls == 1
-    await client.aclose()
+    await provider.cleanup()

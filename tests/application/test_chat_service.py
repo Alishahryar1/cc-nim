@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,7 @@ from free_claude_code.application.chat import (
     ChatNotFoundError,
     ChatOperationAcknowledgement,
     ChatOperationKind,
+    ChatReasoning,
     ChatService,
     ChatSession,
     ChatUnavailableError,
@@ -23,9 +25,173 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.interprocess_lock import InterprocessFileLock
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair_fails", [False, True])
+async def test_cancelled_startup_drains_retirement_worker_before_releasing_lock(
+    tmp_path, monkeypatch, repair_fails
+):
+    store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    await store.start()
+    original_run = store._run_sync
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def blocked_run(operation):
+        entered.set()
+        assert release.wait(5)
+        try:
+            if repair_fails:
+                raise OSError("injected repair failure after cancellation")
+            return original_run(operation)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(store, "_run_sync", blocked_run)
+    service = ChatService(FakeRuntime(FakeChatProvider()), store)
+    task = asyncio.create_task(service.start())
+    replacement_lock = InterprocessFileLock(tmp_path / "chat.lock")
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        task.cancel()
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        assert not finished.is_set()
+        assert not replacement_lock.acquire()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert finished.is_set()
+        assert replacement_lock.acquire()
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        replacement_lock.release()
+        await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supports_thinking", [True, False, None])
+async def test_retired_chat_selection_startup_and_stale_patch(
+    tmp_path, monkeypatch, supports_thinking
+):
+    runtime = FakeRuntime(FakeChatProvider())
+    monkeypatch.setattr(
+        runtime,
+        "cached_model_info",
+        lambda provider_id, model_id: ProviderModelInfo(
+            model_id, supports_thinking=supports_thinking
+        ),
+    )
+    store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    await store.start()
+    old = await store.create_session(
+        session_id="aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+        model="github_models/old",
+        reasoning=ChatReasoning.HIGH,
+    )
+    await store.close()
+    service = ChatService(runtime, store)
+    await service.start()
+    try:
+        assert service.availability() == (True, None)
+        repaired = await service.get_session(old.id)
+        assert repaired.model == runtime.settings.model
+        assert repaired.revision == old.revision + 1
+        expected_reasoning = (
+            ChatReasoning.OFF if supports_thinking is False else ChatReasoning.HIGH
+        )
+        assert repaired.reasoning is expected_reasoning
+        with pytest.raises(ChatConflictError):
+            await service.update_session(
+                old.id,
+                expected_revision=old.revision,
+                title=None,
+                model="github_models/old",
+                reasoning=None,
+            )
+        assert await service.get_session(old.id) == repaired
+        # Simulate a stale tab submitting an old selection while thinking is enabled.
+        enabled = await store.update_session(
+            old.id,
+            expected_revision=repaired.revision,
+            title=None,
+            model=None,
+            reasoning=ChatReasoning.HIGH,
+        )
+        patched = await service.update_session(
+            old.id,
+            expected_revision=enabled.revision,
+            title=None,
+            model="github_models/old",
+            reasoning=None,
+        )
+        assert patched.model == runtime.settings.model
+        assert patched.reasoning is expected_reasoning
+        assert runtime.leases == []
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [True, False])
+async def test_chat_retirement_failure_releases_store_lock(
+    tmp_path, monkeypatch, cancel
+):
+    store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    service = ChatService(FakeRuntime(FakeChatProvider()), store)
+
+    async def fail_repair(**kwargs):
+        if cancel:
+            raise asyncio.CancelledError()
+        raise OSError("injected repair failure")
+
+    monkeypatch.setattr(store, "repair_retired_model_selections", fail_repair)
+    if cancel:
+        with pytest.raises(asyncio.CancelledError):
+            await service.start()
+    else:
+        await service.start()
+    assert not service.availability()[0]
+    replacement = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    await replacement.start()
+    await replacement.close()
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_chat_retirement_failed_cleanup_is_retried_before_start(
+    tmp_path, monkeypatch
+):
+    store = SQLiteChatStore(tmp_path / "chat.db", tmp_path / "chat.lock")
+    service = ChatService(FakeRuntime(FakeChatProvider()), store)
+    original_repair = store.repair_retired_model_selections
+    original_close = store.close
+
+    async def fail_repair(**kwargs):
+        raise OSError("injected repair failure")
+
+    async def fail_close():
+        raise OSError("injected cleanup failure")
+
+    monkeypatch.setattr(store, "repair_retired_model_selections", fail_repair)
+    monkeypatch.setattr(store, "close", fail_close)
+    await service.start()
+    assert not service.availability()[0]
+    monkeypatch.setattr(store, "repair_retired_model_selections", original_repair)
+    monkeypatch.setattr(store, "close", original_close)
+    await service.start()
+    try:
+        assert service.availability() == (True, None)
+        await service.create_session()
+    finally:
+        await service.close()
 
 
 class FakeChatProvider:
@@ -1654,7 +1820,10 @@ async def test_cancelled_delete_request_still_finishes_accepted_deletion(
 
 
 @pytest.mark.asyncio
-async def test_close_waits_for_terminal_settlement(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("drain_feeds", [False, True])
+async def test_close_waits_for_terminal_settlement(
+    tmp_path: Path, monkeypatch, drain_feeds
+):
     service, _runtime, store = await _service(tmp_path, FakeChatProvider())
     release_commit = asyncio.Event()
     service_closed = False
@@ -1679,6 +1848,17 @@ async def test_close_waits_for_terminal_settlement(tmp_path: Path, monkeypatch):
             text="finish before shutdown",
         )
         await asyncio.wait_for(entered_commit.wait(), timeout=1)
+
+        if drain_feeds:
+            service.begin_shutdown()
+            service.begin_shutdown()
+            assert service.availability()[0] is False
+            with pytest.raises(ChatUnavailableError):
+                await service.subscribe()
+            with pytest.raises(StopAsyncIteration):
+                await asyncio.wait_for(
+                    anext(stream.subscription.__aiter__()), timeout=1
+                )
 
         close_task = asyncio.create_task(service.close())
         await asyncio.sleep(0.05)

@@ -192,6 +192,7 @@ from more than one provider before succeeding.
 | [Groq](https://console.groq.com/keys) | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` |
 | [ClinePass](https://docs.cline.bot/getting-started/clinepass) | `CLINE_API_KEY` | `cline_pass/cline-pass/kimi-k3` |
 | [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | Connect ChatGPT in the Admin UI | `openai/<model-id>` |
+| [GitHub Copilot](https://docs.github.com/en/copilot/how-tos/copilot-sdk/auth/authenticate) | Connect GitHub Copilot in the Admin UI | `github_copilot/<model-id>` |
 | [xAI (Grok)](https://console.x.ai/team/default/api-keys) | `XAI_API_KEY` | `xai/grok-4.5` |
 | [QwenCloud Token Plan](https://home.qwencloud.com/api-keys) | `QWENCLOUD_API_KEY` | `qwencloud/qwen3.7-plus` |
 | [QwenCloud Coding Plan](https://home.qwencloud.com/api-keys) | `QWENCLOUD_CODING_API_KEY` | `qwencloud_coding/qwen3.7-plus` |
@@ -216,7 +217,6 @@ from more than one provider before succeeding.
 | [Amazon Bedrock](https://console.aws.amazon.com/bedrock/) | `AWS_BEARER_TOKEN_BEDROCK` | `bedrock/openai.gpt-oss-120b` |
 | [Hugging Face Inference Providers](https://huggingface.co/settings/tokens) | `HUGGINGFACE_API_KEY` | `huggingface/Qwen/Qwen3-Coder-480B-A35B-Instruct:fastest` |
 | [Cohere](https://dashboard.cohere.com/api-keys) | `COHERE_API_KEY` | `cohere/command-a-plus-05-2026` |
-| [GitHub Models](https://github.com/marketplace?type=models) | `GITHUB_MODELS_TOKEN` | `github_models/openai/gpt-4.1` |
 | [Wafer](https://wafer.ai/) | `WAFER_API_KEY` | `wafer/DeepSeek-V4-Pro` |
 | [Kimi API](https://platform.moonshot.ai/console/api-keys) | `KIMI_API_KEY` | `kimi/kimi-k2.5` |
 | [Kimi Code](https://www.kimi.com/code/console) | `KIMI_CODE_API_KEY` | `kimi_code/k3` |
@@ -246,6 +246,15 @@ from more than one provider before succeeding.
 - OpenAI uses your ChatGPT subscription rather than an API key. Connect from
   **Providers → Connected accounts** in the Admin UI. Use device code on
   headless systems. Restart an already-running agent after connecting.
+- GitHub Copilot uses your signed-in GitHub account and subscription. Install
+  [Copilot CLI 1.0.83](https://github.com/github/copilot-cli/releases/tag/v1.0.83)
+  on PATH, then choose **Providers → Connected accounts → GitHub Copilot → Connect**.
+  FCC reuses the native profile or shows a GitHub device code when sign-in is needed.
+  You can also sign in first with `copilot login --device-code`. Select a concrete
+  `github_copilot/<model-id>` from the discovered list; available models and quotas
+  depend on your subscription and organization policies. Restart an already-running
+  agent after connecting. Disconnect stops FCC use and leaves the native login intact.
+  FCC pins its SDK and CLI compatibility because direct endpoint access is experimental.
 - Azure OpenAI uses the deployment names from your resource. Set
   `AZURE_OPENAI_BASE_URL` to its complete v1 endpoint, such as
   `https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/`, and select a
@@ -330,6 +339,7 @@ Providers that do not support a selected control retain their own behavior.
 For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`,
 `fcc-pi`, `fcc-opencode`, `fcc-cline`, `fcc-hermes`, `fcc-dsh`, `fcc-grok`,
 `fcc-muse`, or `fcc-aider`.
+
 Use the guides below for editor integrations.
 
 <details>
@@ -631,7 +641,6 @@ Windows PowerShell:
 ## Project Links
 
 - [Report bugs or request features](https://github.com/Alishahryar1/free-claude-code/issues)
-- [Architecture and extension guide](ARCHITECTURE.md)
 - [Contributing guide](CONTRIBUTING.md)
 
 ## License
