@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
@@ -19,9 +20,21 @@ from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
+# Maximum time to wait for server startup (seconds)
 _SERVER_START_TIMEOUT_SECONDS = 30.0
+# Interval between health checks during server startup (seconds)
 _SERVER_START_POLL_INTERVAL_SECONDS = 0.5
-_SERVER_STARTUP_LOCK_FILENAME = "server.startup.lock"
+
+
+def _startup_lock_path_for(proxy_root_url: str) -> Path:
+    """Return the interprocess startup lock path scoped to one server endpoint.
+
+    Two launchers targeting different local proxies (for example different
+    ``settings.port`` values) do not block each other's startup.
+    """
+    normalized = proxy_root_url.rstrip("/").lower()
+    safe = normalized.replace(":", "_").replace("/", "_").replace("..", "_")
+    return config_dir_path() / f"{safe}.server.startup.lock"
 
 
 def proxy_v1_url(proxy_root_url: str) -> str:
@@ -113,20 +126,22 @@ def _ensure_fcc_server_running(proxy_root_url: str) -> bool:
     if preflight_proxy(proxy_root_url) is None:
         return True
 
-    lock_path = config_dir_path() / _SERVER_STARTUP_LOCK_FILENAME
+    lock_path = _startup_lock_path_for(proxy_root_url)
     lock = InterprocessFileLock(lock_path)
     deadline = time.monotonic() + _SERVER_START_TIMEOUT_SECONDS
 
     # Become the designated starter: hold the lock until the server is ready
-    # (or startup definitively fails) so peers never spawn a second server.
+    # (or startup definitively fails) so peers for this endpoint never spawn a
+    # second server.
     if lock.acquire(wait=False):
         try:
             return _start_server_and_wait_until_ready(proxy_root_url, deadline)
         finally:
             lock.release()
 
-    # Another launcher owns startup. Wait for its server to become ready and,
-    # if that starter gives up or dies, take over the startup role ourselves.
+    # Another launcher owns startup for this endpoint. Wait for its server to
+    # become ready and, if that starter gives up or dies, take over the startup
+    # role ourselves.
     while True:
         if preflight_proxy(proxy_root_url) is None:
             return True

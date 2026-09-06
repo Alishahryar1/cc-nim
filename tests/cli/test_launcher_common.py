@@ -7,13 +7,20 @@ from unittest.mock import MagicMock, patch
 
 from free_claude_code.cli.launchers import common
 
-_PROXY_URL = "http://127.0.0.1:9191"
+_PROXY_A = "http://127.0.0.1:9191"
+_PROXY_B = "http://127.0.0.1:9192"
+_PROXY_URL = _PROXY_A
 _SERVER_COMMAND = [
     sys.executable,
     "-m",
     "free_claude_code.cli.entrypoints",
     "serve",
 ]
+
+
+def _lock_path_for(proxy_root_url: str) -> Path:
+    safe = proxy_root_url.rstrip("/").lower().replace(":", "_").replace("/", "_")
+    return common.config_dir_path() / f"{safe}.server.startup.lock"
 
 
 def test_ensure_server_running_true_when_proxy_already_healthy() -> None:
@@ -67,7 +74,11 @@ def test_ensure_server_running_starts_server_and_waits_until_ready(
     lock.acquire.assert_called_once_with(wait=False)
     lock.release.assert_called_once()
     lock_path = lock_cls.call_args.args[0]
-    assert lock_path == tmp_path / "server.startup.lock"
+    assert (
+        lock_path
+        == tmp_path
+        / f"{_PROXY_URL.replace(':', '_').replace('/', '_')}.server.startup.lock"
+    )
     assert (tmp_path / "logs" / "server.log").exists()
 
 
