@@ -80,8 +80,14 @@ class RequestEndpoint:
         self._omit_authorization = (
             endpoint.api_key is None and "authorization" not in headers
         )
-        if "authorization" in headers:
-            headers["Authorization"] = headers.pop("authorization")
+        # SDK defaults are merged as a case-sensitive mapping before HTTP parsing.
+        # Match their spelling so an endpoint replaces, rather than duplicates, them.
+        sdk_header_names = {"authorization": "Authorization"}
+        for name in client.default_headers:
+            sdk_header_names.setdefault(name.lower(), name)
+        headers = {
+            sdk_header_names.get(name, name): value for name, value in headers.items()
+        }
 
         async def credential() -> str:
             # A callable also overrides an inherited key with an empty credential.
