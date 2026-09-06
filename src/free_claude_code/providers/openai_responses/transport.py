@@ -1,4 +1,4 @@
-"""Standard API-key OpenAI Responses execution over the official SDK."""
+"""Shared OpenAI Responses execution over the official SDK."""
 
 import asyncio
 import sys
@@ -92,10 +92,12 @@ class OpenAIResponsesTransport:
         log_raw_sse_events: bool,
         endpoint_transport: httpx2.AsyncBaseTransport | None = None,
         event_adapter_factory: Callable[[], ResponsesEventAdapter] | None = None,
+        omitted_request_fields: frozenset[str] = frozenset(),
     ) -> None:
         self._client = client
         self._endpoint_transport = endpoint_transport
         self._event_adapter_factory = event_adapter_factory
+        self._omitted_request_fields = omitted_request_fields
         self._admission = admission
         self._provider_name = provider_name
         self._read_timeout_s = read_timeout_s
@@ -168,25 +170,27 @@ class OpenAIResponsesTransport:
             ),
         )
 
-    @staticmethod
     def _build_messages_body(
+        self,
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
     ) -> JsonObject:
         try:
-            return cast(
-                JsonObject,
+            return self._prepare_body(
                 cast(
-                    ResponseCreateParamsStreaming,
-                    build_responses_provider_request(request, reasoning=reasoning),
-                ),
+                    JsonObject,
+                    cast(
+                        ResponseCreateParamsStreaming,
+                        build_responses_provider_request(request, reasoning=reasoning),
+                    ),
+                )
             )
         except ResponsesConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc
 
-    @staticmethod
     def _build_native_body(
+        self,
         request: OpenAIResponsesRequest,
         *,
         reasoning: ReasoningPolicy,
@@ -195,11 +199,18 @@ class OpenAIResponsesTransport:
             raise InvalidRequestError("Responses request model must not be empty.")
         if request.input is None or request.input == "" or request.input == []:
             raise InvalidRequestError("Responses request input must not be empty.")
-        return build_native_responses_request(
-            request,
-            model=request.model,
-            reasoning=reasoning,
+        return self._prepare_body(
+            build_native_responses_request(
+                request,
+                model=request.model,
+                reasoning=reasoning,
+            )
         )
+
+    def _prepare_body(self, body: JsonObject) -> JsonObject:
+        for field in self._omitted_request_fields:
+            body.pop(field, None)
+        return body
 
     async def _run_stream(
         self,
@@ -288,13 +299,20 @@ class OpenAIResponsesTransport:
             scope: ProviderAttemptScope | None = None
             stream_opened = False
             try:
+                client = (
+                    await endpoint.openai_client(self._client)
+                    if endpoint is not None
+                    else self._client
+                )
                 attempt = await execution.open_attempt(ProviderOperationKind.GENERATION)
                 scope = ProviderAttemptScope(
                     attempt,
                     provider_name=self._provider_name,
                     request_id=request_id,
                 )
-                sdk_stream = await self._create_sdk_stream(body, endpoint=endpoint)
+                sdk_stream = await self._create_sdk_stream(
+                    body, client=client, endpoint=endpoint
+                )
                 stream = scope.retain(_ClosableResponsesStream(sdk_stream))
                 stream_opened = True
 
@@ -442,6 +460,7 @@ class OpenAIResponsesTransport:
         self,
         body: JsonObject,
         *,
+        client: AsyncOpenAI,
         endpoint: RequestEndpoint | None = None,
     ) -> AsyncStream[ResponseStreamEvent]:
         model = body.get("model")
@@ -453,11 +472,6 @@ class OpenAIResponsesTransport:
             for key, value in body.items()
             if key not in {"model", "input", "stream", "store"}
         }
-        client = (
-            await endpoint.openai_client(self._client)
-            if endpoint is not None
-            else self._client
-        )
         return await client.responses.create(
             model=model,
             input=input_value,

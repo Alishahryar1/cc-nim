@@ -915,6 +915,7 @@ def test_create_provider_instantiates_each_builtin():
     with (
         patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"),
         patch("free_claude_code.providers.github_copilot.provider.AsyncOpenAI"),
+        patch("free_claude_code.providers.openai_codex.provider.AsyncOpenAI"),
         patch("httpx.AsyncClient"),
         patch(
             "free_claude_code.providers.runtime.factory.ProviderAdmissionController",

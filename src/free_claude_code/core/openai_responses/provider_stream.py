@@ -16,12 +16,14 @@ class ResponsesStreamFailure(RuntimeError):
         message: str,
         *,
         code: str | None = None,
+        body: dict[str, Any] | None = None,
         event_type: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
+        self.body = body
         self.event_type = event_type
         self.payload = payload
 
@@ -252,10 +254,11 @@ def responses_stream_failure_from_event(
     if not isinstance(error, dict):
         error = data if event_type == "error" else {}
     message = error.get("message")
-    code = error.get("code", error.get("type"))
+    code = error.get("code") or error.get("type")
     return ResponsesStreamFailure(
         message if isinstance(message, str) and message else "OpenAI response failed.",
         code=code if isinstance(code, str) else None,
+        body=dict(error),
         event_type=event_type,
         payload=data,
     )

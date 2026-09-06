@@ -4,6 +4,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
+import httpx
 import httpx2
 import pytest
 from openai import AsyncOpenAI
@@ -35,7 +36,11 @@ class Context:
 
     async def endpoint(self, *, force_refresh: bool = False) -> HttpEndpoint:
         self.calls.append(force_refresh)
-        headers = {"X-Session": self.name}
+        headers = {
+            "X-Session": self.name,
+            "uSeR-AgEnT": f"context-{self.name}",
+            "accept": "text/event-stream",
+        }
         if self.authorization:
             headers["authorization"] = self.authorization
         return HttpEndpoint(
@@ -136,6 +141,45 @@ async def _consume(stream: AsyncIterator[str]) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("refresh", [False, True])
+@pytest.mark.parametrize("responses_ingress", [False, True])
+async def test_responses_credential_failure_does_not_retry_generation(
+    refresh: bool,
+    responses_ingress: bool,
+) -> None:
+    class FailingContext(Context):
+        async def endpoint(self, *, force_refresh: bool = False) -> HttpEndpoint:
+            if not refresh or force_refresh:
+                self.calls.append(force_refresh)
+                raise httpx.ReadError("credential service unavailable")
+            return await super().endpoint(force_refresh=force_refresh)
+
+    requests: list[httpx2.Request] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(401, json={"error": {"message": "expired"}})
+
+    pool = httpx2.MockTransport(handler)
+    async with AsyncOpenAI(
+        api_key="base",
+        http_client=httpx2.AsyncClient(transport=pool),
+        max_retries=0,
+    ) as client:
+        context = FailingContext("a")
+        with pytest.raises(ExecutionFailure, match="credential service unavailable"):
+            await _consume(
+                _stream(
+                    _transport(client, responses=True, pool=pool),
+                    context,
+                    responses_ingress=responses_ingress,
+                )
+            )
+    assert len(requests) == int(refresh)
+    assert context.calls == ([False, True] if refresh else [False])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("responses", [False, True])
 @pytest.mark.parametrize("responses_ingress", [False, True])
 async def test_concurrent_endpoint_views_do_not_share_headers_or_close_base(
@@ -153,7 +197,11 @@ async def test_concurrent_endpoint_views_do_not_share_headers_or_close_base(
         organization="old-org",
         project="old-project",
         base_url="https://original.invalid",
-        default_headers={"X-Old": "base"},
+        default_headers={
+            "X-Old": "base",
+            "accept": "application/json",
+            "user-agent": "base-client",
+        },
         default_query={"old": "secret"},
         http_client=httpx2.AsyncClient(
             transport=pool,
@@ -171,6 +219,10 @@ async def test_concurrent_endpoint_views_do_not_share_headers_or_close_base(
             _consume(_stream(transport, b, responses_ingress=responses_ingress)),
         )
         for request in seen:
+            assert request.headers.get_list("accept") == ["text/event-stream"]
+            assert request.headers.get_list("user-agent") == [
+                f"context-{request.headers['X-Session']}"
+            ]
             assert "X-Old" not in request.headers and not request.url.query
             assert "X-Secret" not in request.headers and "Cookie" not in request.headers
             assert (
