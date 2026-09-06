@@ -540,10 +540,12 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "free_claude_code.cli.launchers.codex",
         "Codex CLI binary and fcc provider env",
         "Responses config, auth env, and native /model catalog injection",
-        "proxy preflight and catalog fail-open warning",
+        "shared startup; required catalog failure stops launch; private catalog cleanup",
         (
             "tests/cli/test_codex_model_catalog.py",
-            "tests/cli/test_entrypoints.py",
+            "tests/cli/test_codex_launcher.py",
+            "tests/cli/test_launcher_workflow.py",
+            "tests/cli/test_launcher_resources.py",
         ),
         (),
     ),
@@ -555,7 +557,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "Pi CLI binary, bundled extension, and FCC child-process environment",
         "Anthropic Messages provider with an FCC-scoped live model catalog",
         "proxy preflight, missing extension, or catalog failure exits without fallback",
-        ("tests/cli/test_entrypoints.py",),
+        ("tests/cli/test_pi_launcher.py", "tests/cli/test_pi_extension.py"),
         ("test_pi_cli_prompt_e2e",),
     ),
     CapabilityContract(
@@ -579,7 +581,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "free_claude_code.cli.launchers.aider",
         "Aider 0.86.2+, live FCC Messages catalog, and private process files",
         "Anthropic Messages route scoped to FCC for native Aider sessions",
-        "binary, proxy, route conflict, catalog, or private-file failure exits before inference",
+        "binary, proxy, catalog, or private-file failure exits before inference",
         (
             "tests/cli/test_aider_config.py",
             "tests/cli/test_aider_launcher.py",
@@ -594,7 +596,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "free_claude_code.cli.launchers.cline",
         "Cline binary, live FCC model catalog, and protected child-process files",
         "Responses provider scoped to FCC for attached local sessions",
-        "version, detached mode, proxy, or catalog failure exits without fallback",
+        "version, proxy, catalog, or private-file failure exits before inference",
         (
             "tests/cli/test_cline_launcher.py",
             "tests/cli/test_model_catalog.py",
@@ -639,8 +641,8 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "grok_cli_integration",
         "free_claude_code.cli.launchers.grok",
         "Grok Build 1.0.5+, live FCC Responses catalog, and child-only config",
-        "Responses route scoped to FCC for attached TUI, headless, and ACP sessions",
-        "version, route conflict, proxy, or catalog failure exits before inference",
+        "Responses route scoped to FCC for native Grok sessions",
+        "version, process config conflict, proxy, or catalog failure exits before inference",
         (
             "tests/cli/test_grok_launcher.py",
             "tests/cli/test_model_catalog.py",
@@ -653,8 +655,8 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "muse_cli_integration",
         "free_claude_code.cli.launchers.muse",
         "Muse Code 0.2.1+, live FCC Responses catalog, and child-only route",
-        "Responses route scoped to FCC for attached TUI, exec, and resume sessions",
-        "version, route conflict, proxy, or catalog failure exits before inference",
+        "Responses route scoped to FCC for native Muse sessions",
+        "version, proxy, or catalog failure exits before inference",
         (
             "tests/cli/test_muse_launcher.py",
             "tests/api/test_model_listing.py",

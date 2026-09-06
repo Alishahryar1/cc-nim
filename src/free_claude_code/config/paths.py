@@ -15,7 +15,7 @@ OPENAI_AUTH_FILENAME = "openai.json"
 OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
 CONFIG_LOCK_FILENAME = "config.lock"
 FCC_TEMP_DIRNAME = "tmp"
-AIDER_TEMP_DIRNAME = "aider"
+LAUNCHER_TEMP_DIRNAME = "launchers"
 CHAT_STATE_DIRNAME = "chat"
 CHAT_DATABASE_FILENAME = "chat.db"
 CHAT_LOCK_FILENAME = "chat.lock"
@@ -39,10 +39,10 @@ def config_lock_path() -> Path:
     return config_dir_path() / CONFIG_LOCK_FILENAME
 
 
-def aider_temp_dir_path() -> Path:
-    """Return the base directory for managed per-launch Aider files."""
+def launcher_temp_dir_path() -> Path:
+    """Return the base directory for private native launcher configuration."""
 
-    return config_dir_path() / FCC_TEMP_DIRNAME / AIDER_TEMP_DIRNAME
+    return config_dir_path() / FCC_TEMP_DIRNAME / LAUNCHER_TEMP_DIRNAME
 
 
 def chat_state_dir_path() -> Path:
