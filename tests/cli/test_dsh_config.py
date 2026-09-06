@@ -58,23 +58,20 @@ def test_dsh_config_pins_responses_models_retries_and_private_state(
         provider_progress_timeout=600.0,
     )
 
-    assert launch.selected_model == "nvidia_nim/vendor/model"
-    assert launch.api_key_env == "FCC_DSH_API_KEY"
-
-    settings = _row_by_id(launch.patch, "settings")
+    settings = _row_by_id(launch, "settings")
     assert settings == {
         "id": "settings",
         "name": "@deepseek-ai/dsh-settings-file",
         "config": {"path": str(settings_path), "watch": False},
     }
-    credentials = _row_by_id(launch.patch, "credentials")
+    credentials = _row_by_id(launch, "credentials")
     assert credentials == {
         "id": "credentials",
         "name": "@deepseek-ai/dsh-credentials-local",
         "config": {"path": str(credentials_path), "watch": False},
     }
 
-    llm = _row_by_id(launch.patch, "llm-pi-ai")
+    llm = _row_by_id(launch, "llm-pi-ai")
     provider = llm["config"]["providers"]["free-claude-code"]
     assert provider == {
         "displayName": "Free Claude Code",
@@ -123,7 +120,7 @@ def test_dsh_config_pins_responses_models_retries_and_private_state(
         "retryPolicy": {"mode": "normal", "maxRetries": 0},
         "streamIdleTimeoutMs": 660_000,
     }
-    assert _row_by_id(launch.patch, "agent-default-model") == {
+    assert _row_by_id(launch, "agent-default-model") == {
         "id": "agent-default-model",
         "name": "@deepseek-ai/dsh-agent-default-model",
         "config": {
@@ -137,13 +134,13 @@ def test_dsh_config_pins_responses_models_retries_and_private_state(
         ("web-search-deepseek", "@deepseek-ai/dsh-web-search-deepseek"),
         ("tool-web", "@deepseek-ai/dsh-tool-web"),
     ):
-        assert _row_by_id(launch.patch, row_id) == {
+        assert _row_by_id(launch, row_id) == {
             "id": row_id,
             "name": package,
             "disabled": True,
         }
 
-    serialized = json.dumps(launch.patch)
+    serialized = json.dumps(launch)
     assert "proxy-token" not in serialized
     for unsupported in ("compat", "headers", "telemetry"):
         assert unsupported not in serialized
@@ -158,7 +155,7 @@ def test_dsh_config_rounds_fractional_progress_timeout_up() -> None:
         provider_progress_timeout=0.0001,
     )
 
-    provider = _row_by_id(launch.patch, "llm-pi-ai")["config"]["providers"][
+    provider = _row_by_id(launch, "llm-pi-ai")["config"]["providers"][
         "free-claude-code"
     ]
     assert provider["streamIdleTimeoutMs"] == 60_001

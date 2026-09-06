@@ -13,6 +13,7 @@ from free_claude_code.cli.launchers.codex_model_catalog import (
     build_codex_model_catalog,
     write_codex_model_catalog,
 )
+from free_claude_code.cli.launchers.model_catalog import client_models_from_response
 
 
 def _models_payload(*model_ids: str) -> dict[str, Any]:
@@ -51,9 +52,11 @@ def _slugs(catalog: Mapping[str, Any]) -> list[str]:
 
 def test_codex_catalog_uses_direct_configured_and_cached_model_slugs() -> None:
     catalog = build_codex_model_catalog(
-        _models_payload(
-            "nvidia_nim/nvidia/nemotron-3-super",
-            "open_router/meta-llama/llama-3.3-70b",
+        client_models_from_response(
+            _models_payload(
+                "nvidia_nim/nvidia/nemotron-3-super",
+                "open_router/meta-llama/llama-3.3-70b",
+            )
         )
     )
 
@@ -79,16 +82,18 @@ def test_codex_catalog_uses_direct_configured_and_cached_model_slugs() -> None:
 
 def test_codex_catalog_ignores_rows_without_direct_provider_identity() -> None:
     catalog = build_codex_model_catalog(
-        {
-            "data": [
-                {"id": "claude-opus-4-20250514"},
-                {
-                    "id": "nvidia_nim/provider-model",
-                    "provider_model_ref": "nvidia_nim/provider-model",
-                    "display_name": "NIM",
-                },
-            ]
-        }
+        client_models_from_response(
+            {
+                "data": [
+                    {"id": "claude-opus-4-20250514"},
+                    {
+                        "id": "nvidia_nim/provider-model",
+                        "provider_model_ref": "nvidia_nim/provider-model",
+                        "display_name": "NIM",
+                    },
+                ]
+            }
+        )
     )
 
     assert _slugs(catalog) == ["nvidia_nim/provider-model"]
@@ -96,9 +101,11 @@ def test_codex_catalog_ignores_rows_without_direct_provider_identity() -> None:
 
 def test_codex_catalog_deduplicates_direct_wire_ids() -> None:
     catalog = build_codex_model_catalog(
-        _models_payload(
-            "nvidia_nim/provider-model",
-            "nvidia_nim/provider-model",
+        client_models_from_response(
+            _models_payload(
+                "nvidia_nim/provider-model",
+                "nvidia_nim/provider-model",
+            )
         )
     )
 
@@ -107,7 +114,9 @@ def test_codex_catalog_deduplicates_direct_wire_ids() -> None:
 
 def test_codex_catalog_preserves_no_thinking_only_entries_for_routing() -> None:
     catalog = build_codex_model_catalog(
-        _models_payload("claude-3-freecc-no-thinking/open_router/plain-model")
+        client_models_from_response(
+            _models_payload("claude-3-freecc-no-thinking/open_router/plain-model")
+        )
     )
 
     assert _slugs(catalog) == ["claude-3-freecc-no-thinking/open_router/plain-model"]
@@ -115,11 +124,13 @@ def test_codex_catalog_preserves_no_thinking_only_entries_for_routing() -> None:
 
 def test_codex_catalog_ordering_and_priorities_are_deterministic() -> None:
     catalog = build_codex_model_catalog(
-        _models_payload(
-            "anthropic/gemini/models/gemini-test",
-            "nvidia_nim/nvidia/test",
-            "anthropic/gemini/models/gemini-test",
-            "open_router/provider/test",
+        client_models_from_response(
+            _models_payload(
+                "anthropic/gemini/models/gemini-test",
+                "nvidia_nim/nvidia/test",
+                "anthropic/gemini/models/gemini-test",
+                "open_router/provider/test",
+            )
         )
     )
 
@@ -136,9 +147,11 @@ def test_codex_catalog_accepts_direct_provider_slugs_without_a_provider_registry
     None
 ):
     catalog = build_codex_model_catalog(
-        _models_payload(
-            "nvidia_nim/provider-model",
-            "future_provider/provider-model",
+        client_models_from_response(
+            _models_payload(
+                "nvidia_nim/provider-model",
+                "future_provider/provider-model",
+            )
         )
     )
 
@@ -152,29 +165,31 @@ def test_codex_catalog_projects_known_capabilities_and_preserves_unknown_default
     None
 ):
     catalog = build_codex_model_catalog(
-        {
-            "data": [
-                {
-                    "id": "provider/vision-reasoning",
-                    "provider_model_ref": "provider/vision-reasoning",
-                    "supportsReasoning": True,
-                    "inputModalities": ["text", "image"],
-                    "contextWindow": 131072,
-                    "maxCompletionTokens": 8192,
-                },
-                {
-                    "id": "claude-3-freecc-no-thinking/provider/text-only",
-                    "provider_model_ref": "provider/text-only",
-                    "supportsReasoning": False,
-                    "inputModalities": ["text"],
-                    "maxCompletionTokens": 4096,
-                },
-                {
-                    "id": "provider/unknown",
-                    "provider_model_ref": "provider/unknown",
-                },
-            ]
-        }
+        client_models_from_response(
+            {
+                "data": [
+                    {
+                        "id": "provider/vision-reasoning",
+                        "provider_model_ref": "provider/vision-reasoning",
+                        "supportsReasoning": True,
+                        "inputModalities": ["text", "image"],
+                        "contextWindow": 131072,
+                        "maxCompletionTokens": 8192,
+                    },
+                    {
+                        "id": "claude-3-freecc-no-thinking/provider/text-only",
+                        "provider_model_ref": "provider/text-only",
+                        "supportsReasoning": False,
+                        "inputModalities": ["text"],
+                        "maxCompletionTokens": 4096,
+                    },
+                    {
+                        "id": "provider/unknown",
+                        "provider_model_ref": "provider/unknown",
+                    },
+                ]
+            }
+        )
     )
 
     vision, text_only, unknown = _catalog_models(catalog)
@@ -213,7 +228,9 @@ def test_launcher_config_composes_with_persistent_codex_config(
     catalog_path = tmp_path / "codex-model-catalog.json"
     write_codex_model_catalog(
         catalog_path,
-        build_codex_model_catalog(_models_payload("nvidia_nim/test-model")),
+        build_codex_model_catalog(
+            client_models_from_response(_models_payload("nvidia_nim/test-model"))
+        ),
     )
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
@@ -271,8 +288,12 @@ def test_catalog_writer_skips_identical_content_and_replaces_changes(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "codex-model-catalog.json"
-    first = build_codex_model_catalog(_models_payload("nvidia_nim/first"))
-    second = build_codex_model_catalog(_models_payload("nvidia_nim/second"))
+    first = build_codex_model_catalog(
+        client_models_from_response(_models_payload("nvidia_nim/first"))
+    )
+    second = build_codex_model_catalog(
+        client_models_from_response(_models_payload("nvidia_nim/second"))
+    )
 
     assert write_codex_model_catalog(catalog_path, first) is True
     assert write_codex_model_catalog(catalog_path, first) is False
@@ -298,7 +319,9 @@ def test_catalog_writer_cleans_temporary_file_after_replace_failure(
     with pytest.raises(PermissionError, match="locked"):
         write_codex_model_catalog(
             catalog_path,
-            build_codex_model_catalog(_models_payload("nvidia_nim/replacement")),
+            build_codex_model_catalog(
+                client_models_from_response(_models_payload("nvidia_nim/replacement"))
+            ),
         )
 
     assert catalog_path.read_text(encoding="utf-8") == "previous\n"

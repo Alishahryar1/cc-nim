@@ -11,6 +11,7 @@ from free_claude_code.cli.launchers.codex_model_catalog import (
     build_codex_model_catalog,
     write_codex_model_catalog,
 )
+from free_claude_code.cli.launchers.model_catalog import client_models_from_response
 from free_claude_code.config.paths import codex_model_catalog_path
 
 
@@ -44,7 +45,9 @@ class CodexModelCatalogPublisher:
             view=ModelCatalogView.RESPONSES,
         )
         catalog = build_codex_model_catalog(
-            models_response.model_dump(by_alias=True, exclude_none=True)
+            client_models_from_response(
+                models_response.model_dump(by_alias=True, exclude_none=True)
+            )
         )
         models = catalog.get("models")
         if not isinstance(models, list) or not models:

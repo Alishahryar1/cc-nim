@@ -1,7 +1,6 @@
 """Process-local DeepSeek Harness configuration for FCC model routing."""
 
 import math
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from free_claude_code.core.json_types import JsonObject
@@ -27,15 +26,6 @@ _REASONING_EFFORTS: JsonObject = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class DshLaunchConfig:
-    """Secret-free DSH patch for one attached FCC launch."""
-
-    patch: tuple[JsonObject, ...] = field(repr=False)
-    selected_model: str
-    api_key_env: str = DSH_API_KEY_ENV
-
-
 def build_dsh_launch_config(
     models: tuple[ClientModel, ...],
     *,
@@ -43,7 +33,7 @@ def build_dsh_launch_config(
     settings_path: Path,
     credentials_path: Path,
     provider_progress_timeout: float,
-) -> DshLaunchConfig:
+) -> tuple[JsonObject, ...]:
     """Translate FCC's catalog and timeout into an isolated DSH overlay."""
 
     if not models:
@@ -61,7 +51,7 @@ def build_dsh_launch_config(
         "retryPolicy": {"mode": "normal", "maxRetries": 0},
         "streamIdleTimeoutMs": stream_idle_timeout_ms,
     }
-    patch = (
+    return (
         _configured_row(
             "settings",
             "@deepseek-ai/dsh-settings-file",
@@ -89,7 +79,6 @@ def build_dsh_launch_config(
         ),
         _disabled_row("tool-web", "@deepseek-ai/dsh-tool-web"),
     )
-    return DshLaunchConfig(patch=patch, selected_model=selected_model)
 
 
 def _stream_idle_timeout_ms(provider_progress_timeout: float) -> int:
