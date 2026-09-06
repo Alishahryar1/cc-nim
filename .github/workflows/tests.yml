@@ -62,7 +62,7 @@ jobs:
             run: uv run pytest -v --tb=short
           - id: playwright
             run: >-
-              uv run pytest e2e -n 0 -v --tb=short
+              uv run pytest e2e -v --tb=short
               --tracing=retain-on-failure --screenshot=only-on-failure
               --full-page-screenshot --output=test-results
     steps:
