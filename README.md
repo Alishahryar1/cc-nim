@@ -185,11 +185,6 @@ from more than one provider before succeeding.
 <details>
 <summary><strong>Provider catalog</strong></summary>
 
-[GitHub Models retired on July 30, 2026](https://github.blog/changelog/2026-07-30-github-models-is-now-retired/). FCC automatically resets retired model
-selections to your configured default, or the built-in default when `MODEL` itself
-is retired. Configure that default provider in Admin if its credentials are missing.
-GitHub Copilot is a separate service; connect it through **Connected accounts** in Admin.
-
 | Provider | Admin UI setting | Example `MODEL` |
 | --- | --- | --- |
 | [NVIDIA NIM](https://build.nvidia.com/settings/api-keys) | `NVIDIA_NIM_API_KEY` | `nvidia_nim/nvidia/nemotron-3-super-120b-a12b` |
@@ -342,13 +337,6 @@ Providers that do not support a selected control retain their own behavior.
 For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`,
 `fcc-pi`, `fcc-opencode`, `fcc-cline`, `fcc-hermes`, `fcc-dsh`, `fcc-grok`,
 `fcc-muse`, or `fcc-aider`.
-These wrappers configure the FCC connection and pass your commands and options
-to the native harness. Interactive and headless use share the same setup.
-Every wrapper launch requires FCC to be available, including help and version
-requests. Launches that need a model catalog stop if it cannot be loaded.
-
-Each Codex CLI launch uses its own temporary catalog. FCC also publishes the
-stable catalog used by the Codex App and editor configurations below.
 
 Use the guides below for editor integrations.
 
