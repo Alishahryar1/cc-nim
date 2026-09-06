@@ -519,6 +519,7 @@ def test_aider_launch_fails_before_child_for_invalid_preparation(
         patch.object(aider, "resolve_client_binary", return_value="resolved-aider"),
         patch.object(aider, "get_settings", return_value=_settings(token=token)),
         patch.object(aider, "preflight_proxy", return_value=preflight_error),
+        patch.object(aider, "_ensure_fcc_server_running", return_value=False),
         patch.object(
             aider,
             "fetch_proxy_models_response",

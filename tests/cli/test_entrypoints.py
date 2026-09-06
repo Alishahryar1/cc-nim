@@ -1179,6 +1179,10 @@ def test_launch_claude_unreachable_proxy_exits_with_hint(
             "free_claude_code.cli.launchers.claude.preflight_proxy",
             return_value="connection refused",
         ),
+        patch(
+            "free_claude_code.cli.launchers.claude._ensure_fcc_server_running",
+            return_value=False,
+        ),
         patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
         pytest.raises(SystemExit) as exc_info,
     ):

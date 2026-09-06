@@ -474,6 +474,7 @@ def test_cline_fails_closed_when_proxy_is_unreachable(
         patch.object(cline, "require_compatible_cline"),
         patch.object(cline, "get_settings", return_value=_settings()),
         patch.object(cline, "preflight_proxy", return_value="connection refused"),
+        patch.object(cline, "_ensure_fcc_server_running", return_value=False),
         patch.object(cline, "fetch_proxy_models_response") as fetch_models,
         patch.object(cline, "run_client_process") as run_client_process,
         pytest.raises(SystemExit) as exc_info,

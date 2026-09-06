@@ -451,6 +451,7 @@ def test_proxy_or_catalog_failure_never_starts_grok() -> None:
         patch.object(grok, "require_compatible_grok"),
         patch.object(grok, "get_settings", return_value=_settings()),
         patch.object(grok, "preflight_proxy", return_value="connection refused"),
+        patch.object(grok, "_ensure_fcc_server_running", return_value=False),
         patch.object(grok, "fetch_proxy_models_response") as fetch_models,
         patch.object(grok, "run_client_process") as run_client_process,
         pytest.raises(SystemExit) as exc_info,

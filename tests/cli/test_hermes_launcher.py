@@ -350,6 +350,7 @@ def test_hermes_proxy_failure_does_not_fetch_catalog(
         patch.object(hermes, "_system_policy_exists", return_value=False),
         patch.object(hermes, "get_settings", return_value=_settings()),
         patch.object(hermes, "preflight_proxy", return_value="connection refused"),
+        patch.object(hermes, "_ensure_fcc_server_running", return_value=False),
         patch.object(hermes, "fetch_proxy_models_response") as fetch_models,
         pytest.raises(SystemExit) as exc_info,
     ):

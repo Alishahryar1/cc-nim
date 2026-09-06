@@ -383,6 +383,7 @@ def test_opencode_fails_closed_when_proxy_is_unreachable(
         patch.object(opencode, "require_compatible_opencode"),
         patch.object(opencode, "get_settings", return_value=_settings()),
         patch.object(opencode, "preflight_proxy", return_value="connection refused"),
+        patch.object(opencode, "_ensure_fcc_server_running", return_value=False),
         patch.object(opencode, "fetch_proxy_models_response") as fetch_models,
         patch.object(opencode, "run_client_process") as run_client_process,
         pytest.raises(SystemExit) as exc_info,

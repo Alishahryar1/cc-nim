@@ -273,6 +273,7 @@ def test_dsh_proxy_failure_does_not_fetch_catalog(
         patch.object(dsh, "require_compatible_dsh"),
         patch.object(dsh, "get_settings", return_value=_settings()),
         patch.object(dsh, "preflight_proxy", return_value="connection refused"),
+        patch.object(dsh, "_ensure_fcc_server_running", return_value=False),
         patch.object(dsh, "fetch_proxy_models_response") as fetch_models,
         pytest.raises(SystemExit) as exc_info,
     ):

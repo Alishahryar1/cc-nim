@@ -3,6 +3,7 @@
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
@@ -13,9 +14,14 @@ from free_claude_code.cli.process_registry import (
     register_pid,
     unregister_pid,
 )
+from free_claude_code.config.paths import config_dir_path, server_log_path
+from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
+_SERVER_START_TIMEOUT_SECONDS = 30.0
+_SERVER_START_POLL_INTERVAL_SECONDS = 0.5
+_SERVER_STARTUP_LOCK_FILENAME = "server.startup.lock"
 
 
 def proxy_v1_url(proxy_root_url: str) -> str:
@@ -99,3 +105,46 @@ def run_client_process(
             unregister_pid(process.pid)
 
     raise SystemExit(return_code)
+
+
+def _ensure_fcc_server_running(proxy_root_url: str) -> bool:
+    """Return True if the FCC server is reachable (starting it if needed)."""
+    # Fast path: if already reachable, do nothing.
+    if preflight_proxy(proxy_root_url) is None:
+        return True
+
+    lock_path = config_dir_path() / _SERVER_STARTUP_LOCK_FILENAME
+    lock = InterprocessFileLock(lock_path)
+
+    # Try to acquire the lock without blocking.
+    if lock.acquire(wait=False):
+        try:
+            # Re-check because another process may have started the server
+            # before this process acquired the lock.
+            if preflight_proxy(proxy_root_url) is None:
+                return True
+
+            # Spawn exactly one fcc-server subprocess here.
+            log_path = server_log_path()
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", buffering=1) as log_file:
+                subprocess.Popen(
+                    [sys.executable, "-m", "free_claude_code.cli.entrypoints", "serve"],
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                )
+        finally:
+            lock.release()
+
+    # Whether we started the server or another launcher did, wait for it to become ready.
+    return _wait_for_server_ready(proxy_root_url)
+
+
+def _wait_for_server_ready(proxy_root_url: str) -> bool:
+    """Poll the health endpoint until the server is ready or timeout expires."""
+    start_time = time.monotonic()
+    while time.monotonic() - start_time < _SERVER_START_TIMEOUT_SECONDS:
+        if preflight_proxy(proxy_root_url) is None:
+            return True
+        time.sleep(_SERVER_START_POLL_INTERVAL_SECONDS)
+    return False

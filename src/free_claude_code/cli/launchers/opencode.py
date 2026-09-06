@@ -15,7 +15,12 @@ from free_claude_code.config.loader import get_settings
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.core.json_types import JsonValue
 
-from .common import preflight_proxy, resolve_client_binary, run_client_process
+from .common import (
+    _ensure_fcc_server_running,
+    preflight_proxy,
+    resolve_client_binary,
+    run_client_process,
+)
 from .model_catalog import client_models_from_response, fetch_proxy_models_response
 from .opencode_config import OPENCODE_API_KEY_ENV, OpenCodeConfig, build_opencode_config
 
@@ -66,7 +71,9 @@ def launch(argv: Sequence[str] | None = None) -> None:
         raise SystemExit(1)
 
     proxy_root_url = local_proxy_root_url(settings)
-    if error := preflight_proxy(proxy_root_url):
+    if (
+        error := preflight_proxy(proxy_root_url)
+    ) is not None and not _ensure_fcc_server_running(proxy_root_url):
         print(
             f"Free Claude Code proxy is not reachable at {proxy_root_url}: {error}",
             file=sys.stderr,
