@@ -842,6 +842,72 @@ async def test_concurrent_credentials_keep_request_identity_and_pool_ownership()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("responses_ingress", [False, True])
+@pytest.mark.parametrize("code", [None, "token_expired"])
+@pytest.mark.parametrize(
+    ("error_type", "status", "kind"),
+    [
+        ("authentication_error", 401, FailureKind.AUTHENTICATION),
+        ("permission_error", 403, FailureKind.PERMISSION),
+    ],
+)
+async def test_nested_authentication_error_keeps_its_type(
+    responses_ingress: bool,
+    code: str | None,
+    error_type: str,
+    status: int,
+    kind: FailureKind,
+) -> None:
+    authorizations: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        authorizations.append(request.headers["authorization"])
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(
+                (
+                    "response.failed",
+                    {
+                        "type": "response.failed",
+                        "response": {
+                            "id": "resp_failed",
+                            "status": "failed",
+                            "error": {
+                                "code": code,
+                                "type": error_type,
+                                "message": "expired",
+                            },
+                        },
+                    },
+                )
+            ),
+        )
+
+    auth = _FakeAuth()
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=auth,
+        admission=immediate_admission(max_attempts=2),
+        transport=httpx2.MockTransport(handler),
+    )
+    try:
+        stream = (
+            provider.stream_responses(_responses_request())
+            if responses_ingress
+            else provider.stream_messages(_request())
+        )
+        with pytest.raises(ExecutionFailure) as failure:
+            await _collect(stream)
+        assert failure.value.status_code == status
+        assert failure.value.kind is kind
+        assert auth.recovery_calls == 1
+        assert authorizations == ["Bearer access_1", "Bearer access_2"]
+    finally:
+        await provider.cleanup()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["messages", "responses", "catalog"])
 async def test_disconnected_account_never_opens_or_refreshes_a_request(
     operation: str,

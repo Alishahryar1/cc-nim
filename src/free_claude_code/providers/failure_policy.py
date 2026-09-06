@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 import httpx
+import httpx2
 import openai
 
 from free_claude_code.core.anthropic.errors import anthropic_status_for_error_type
@@ -242,11 +243,11 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
         (
             TimeoutError,
             httpx.TimeoutException,
-            httpx.ConnectError,
-            httpx.ReadError,
-            httpx.WriteError,
+            httpx2.TimeoutException,
             httpx.RemoteProtocolError,
+            httpx2.RemoteProtocolError,
             httpx.NetworkError,
+            httpx2.NetworkError,
             openai.APITimeoutError,
             openai.APIConnectionError,
             RetryableProviderProtocolError,
@@ -269,10 +270,11 @@ def is_retryable_stream_error(exc: BaseException) -> bool:
         (
             TimeoutError,
             httpx.ReadTimeout,
-            httpx.ReadError,
+            httpx2.ReadTimeout,
             httpx.RemoteProtocolError,
-            httpx.ConnectError,
+            httpx2.RemoteProtocolError,
             httpx.NetworkError,
+            httpx2.NetworkError,
             openai.APITimeoutError,
             openai.APIConnectionError,
         ),
@@ -295,13 +297,19 @@ def provider_error_message(
         exc = underlying_provider_error(exc)
     if isinstance(exc, ExecutionFailure):
         return exc.message
-    if isinstance(exc, httpx.ReadTimeout):
+    if isinstance(exc, httpx.ReadTimeout | httpx2.ReadTimeout):
         if read_timeout_s is not None:
             return f"Provider request timed out after {read_timeout_s:g}s."
         return "Provider request timed out."
-    if isinstance(exc, httpx.ConnectTimeout | httpx.ConnectError):
+    if isinstance(
+        exc,
+        httpx.ConnectTimeout
+        | httpx2.ConnectTimeout
+        | httpx.ConnectError
+        | httpx2.ConnectError,
+    ):
         return "Could not connect to provider."
-    if isinstance(exc, httpx.RemoteProtocolError):
+    if isinstance(exc, httpx.RemoteProtocolError | httpx2.RemoteProtocolError):
         return "Provider connection was interrupted before a response was received."
     if isinstance(exc, TimeoutError):
         if read_timeout_s is not None:
@@ -413,9 +421,9 @@ def _classify_provider_failure(
         )
 
     kind = FailureKind.UPSTREAM
-    if isinstance(exc, TimeoutError | httpx.TimeoutException):
+    if isinstance(exc, TimeoutError | httpx.TimeoutException | httpx2.TimeoutException):
         kind = FailureKind.TIMEOUT
-    elif isinstance(exc, httpx.ConnectError | httpx.NetworkError):
+    elif isinstance(exc, httpx.NetworkError | httpx2.NetworkError):
         kind = FailureKind.UNAVAILABLE
     return _failure(
         kind,
