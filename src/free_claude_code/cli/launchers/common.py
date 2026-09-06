@@ -115,35 +115,70 @@ def _ensure_fcc_server_running(proxy_root_url: str) -> bool:
 
     lock_path = config_dir_path() / _SERVER_STARTUP_LOCK_FILENAME
     lock = InterprocessFileLock(lock_path)
+    deadline = time.monotonic() + _SERVER_START_TIMEOUT_SECONDS
 
-    # Try to acquire the lock without blocking.
+    # Become the designated starter: hold the lock until the server is ready
+    # (or startup definitively fails) so peers never spawn a second server.
     if lock.acquire(wait=False):
         try:
-            # Re-check because another process may have started the server
-            # before this process acquired the lock.
-            if preflight_proxy(proxy_root_url) is None:
-                return True
-
-            # Spawn exactly one fcc-server subprocess here.
-            log_path = server_log_path()
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            with log_path.open("a", buffering=1) as log_file:
-                subprocess.Popen(
-                    [sys.executable, "-m", "free_claude_code.cli.entrypoints", "serve"],
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                )
+            return _start_server_and_wait_until_ready(proxy_root_url, deadline)
         finally:
             lock.release()
 
-    # Whether we started the server or another launcher did, wait for it to become ready.
-    return _wait_for_server_ready(proxy_root_url)
+    # Another launcher owns startup. Wait for its server to become ready and,
+    # if that starter gives up or dies, take over the startup role ourselves.
+    while True:
+        if preflight_proxy(proxy_root_url) is None:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_SERVER_START_POLL_INTERVAL_SECONDS)
+        if lock.acquire(wait=False):
+            try:
+                if time.monotonic() >= deadline:
+                    return False
+                return _start_server_and_wait_until_ready(proxy_root_url, deadline)
+            finally:
+                lock.release()
 
 
-def _wait_for_server_ready(proxy_root_url: str) -> bool:
-    """Poll the health endpoint until the server is ready or timeout expires."""
-    start_time = time.monotonic()
-    while time.monotonic() - start_time < _SERVER_START_TIMEOUT_SECONDS:
+def _start_server_and_wait_until_ready(proxy_root_url: str, deadline: float) -> bool:
+    """Start the server if needed and return True once it is reachable."""
+
+    # Re-check because another process may have started the server while we
+    # waited for the lock.
+    if preflight_proxy(proxy_root_url) is None:
+        return True
+    if not _spawn_server_process():
+        return False
+    return _wait_for_server_ready(proxy_root_url, deadline)
+
+
+def _spawn_server_process() -> bool:
+    """Spawn one detached fcc-server subprocess.
+
+    Return False when the subprocess cannot be created (for example a
+    read-only or full configuration directory) so callers surface the normal
+    proxy-unreachable message instead of a traceback.
+    """
+    try:
+        log_path = server_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", buffering=1) as log_file:
+            subprocess.Popen(
+                [sys.executable, "-m", "free_claude_code.cli.entrypoints", "serve"],
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+    except OSError:
+        return False
+    return True
+
+
+def _wait_for_server_ready(proxy_root_url: str, deadline: float) -> bool:
+    """Poll the health endpoint until the server is ready or the deadline passes."""
+    while time.monotonic() < deadline:
         if preflight_proxy(proxy_root_url) is None:
             return True
         time.sleep(_SERVER_START_POLL_INTERVAL_SECONDS)
