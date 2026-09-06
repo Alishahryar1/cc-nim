@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 
@@ -207,13 +206,6 @@ class ChatSessionDetail:
     context_error: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class ChatPublishedEvent:
-    event: str
-    id: int
-    data: JsonObject
-
-
 class ChatError(Exception):
     """Base class for application-owned Chat failures."""
 
@@ -232,11 +224,3 @@ class ChatConflictError(ChatError):
 
 class ChatValidationError(ChatError):
     """The requested Chat operation cannot be executed as supplied."""
-
-
-class ChatEventOverflowError(ChatError):
-    """One slow Chat observer must reconnect from a fresh snapshot."""
-
-    def __init__(self, cursor: int) -> None:
-        super().__init__("Chat event subscription overflowed.")
-        self.cursor = cursor

@@ -1,0 +1,225 @@
+.code-root {
+  overflow: hidden;
+}
+.code-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 980px;
+  margin: auto;
+}
+.code-header,
+.code-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.code-header {
+  justify-content: space-between;
+}
+.code-header h2 {
+  margin: 0;
+  font-size: 26px;
+  overflow-wrap: anywhere;
+}
+.code-folder {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  margin: 6px 0 0;
+}
+.code-notice {
+  color: var(--muted);
+  margin: 0;
+  white-space: pre-wrap;
+}
+.code-notice:empty {
+  display: none;
+}
+.code-library,
+.code-transcript {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+.code-library {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.code-session-card {
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+  text-align: left;
+  cursor: pointer;
+}
+.code-session-card span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.code-transcript {
+  padding: 0 12px 8px 0;
+}
+.code-item {
+  margin: 16px 0;
+  overflow-wrap: anywhere;
+}
+.code-item > strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.code-item[data-kind="user"] {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+.code-item details,
+.code-prompt {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  background: var(--panel);
+}
+.code-item summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.code-item pre,
+.code-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 10px 0;
+}
+.code-prose > :first-child {
+  margin-top: 0;
+}
+.code-item[data-kind="tool"] .code-prose {
+  white-space: pre-wrap;
+  font-family: monospace;
+}
+.code-item[data-kind="user"] pre {
+  font: inherit;
+}
+.code-prose > :last-child {
+  margin-bottom: 0;
+}
+.code-prose pre {
+  overflow-x: auto;
+}
+.code-prose table {
+  display: block;
+  overflow-x: auto;
+}
+.code-composer {
+  flex: none;
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.code-composer textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 88px;
+  max-height: 30dvh;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--input);
+  padding: 12px;
+  color: inherit;
+  font: inherit;
+}
+.code-composer .code-actions {
+  justify-content: space-between;
+}
+.code-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+.code-prompt {
+  margin: 12px 0;
+}
+.code-prompt fieldset {
+  border: 0;
+  padding: 0;
+  margin: 12px 0;
+  min-width: 0;
+}
+.code-prompt legend {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.code-field {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+.code-field small {
+  color: var(--muted);
+}
+.code-field input:not([type="checkbox"]):not([type="radio"]),
+.code-field select,
+.code-dialog input,
+.code-dialog select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--input);
+  color: inherit;
+  padding: 8px;
+  font: inherit;
+}
+.code-choice {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.code-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: 90dvh;
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  color: var(--text);
+  padding: 24px;
+}
+.code-dialog::backdrop {
+  background: #0008;
+}
+.code-dialog h3 {
+  margin-top: 0;
+}
+.code-dialog .code-actions {
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+@media (max-width: 760px) {
+  .code-shell {
+    gap: 10px;
+  }
+  .code-header h2 {
+    font-size: 22px;
+  }
+  .code-header {
+    align-items: flex-start;
+  }
+  .code-composer textarea {
+    min-height: 72px;
+  }
+}

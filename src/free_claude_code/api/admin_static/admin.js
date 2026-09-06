@@ -6,7 +6,7 @@ const state = {
   modelOptions: [],
   modelComboboxes: new Set(),
   authPollers: new Map(),
-  activeView: window.location.pathname.startsWith("/admin/chat") ? "chat" : "providers",
+  activeView: sessionViewFromPath(),
 };
 
 const MASKED_SECRET = "********";
@@ -40,7 +40,18 @@ const VIEW_GROUPS = [
     sections: [],
     containerId: "chatRoot",
   },
+  {
+    id: "code",
+    label: "Code sessions",
+    title: "Code sessions",
+    sections: [],
+    containerId: "codeRoot",
+  },
 ];
+
+function sessionViewFromPath() {
+  return ["chat", "code"].find((id) => window.location.pathname.startsWith(`/admin/${id}`)) || "providers";
+}
 
 const byId = (id) => document.getElementById(id);
 
@@ -107,6 +118,7 @@ async function load() {
     hydrateModelOptions(),
     refreshLocalStatus(),
     window.ChatSessions ? window.ChatSessions.initialize(api) : Promise.resolve(),
+    window.CodeSessions.initialize(api),
   ]);
   updateDirtyState();
   showMessage("");
@@ -138,10 +150,11 @@ function setActiveView(viewId, { scroll = false } = {}) {
   state.activeView = activeView.id;
   byId("pageTitle").textContent = activeView.title;
   const chatActive = activeView.id === "chat";
-  document.querySelector(".app-shell").classList.toggle("chat-active", chatActive);
-  document.querySelector(".main").classList.toggle("chat-main", chatActive);
-  document.querySelector(".topbar").hidden = chatActive;
-  document.querySelector(".action-bar").hidden = chatActive;
+  const sessionActive = chatActive || activeView.id === "code";
+  document.querySelector(".app-shell").classList.toggle("session-active", sessionActive);
+  document.querySelector(".main").classList.toggle("session-main", sessionActive);
+  document.querySelector(".topbar").hidden = sessionActive;
+  document.querySelector(".action-bar").hidden = sessionActive;
 
   document.querySelectorAll(".nav-link").forEach((link) => {
     const selected = link.dataset.view === activeView.id;
@@ -165,14 +178,15 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (chatActive && window.ChatSessions) {
     window.ChatSessions.activate(window.location.pathname);
   }
+  if (activeView.id === "code") window.CodeSessions.activate(window.location.pathname);
 }
 
 function navigateToView(viewId) {
-  if (viewId === "chat") {
-    if (window.location.pathname !== "/admin/chat") {
-      window.history.pushState({}, "", "/admin/chat");
+  if (["chat", "code"].includes(viewId)) {
+    if (window.location.pathname !== `/admin/${viewId}`) {
+      window.history.pushState({}, "", `/admin/${viewId}`);
     }
-  } else if (window.location.pathname.startsWith("/admin/chat")) {
+  } else if (sessionViewFromPath() !== "providers") {
     window.history.pushState({}, "", "/admin");
   }
   setActiveView(viewId, { scroll: true });
@@ -951,7 +965,7 @@ function showCredentialErrors(checks) {
 
 function setApplying(applying) {
   state.applying = applying;
-  VIEW_GROUPS.filter((view) => view.id !== "chat").forEach((view) => {
+  VIEW_GROUPS.filter((view) => !["chat", "code"].includes(view.id)).forEach((view) => {
     byId(`view-${view.id}`).inert = applying || !!state.restart;
   });
   if (applying) state.modelComboboxes.forEach((combobox) => combobox.close());
@@ -1224,9 +1238,7 @@ document.addEventListener("pointerdown", (event) => {
 });
 
 window.addEventListener("popstate", () => {
-  const viewId = window.location.pathname.startsWith("/admin/chat")
-    ? "chat"
-    : "providers";
+  const viewId = sessionViewFromPath();
   setActiveView(viewId, { scroll: false });
 });
 

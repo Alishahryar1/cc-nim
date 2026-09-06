@@ -15,6 +15,7 @@ import free_claude_code.cli.managed as cli_managed
 import free_claude_code.messaging.session as messaging_session
 import free_claude_code.messaging.workflow as messaging_workflow_module
 from free_claude_code.application.chat import ChatService
+from free_claude_code.application.code_sessions import CodeService
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
     ConnectedAccountPort,
@@ -140,12 +141,14 @@ class ApplicationRuntime:
         configuration: ConfigurationService,
         transcriber: Transcriber | None,
         chat_service: ChatService | None = None,
+        code_service: CodeService | None = None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
     ) -> None:
         self.provider_manager = provider_manager
         self._configuration = configuration
         self._chat_service = chat_service
+        self._code_service = code_service
         self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._connected_accounts = dict(connected_accounts or {})
@@ -198,6 +201,8 @@ class ApplicationRuntime:
                 self.provider_manager.start_model_list_refresh()
                 if self._chat_service is not None:
                     await self._chat_service.start()
+                if self._code_service is not None:
+                    await self._code_service.start()
                 await self._start_messaging_if_configured()
                 if self._draining:
                     raise ApplicationUnavailableError(
@@ -223,6 +228,8 @@ class ApplicationRuntime:
         self._draining = True
         if self._chat_service is not None:
             self._chat_service.begin_shutdown()
+        if self._code_service is not None:
+            self._code_service.begin_shutdown()
 
     async def close(self) -> bool:
         self.begin_shutdown()
@@ -583,6 +590,12 @@ class ApplicationRuntime:
         if not await self._cleanup_messaging():
             return False
         verbose = self.settings.log_api_error_tracebacks
+        if self._code_service is not None and not await best_effort(
+            "code_service.close",
+            self._code_service.close(),
+            log_verbose_errors=verbose,
+        ):
+            return False
         if self._chat_service is not None and not await best_effort(
             "chat_service.close",
             self._chat_service.close(),

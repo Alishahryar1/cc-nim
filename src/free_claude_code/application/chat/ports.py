@@ -3,6 +3,8 @@
 from collections.abc import AsyncIterator
 from typing import Protocol
 
+from free_claude_code.application.session_events import PublishedEvent
+
 from .models import (
     ChatActiveOperation,
     ChatCompaction,
@@ -11,7 +13,6 @@ from .models import (
     ChatModelOption,
     ChatOperationAcknowledgement,
     ChatPreferences,
-    ChatPublishedEvent,
     ChatReasoning,
     ChatSegment,
     ChatSession,
@@ -173,7 +174,7 @@ class ChatEventSubscriptionPort(Protocol):
 
     cursor: int
 
-    def __aiter__(self) -> AsyncIterator[ChatPublishedEvent]: ...
+    def __aiter__(self) -> AsyncIterator[PublishedEvent]: ...
 
     async def aclose(self) -> None: ...
 

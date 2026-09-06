@@ -7,11 +7,14 @@ from pathlib import Path
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.application.chat import ChatService
+from free_claude_code.application.code_sessions import CodeService
 from free_claude_code.config.loader import ManagedConfigStore
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import (
     chat_database_path,
     chat_lock_path,
+    code_database_path,
+    code_lock_path,
     server_log_path,
 )
 from free_claude_code.config.settings import Settings
@@ -32,6 +35,8 @@ from free_claude_code.providers.runtime.factory import create_provider
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
 from .chat_sqlite import SQLiteChatStore
+from .code_sessions_sqlite import SQLiteCodeStore
+from .codex_app_server import CodexHarnessFactory
 from .codex_catalog import CodexModelCatalogPublisher
 from .configuration import ConfigurationService
 from .provider_manager import ProviderRuntimeManager
@@ -76,10 +81,15 @@ def build_asgi_app(
         provider_manager,
         SQLiteChatStore(chat_database_path(), chat_lock_path()),
     )
+    code_service = CodeService(
+        SQLiteCodeStore(code_database_path(), code_lock_path()),
+        CodexHarnessFactory(provider_manager),
+    )
     runtime = ApplicationRuntime(
         provider_manager,
         configuration=ConfigurationService(ManagedConfigStore()),
         chat_service=chat_service,
+        code_service=code_service,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth, "github_copilot": copilot_auth},
@@ -89,6 +99,7 @@ def build_asgi_app(
         admin=runtime,
         tasks=runtime,
         chat=chat_service,
+        code=code_service,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

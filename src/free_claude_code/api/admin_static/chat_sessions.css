@@ -1,19 +1,6 @@
-.main.chat-main {
-  height: 100vh;
-  padding: 0;
-  overflow: hidden;
-}
-
-.chat-main .admin-views,
-.chat-main .admin-view,
-.chat-root,
 .chat-session-shell {
   height: 100%;
   min-height: 0;
-}
-
-.chat-root {
-  padding: 36px clamp(16px, 3vw, 42px) 16px;
 }
 
 .chat-library-header,
@@ -484,26 +471,6 @@
 }
 
 @media (max-width: 900px) {
-  .app-shell.chat-active {
-    height: 100dvh;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .app-shell.chat-active .sidebar {
-    flex: 0 0 auto;
-  }
-
-  .main.chat-main {
-    flex: 1 1 0;
-    height: auto;
-    min-height: 0;
-  }
-
-  .chat-root {
-    padding: 24px 20px 12px;
-  }
-
   .chat-controls {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -520,18 +487,6 @@
 }
 
 @media (max-width: 700px) {
-  .chat-main .admin-views,
-  .chat-main .admin-view,
-  .chat-root,
-  .chat-session-shell {
-    height: 100%;
-    min-height: 0;
-  }
-
-  .chat-root {
-    padding: 16px 12px 8px;
-  }
-
   .chat-session-shell {
     grid-template-rows: auto auto minmax(0, 1fr) auto;
   }
@@ -566,36 +521,5 @@
   .chat-composer {
     margin-left: 0;
     margin-right: 0;
-  }
-}
-
-@media (max-width: 600px) {
-  .app-shell.chat-active .sidebar {
-    padding: 10px 12px;
-    gap: 8px;
-  }
-
-  .app-shell.chat-active .brand {
-    flex-direction: row;
-    justify-content: flex-start;
-    text-align: left;
-  }
-
-  .app-shell.chat-active .brand-mark {
-    width: 34px;
-    height: 34px;
-  }
-
-  .app-shell.chat-active .section-nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 4px;
-  }
-
-  .app-shell.chat-active .nav-link {
-    justify-content: center;
-    min-height: 34px;
-    padding: 6px 4px;
-    text-align: center;
-    font-size: 11px;
   }
 }

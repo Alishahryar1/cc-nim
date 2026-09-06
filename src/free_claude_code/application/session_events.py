@@ -1,11 +1,26 @@
-"""Bounded in-process fan-out for observable Chat state changes."""
+"""Bounded in-process fan-out for observable session state changes."""
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from free_claude_code.core.json_types import JsonObject
 
-from .models import ChatEventOverflowError, ChatPublishedEvent
+
+@dataclass(frozen=True, slots=True)
+class PublishedEvent:
+    event: str
+    id: int
+    data: JsonObject
+
+
+class EventOverflowError(Exception):
+    """One slow observer must reconnect from an authoritative snapshot."""
+
+    def __init__(self, cursor: int) -> None:
+        super().__init__("Session event subscription overflowed.")
+        self.cursor = cursor
+
 
 _DEFAULT_QUEUE_SIZE = 128
 
@@ -22,15 +37,15 @@ class _Overflow:
         self.cursor = cursor
 
 
-type _QueueItem = ChatPublishedEvent | _Overflow | _Closed
+type _QueueItem = PublishedEvent | _Overflow | _Closed
 
 
-class ChatEventSubscription:
-    """One observer's independent view of the process-local Chat feed."""
+class EventSubscription:
+    """One observer's independent view of the process-local session feed."""
 
     def __init__(
         self,
-        publisher: ChatEventPublisher,
+        publisher: EventPublisher,
         *,
         cursor: int,
         queue_size: int,
@@ -40,17 +55,17 @@ class ChatEventSubscription:
         self.cursor = cursor
         self._closed = False
 
-    def __aiter__(self) -> AsyncIterator[ChatPublishedEvent]:
+    def __aiter__(self) -> AsyncIterator[PublishedEvent]:
         return self._events()
 
-    async def _events(self) -> AsyncIterator[ChatPublishedEvent]:
+    async def _events(self) -> AsyncIterator[PublishedEvent]:
         while True:
             item = await self._queue.get()
             if item is _CLOSED:
                 return
             if isinstance(item, _Overflow):
-                raise ChatEventOverflowError(item.cursor)
-            if isinstance(item, ChatPublishedEvent):
+                raise EventOverflowError(item.cursor)
+            if isinstance(item, PublishedEvent):
                 yield item
 
     async def aclose(self) -> None:
@@ -69,21 +84,25 @@ class ChatEventSubscription:
         self._queue.put_nowait(item)
 
 
-class ChatEventPublisher:
-    """Publish without allowing one observer to backpressure Chat work."""
+class EventPublisher:
+    """Publish without allowing one observer to backpressure session work."""
 
     def __init__(self, *, queue_size: int = _DEFAULT_QUEUE_SIZE) -> None:
         if queue_size <= 0:
-            raise ValueError("Chat event queue size must be positive.")
+            raise ValueError("session event queue size must be positive.")
         self._queue_size = queue_size
         self._sequence = 0
-        self._subscriptions: set[ChatEventSubscription] = set()
+        self._subscriptions: set[EventSubscription] = set()
         self._closed = False
 
-    def subscribe(self) -> ChatEventSubscription:
+    @property
+    def cursor(self) -> int:
+        return self._sequence
+
+    def subscribe(self) -> EventSubscription:
         if self._closed:
-            raise RuntimeError("Chat event publisher is closed.")
-        subscription = ChatEventSubscription(
+            raise RuntimeError("session event publisher is closed.")
+        subscription = EventSubscription(
             self,
             cursor=self._sequence,
             queue_size=self._queue_size,
@@ -91,11 +110,11 @@ class ChatEventPublisher:
         self._subscriptions.add(subscription)
         return subscription
 
-    def publish(self, event: str, data: JsonObject) -> ChatPublishedEvent:
+    def publish(self, event: str, data: JsonObject) -> PublishedEvent:
         if self._closed:
-            raise RuntimeError("Chat event publisher is closed.")
+            raise RuntimeError("session event publisher is closed.")
         self._sequence += 1
-        published = ChatPublishedEvent(event=event, id=self._sequence, data={**data})
+        published = PublishedEvent(event=event, id=self._sequence, data={**data})
         for subscription in tuple(self._subscriptions):
             try:
                 subscription._queue.put_nowait(published)
@@ -104,7 +123,7 @@ class ChatEventPublisher:
                 subscription.signal(_Overflow(self._sequence))
         return published
 
-    def unsubscribe(self, subscription: ChatEventSubscription) -> None:
+    def unsubscribe(self, subscription: EventSubscription) -> None:
         self._subscriptions.discard(subscription)
 
     def close(self) -> None:

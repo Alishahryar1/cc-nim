@@ -1,0 +1,63 @@
+.main.session-main {
+  height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+}
+.session-main .admin-views,
+.session-main .admin-view,
+.session-root {
+  height: 100%;
+  min-height: 0;
+}
+.session-root {
+  padding: 36px clamp(16px, 3vw, 42px) 16px;
+}
+@media (max-width: 900px) {
+  .app-shell.session-active {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .app-shell.session-active .sidebar {
+    flex: 0 0 auto;
+  }
+  .main.session-main {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 0;
+  }
+  .session-root {
+    padding: 24px 20px 12px;
+  }
+}
+@media (max-width: 700px) {
+  .session-root {
+    padding: 16px 12px 8px;
+  }
+}
+@media (max-width: 600px) {
+  .app-shell.session-active .sidebar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .app-shell.session-active .brand {
+    flex-direction: row;
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .app-shell.session-active .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+  .app-shell.session-active .section-nav {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .app-shell.session-active .nav-link {
+    justify-content: center;
+    min-height: 34px;
+    padding: 6px 4px;
+    text-align: center;
+    font-size: 11px;
+  }
+}
