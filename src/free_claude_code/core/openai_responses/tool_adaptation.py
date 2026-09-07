@@ -135,7 +135,7 @@ class ResponsesToolAdapter:
         if not isinstance(item, dict):
             return item
         kind = item.get("type")
-        if kind == "tool_search_output" and item.get("execution") == "client":
+        if kind == "tool_search_output":
             return {**item, "tools": self._tools(item.get("tools"), scope=_scope(item))}
         if not self._policy.custom_tools_as_functions:
             return item

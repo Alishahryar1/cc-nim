@@ -893,7 +893,10 @@ async def test_responses_ingress_uses_catalog_chat_transport_directly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_discovered_custom_tools_survive_sdk_calls_and_replay() -> None:
+@pytest.mark.parametrize("execution", ["client", "server"])
+async def test_discovered_custom_tools_survive_sdk_calls_and_replay(
+    execution: str,
+) -> None:
     definition = {
         "type": "namespace",
         "name": "editor",
@@ -914,7 +917,7 @@ async def test_discovered_custom_tools_survive_sdk_calls_and_replay() -> None:
     discovery = {
         "type": "tool_search_output",
         "call_id": "search_one",
-        "execution": "client",
+        "execution": execution,
         "status": "completed",
         "tools": [definition],
     }
@@ -923,6 +926,7 @@ async def test_discovered_custom_tools_survive_sdk_calls_and_replay() -> None:
     def upstream(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         for loaded in body["input"][:2]:
+            assert loaded["execution"] == execution
             tool = loaded["tools"][0]["tools"][0]
             assert tool["type"] == "function"
             for field in ("defer_loading", "allowed_callers", "extension"):
