@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import cast
 
 import pytest
@@ -417,6 +417,7 @@ class _ControlledProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, response_model, reasoning
         self.request_ids.append(request_id)
@@ -436,6 +437,7 @@ class _ControlledProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, response_model, reasoning
         self.request_ids.append(request_id)

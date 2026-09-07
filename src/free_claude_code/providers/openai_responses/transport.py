@@ -3,7 +3,7 @@
 import asyncio
 import sys
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import cast
 
 import httpx2
@@ -124,6 +124,7 @@ class OpenAIResponsesTransport:
         response_model: str,
         reasoning: ReasoningPolicy,
         endpoint_context: EndpointContext | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         body = self._build_messages_body(request, reasoning=reasoning)
         tool_names = OpenAIToolNameCodec.from_request(request)
@@ -131,6 +132,7 @@ class OpenAIResponsesTransport:
         return self._run_stream(
             body,
             endpoint_context=endpoint_context,
+            extra_headers=dict(extra_headers or {}),
             request_id=request_id,
             response_model=response_model,
             presenter_factory=lambda: MessagesResponsesPresenter(
@@ -161,12 +163,14 @@ class OpenAIResponsesTransport:
         response_model: str,
         reasoning: ReasoningPolicy,
         endpoint_context: EndpointContext | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens
         body, tools = self._build_native_body(request, reasoning=reasoning)
         return self._run_stream(
             body,
             endpoint_context=endpoint_context,
+            extra_headers=dict(extra_headers or {}),
             request_id=request_id,
             response_model=response_model,
             presenter_factory=lambda: NativeResponsesPresenter(
@@ -229,6 +233,7 @@ class OpenAIResponsesTransport:
         response_model: str,
         presenter_factory: ResponsesPresenterFactory,
         endpoint_context: EndpointContext | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         execution = self._admission.start_execution(request_id=request_id)
         outcome = ResponsesExecutionOutcome()
@@ -245,6 +250,7 @@ class OpenAIResponsesTransport:
             execution=execution,
             outcome=outcome,
             endpoint=endpoint,
+            extra_headers=extra_headers,
         )
         try:
             async for event in provider_stream:
@@ -281,6 +287,7 @@ class OpenAIResponsesTransport:
         execution: ProviderExecution,
         outcome: ResponsesExecutionOutcome,
         endpoint: RequestEndpoint | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         recovery = RecoveryController()
         trace_event(
@@ -320,7 +327,7 @@ class OpenAIResponsesTransport:
                     request_id=request_id,
                 )
                 sdk_stream = await self._create_sdk_stream(
-                    body, client=client, endpoint=endpoint
+                    body, client=client, endpoint=endpoint, extra_headers=extra_headers
                 )
                 stream = scope.retain(_ClosableResponsesStream(sdk_stream))
                 stream_opened = True
@@ -471,6 +478,7 @@ class OpenAIResponsesTransport:
         *,
         client: AsyncOpenAI,
         endpoint: RequestEndpoint | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> AsyncStream[ResponseStreamEvent]:
         model = body.get("model")
         if not isinstance(model, str) or not model:
@@ -487,7 +495,11 @@ class OpenAIResponsesTransport:
             stream=True,
             store=False,
             extra_body=extra_body or None,
-            extra_headers=endpoint.openai_headers() if endpoint is not None else None,
+            extra_headers={
+                **(extra_headers or {}),
+                **(endpoint.openai_headers() if endpoint is not None else {}),
+            }
+            or None,
         )
 
 

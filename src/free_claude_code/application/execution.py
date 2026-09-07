@@ -4,7 +4,8 @@ import asyncio
 import inspect
 import math
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from types import MappingProxyType
 from typing import Literal
 
 from loguru import logger
@@ -59,6 +60,7 @@ class ProviderExecutor:
         responses_token_counter: ResponsesTokenCounter = estimate_responses_input_tokens,
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
+        request_headers: Mapping[str, str] | None = None,
     ) -> None:
         if not math.isfinite(progress_timeout_seconds) or progress_timeout_seconds <= 0:
             raise ValueError("progress_timeout_seconds must be finite and positive")
@@ -67,6 +69,7 @@ class ProviderExecutor:
         self._responses_token_counter = responses_token_counter
         self._generation_id = generation_id
         self._log_raw_payloads = log_raw_payloads
+        self._request_headers = MappingProxyType(dict(request_headers or {}))
         self._progress_timeout_seconds = float(progress_timeout_seconds)
 
     def _progress_timeout_failure(
@@ -212,6 +215,7 @@ class ProviderExecutor:
                 request_id=request_id,
                 response_model=routed.resolved.original_model,
                 reasoning=routed.reasoning,
+                request_headers=self._request_headers,
             )
 
         return self._stream_candidates(
@@ -278,6 +282,7 @@ class ProviderExecutor:
                 request_id=request_id,
                 response_model=routed.resolved.original_model,
                 reasoning=routed.reasoning,
+                request_headers=self._request_headers,
             )
 
         raw_input = routed.request.input

@@ -1,7 +1,7 @@
 """Application-owned provider execution contracts."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -52,6 +52,7 @@ class FakeProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -73,6 +74,7 @@ class FakeProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         raise AssertionError("Messages test provider received a Responses request")
         yield ""
@@ -127,6 +129,7 @@ class ResponsesFakeProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         raise AssertionError("Responses test provider received a Messages request")
         yield ""
@@ -139,6 +142,7 @@ class ResponsesFakeProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self.stream_calls.append(
             {
@@ -189,6 +193,7 @@ class ControlledProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -263,6 +268,7 @@ class FailingStreamConstructionProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         raise RuntimeError("stream construction failed")
 
@@ -280,6 +286,7 @@ class ExecutionFailureStreamConstructionProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del request, input_tokens, request_id, response_model, reasoning
         raise self._failure
@@ -307,6 +314,7 @@ class CloseControlledProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -915,6 +923,7 @@ async def test_candidate_requests_are_isolated_from_provider_mutation() -> None:
             request_id: str | None = None,
             response_model: str | None = None,
             reasoning: ReasoningPolicy,
+            request_headers: Mapping[str, str] | None = None,
         ) -> AsyncIterator[str]:
             request.messages[0].content = "mutated"
             async for chunk in super().stream_messages(

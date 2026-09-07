@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -125,6 +125,7 @@ class StalledProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model, reasoning
         try:
@@ -141,6 +142,7 @@ class StalledProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model, reasoning
         try:

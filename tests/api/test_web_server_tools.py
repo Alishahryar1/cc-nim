@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -148,6 +148,7 @@ class ScriptedSelectionProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         raise AssertionError("Web-search selection received a Responses request")
         yield ""
@@ -160,6 +161,7 @@ class ScriptedSelectionProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self.requests.append(request)
         self.stream_kwargs.append(
