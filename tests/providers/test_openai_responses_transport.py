@@ -28,17 +28,28 @@ from tests.providers.support import REASONING_ON, immediate_admission
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stream_error", [False, True])
-async def test_tolerant_classifier_corrects_required_reasoning(stream_error):
+@pytest.mark.parametrize(
+    "error",
+    [
+        {
+            "code": "invalid_request_error",
+            "message": "Reasoning is mandatory and cannot be disabled.",
+        },
+        {
+            "code": "unsupported_value",
+            "param": "reasoning.effort",
+            "message": "Value 'none' is not supported",
+        },
+    ],
+    ids=["mandatory", "unsupported_value"],
+)
+async def test_tolerant_classifier_corrects_required_reasoning(stream_error, error):
     bodies = []
 
     def handler(request):
         body = json.loads(request.content)
         bodies.append(body)
         if body.get("reasoning", {}).get("effort") == "none":
-            error = {
-                "code": "invalid_request_error",
-                "message": "Reasoning is mandatory and cannot be disabled.",
-            }
             if stream_error:
                 return httpx2.Response(
                     200,

@@ -2,7 +2,7 @@
 
 import json
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
@@ -65,6 +65,7 @@ class ReasoningCorrection:
     limit_field: str
     normal_max_tokens: int | None
     output_cap: int | None = None
+    provider_rejection: Callable[[Exception], bool] | None = None
 
     def retry_body(
         self,
@@ -91,7 +92,10 @@ class ReasoningCorrection:
             else:
                 if target == sent:
                     present.append(path)
-        if not any(_disable_rejected(error, path) for path in present):
+        if not present or not (
+            any(_disable_rejected(error, path) for path in present)
+            or (self.provider_rejection is not None and self.provider_rejection(error))
+        ):
             return None
         result = deepcopy(body)
         for path in present:

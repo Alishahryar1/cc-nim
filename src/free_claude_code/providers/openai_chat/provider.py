@@ -777,6 +777,10 @@ class OpenAIChatProvider(BaseProvider):
         """Return a modified request body for one retry, or None."""
         return None
 
+    def _reasoning_disable_rejected(self, error: Exception) -> bool:
+        """Recognize provider-owned OFF rejection formats without learning state."""
+        return False
+
     def _provider_failure_override(self, error: Exception) -> ExecutionFailure | None:
         """Return provider-specific failure semantics, or defer to shared policy."""
         return None
@@ -1004,6 +1008,7 @@ class OpenAIChatProvider(BaseProvider):
                 off_fields,
                 self._profile.request_policy.max_tokens_field,
                 self._normal_max_tokens,
+                provider_rejection=self._reasoning_disable_rejected,
             )
             if reasoning.control is ReasoningControl.PREFER_OFF
             and wire_reasoning.control is ReasoningControl.OFF

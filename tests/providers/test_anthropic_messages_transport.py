@@ -25,17 +25,33 @@ from tests.providers.support import immediate_admission
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stream_error", [False, True])
-async def test_tolerant_classifier_corrects_required_reasoning(stream_error):
+@pytest.mark.parametrize(
+    "error",
+    [
+        {
+            "type": "invalid_request_error",
+            "message": "Reasoning is mandatory and cannot be disabled.",
+        },
+        {
+            "type": "invalid_request_error",
+            "param": "thinking.type",
+            "message": "Value 'disabled' is not supported",
+        },
+        {
+            "type": "invalid_request_error",
+            "loc": ["body", "thinking", "type"],
+            "message": "Value 'disabled' is not supported",
+        },
+    ],
+    ids=["mandatory", "param", "loc"],
+)
+async def test_tolerant_classifier_corrects_required_reasoning(stream_error, error):
     bodies = []
 
     def handler(request):
         body = json.loads(request.content)
         bodies.append(body)
         if body.get("thinking", {}).get("type") == "disabled":
-            error = {
-                "type": "invalid_request_error",
-                "message": "Reasoning is mandatory and cannot be disabled.",
-            }
             if stream_error:
                 return httpx.Response(
                     200,

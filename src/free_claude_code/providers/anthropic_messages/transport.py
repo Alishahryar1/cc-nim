@@ -1,6 +1,7 @@
 """Native Messages HTTP execution with one admitted recovery budget."""
 
 import asyncio
+import json
 import sys
 from collections.abc import AsyncIterator, Callable, Mapping
 from typing import cast
@@ -482,7 +483,7 @@ def _check_failure(event_type: str, payload: JsonObject) -> None:
         529: FailureKind.OVERLOADED,
     }.get(status, FailureKind.UPSTREAM)
     message = error.get("message") if isinstance(error, Mapping) else None
-    raise ExecutionFailure(
+    failure = ExecutionFailure(
         failure_kind,
         status,
         redact_sensitive_error_text(message[:ERROR_DETAIL_DISPLAY_CAP_BYTES])
@@ -490,6 +491,8 @@ def _check_failure(event_type: str, payload: JsonObject) -> None:
         else "Messages upstream returned an error.",
         status == 429 or status >= 500,
     )
+    attach_upstream_error_body(failure, json.dumps(payload))
+    raise failure
 
 
 async def _status_error(response: httpx.Response) -> httpx.HTTPStatusError:

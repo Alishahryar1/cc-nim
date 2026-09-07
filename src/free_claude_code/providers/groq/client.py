@@ -118,6 +118,10 @@ class GroqProvider(OpenAIChatProvider):
             return body
         return _rewrite_reasoning_effort(body, accepted) or body
 
+    def _reasoning_disable_rejected(self, error: Exception) -> bool:
+        accepted = _parse_reasoning_vocabulary(error)
+        return accepted is not None and "none" not in accepted
+
     def _get_retry_request_body(
         self, error: Exception, body: dict[str, Any]
     ) -> dict[str, Any] | None:

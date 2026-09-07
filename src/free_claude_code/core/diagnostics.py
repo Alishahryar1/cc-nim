@@ -64,6 +64,7 @@ class UpstreamErrorDetail:
             "invalid_request_error",
             "invalid_request",
             "unsupported_parameter",
+            "unsupported_value",
         }
         return self.category_hint in codes or (isinstance(code, str) and code in codes)
 
