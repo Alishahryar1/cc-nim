@@ -1672,14 +1672,14 @@
         : state.operation
           ? ""
           : blocked;
-    document
+    root()
       .querySelectorAll(
         ".session-controls button, .session-controls input, .session-controls select",
       )
       .forEach((control) => {
         control.disabled = busy || !mutationsReady();
       });
-    document
+    root()
       .querySelectorAll(".session-header-row .danger-button, .session-title")
       .forEach((control) => {
         control.disabled = !mutationsReady();

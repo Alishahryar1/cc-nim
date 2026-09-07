@@ -297,7 +297,24 @@
       deleted.clear();
       rendered = null;
     }
-    for (const summary of readyData.sessions) merge(summary);
+    const included = new Set(
+      readyData.sessions.map((summary) => summary.session_id),
+    );
+    for (const record of records.values()) {
+      if (
+        !included.has(record.id) &&
+        busy(record) &&
+        record.cursor <= readyData.cursor
+      ) {
+        // The run is no longer active; detail supplies its actual outcome.
+        record.run = null;
+        record.runNotice = "";
+        record.loaded = false;
+        record.cursor = readyData.cursor;
+      }
+    }
+    for (const summary of readyData.sessions)
+      merge({ ...summary, cursor: readyData.cursor });
     render();
     try {
       const results = await Promise.allSettled([
@@ -921,7 +938,7 @@
       options.push([effort, `${effort} (unavailable)`]);
     reasoningControl.update(options, effort || "");
     reasoningControl.select.disabled =
-      disabled || !model?.reasoning_efforts.length;
+      disabled || !model || (!model.reasoning_efforts.length && !effort);
     root.querySelector("#codeComposerStatus").textContent =
       record?.session?.error ||
       selectionError(record) ||
