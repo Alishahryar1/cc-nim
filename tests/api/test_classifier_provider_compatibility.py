@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import httpx2 as httpx
 import pytest
 from fastapi.responses import JSONResponse, StreamingResponse
-from openai import APIError, BadRequestError
+from openai import APIError, AsyncOpenAI, BadRequestError
 
 from free_claude_code.api.handlers import MessagesHandler
 from free_claude_code.application.model_metadata import ProviderModelInfo
@@ -74,6 +74,91 @@ def classifier_request():
             "stream": False,
         }
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "corrects"),
+    [
+        ({"code": 400, "message": "Reasoning cannot be disabled."}, True),
+        (
+            {
+                "code": 400,
+                "message": "Reasoning cannot be disabled.",
+                "metadata": {"error_type": "invalid_request"},
+            },
+            True,
+        ),
+        ({"code": 400, "message": "Messages contain an invalid role."}, False),
+        (
+            {"code": 400, "param": "tools", "message": "Reasoning is required."},
+            False,
+        ),
+        ({"code": 403, "message": "Reasoning cannot be disabled."}, False),
+    ],
+    ids=["numeric", "metadata", "unrelated", "other-field", "permission"],
+)
+async def test_openrouter_numeric_sse_rejection_uses_classifier_correction(
+    error, corrects
+):
+    bodies = []
+
+    def upstream(request):
+        bodies.append(json.loads(request.content))
+        chunk = {
+            "id": "gen-test",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "dynamic-route",
+            "provider": "test",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": "<severity>0</severity>"},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        if len(bodies) == 1:
+            chunk["error"] = error
+            chunk["choices"] = [
+                {"index": 0, "delta": {"content": ""}, "finish_reason": "error"}
+            ]
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n",
+        )
+
+    provider = OpenRouterProvider(
+        make_provider_config("test", "https://provider.invalid/v1"),
+        admission=immediate_admission(),
+    )
+    try:
+        async with AsyncOpenAI(
+            api_key="test",
+            base_url="https://provider.invalid/v1",
+            max_retries=0,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(upstream)),
+        ) as client:
+            with patch.object(provider, "_client", client):
+                response = await MessagesHandler(
+                    Settings(), provider_resolver=lambda _: provider
+                ).create(classifier_request())
+        assert isinstance(response, JSONResponse)
+        assert len(bodies) == (2 if corrects else 1)
+        if corrects:
+            assert response.status_code == 200
+            assert json.loads(bytes(response.body))["content"] == [
+                {"type": "text", "text": "<severity>0</severity>"}
+            ]
+            assert bodies[0]["reasoning"] == {"enabled": False}
+            assert "reasoning" not in bodies[1]
+            assert bodies[1]["max_tokens"] == 81920
+        else:
+            assert response.status_code >= 400
+    finally:
+        await provider.cleanup()
 
 
 @pytest.mark.asyncio

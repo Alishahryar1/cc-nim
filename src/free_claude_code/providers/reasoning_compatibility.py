@@ -130,6 +130,11 @@ def _disable_rejected(error: Exception, field: tuple[str, ...]) -> bool:
         payload = json.loads(text)
     except ValueError:
         payload = {"message": text}
+    return reasoning_control_rejected(payload, field)
+
+
+def reasoning_control_rejected(payload: object, field: tuple[str, ...]) -> bool:
+    """Match an explicit rejection tied to an owned field in an error payload."""
     return any(
         _record_rejects_control(record, field) for record in _error_records(payload)
     )
