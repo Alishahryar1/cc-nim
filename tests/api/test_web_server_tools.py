@@ -29,6 +29,7 @@ from free_claude_code.api.web_tools.request import (
 )
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.routing import (
     ModelRouter,
     ProviderModelTarget,
@@ -128,7 +129,11 @@ class ScriptedSelectionProvider:
         self.close_count = 0
 
     def preflight_messages(
-        self, request: MessagesRequest, *, reasoning: ReasoningPolicy
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         return None
 
@@ -162,6 +167,7 @@ class ScriptedSelectionProvider:
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         self.requests.append(request)
         self.stream_kwargs.append(

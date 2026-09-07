@@ -13,6 +13,7 @@ from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
+from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.anthropic_messages.transport import (
     AnthropicMessagesTransport,
@@ -20,6 +21,54 @@ from free_claude_code.providers.anthropic_messages.transport import (
 from free_claude_code.providers.endpoint import HttpEndpoint
 from free_claude_code.providers.http import maybe_await_aclose
 from tests.providers.support import immediate_admission
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream_error", [False, True])
+async def test_tolerant_classifier_corrects_required_reasoning(stream_error):
+    bodies = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body.get("thinking", {}).get("type") == "disabled":
+            error = {
+                "type": "invalid_request_error",
+                "message": "Reasoning is mandatory and cannot be disabled.",
+            }
+            if stream_error:
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    stream=Wire([_sse({"type": "error", "error": error})]),
+                )
+            return httpx.Response(400, json={"error": error})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=Wire([_sse(*_events("<severity>0</severity>"))]),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        output = [
+            event
+            async for event in _transport(client).stream_messages(
+                MessagesRequest.model_validate(
+                    {
+                        "model": "route",
+                        "messages": [{"role": "user", "content": "classify"}],
+                        "max_tokens": 64,
+                        "thinking": {"type": "disabled"},
+                    }
+                ),
+                endpoint_context=Endpoint(),
+                reasoning=ReasoningPolicy.prefer_off(),
+            )
+        ]
+    assert "<severity>0</severity>" in "".join(output)
+    assert len(bodies) == 2
+    assert bodies[0]["max_tokens"] == 8192
+    assert "thinking" not in bodies[1]
 
 
 class Endpoint:

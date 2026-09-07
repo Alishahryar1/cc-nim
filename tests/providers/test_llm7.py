@@ -12,7 +12,7 @@ from free_claude_code.config.provider_catalog import LLM7_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.core.model_capabilities import ModelInputModality
-from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.core.reasoning import ReasoningCapability, ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
@@ -218,6 +218,7 @@ async def test_filters_catalog_and_adds_live_authoritative_selectors(
             ProviderModelInfo(
                 "plain-model",
                 supports_thinking=False,
+                reasoning_capability=ReasoningCapability.NONE,
                 input_modalities=frozenset({ModelInputModality.TEXT}),
             ),
             ProviderModelInfo(

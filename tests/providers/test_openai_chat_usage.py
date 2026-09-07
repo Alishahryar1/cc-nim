@@ -9,6 +9,7 @@ import pytest
 from httpx2 import Request, Response
 from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.sse_aggregation import (
@@ -61,6 +62,7 @@ class _UsageTestProvider(OpenAIChatProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> dict:
         return {"model": request.model, "messages": [{"role": "user", "content": "x"}]}
 
@@ -533,7 +535,7 @@ async def test_openai_chat_stream_retries_without_usage_when_option_is_rejected(
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream_obj, used_body, attempt = await provider._create_stream(
+        _stream_obj, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,

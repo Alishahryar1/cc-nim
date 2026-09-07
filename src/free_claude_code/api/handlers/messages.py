@@ -38,6 +38,7 @@ from free_claude_code.api.web_tools.request import (
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import ProviderResolver
 from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
 from free_claude_code.config.settings import Settings
@@ -54,6 +55,8 @@ from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
+
+from .classifier_response import classifier_response
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,7 @@ class MessagesHandler:
         provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
         request_headers: Mapping[str, str] | None = None,
+        model_infos: tuple[ProviderModelInfo, ...] = (),
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -94,6 +98,7 @@ class MessagesHandler:
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,
             request_headers=request_headers,
+            model_infos=model_infos,
         )
         self._message_intercepts: tuple[MessageIntercept, ...] = (
             self._intercept_web_server_tool,
@@ -141,6 +146,10 @@ class MessagesHandler:
                         request_id=request_id,
                     )
                 )
+            if routed.reasoning.control is ReasoningControl.PREFER_OFF and isinstance(
+                result, _MessagesStreamResult
+            ):
+                result = _MessagesStreamResult(classifier_response(result.body))
             return await self._to_public_response(
                 result,
                 stream=request_data.stream,
@@ -312,7 +321,7 @@ class MessagesHandler:
         if classifier_stop_sequence is None:
             return routed
 
-        reasoning_changed = routed.reasoning.control is not ReasoningControl.OFF
+        reasoning_changed = routed.reasoning.control is not ReasoningControl.PREFER_OFF
         stop_sequences = routed.request.stop_sequences
         remaining_stop_sequences = (
             [
@@ -345,7 +354,7 @@ class MessagesHandler:
             routed,
             request=request,
             reasoning=(
-                ReasoningPolicy.off() if reasoning_changed else routed.reasoning
+                ReasoningPolicy.prefer_off() if reasoning_changed else routed.reasoning
             ),
         )
 

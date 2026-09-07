@@ -13,7 +13,11 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import DEEPINFRA_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.core.reasoning import (
+    ReasoningCapability,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
@@ -245,7 +249,11 @@ async def test_lists_only_active_text_models_with_thinking_metadata(
     assert model_infos == frozenset(
         {
             ProviderModelInfo("reasoning-model", supports_thinking=True),
-            ProviderModelInfo("plain-model", supports_thinking=False),
+            ProviderModelInfo(
+                "plain-model",
+                supports_thinking=False,
+                reasoning_capability=ReasoningCapability.NONE,
+            ),
             ProviderModelInfo("hybrid-model", supports_thinking=True),
             ProviderModelInfo("unknown-model"),
         }

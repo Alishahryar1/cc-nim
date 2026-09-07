@@ -46,7 +46,11 @@ from free_claude_code.core.openai_tool_names import (
     OpenAIToolNameCodec,
     encode_openai_chat_tool_names,
 )
-from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.core.reasoning import (
+    DEFAULT_REASONING_POLICY,
+    ReasoningControl,
+    ReasoningPolicy,
+)
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
@@ -75,6 +79,10 @@ from free_claude_code.providers.model_listing import (
     merge_model_list_pages,
     model_infos_from_ids,
     validate_model_list_page,
+)
+from free_claude_code.providers.reasoning_compatibility import (
+    ReasoningCorrection,
+    prepare_messages_reasoning,
 )
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
@@ -665,8 +673,12 @@ class OpenAIChatProvider(BaseProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> dict[str, Any]:
         """Build a provider request from the immutable profile."""
+        request, reasoning = self._prepare_messages_reasoning(
+            request, reasoning, model_info
+        )
         body = build_openai_chat_request_body(
             request,
             reasoning=reasoning,
@@ -674,6 +686,29 @@ class OpenAIChatProvider(BaseProvider):
             postprocessors=self._profile.request_postprocessors,
         )
         return self._finalize_chat_body(body, reasoning=reasoning)
+
+    @property
+    def _reasoning_off_fields(self) -> tuple[tuple[str, ...], ...]:
+        field = self._profile.reasoning.off_field
+        return (field,) if field is not None else ()
+
+    @property
+    def _normal_max_tokens(self) -> int | None:
+        return self._profile.request_policy.default_max_tokens
+
+    def _prepare_messages_reasoning(
+        self,
+        request: MessagesRequest,
+        reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None,
+    ) -> tuple[MessagesRequest, ReasoningPolicy]:
+        return prepare_messages_reasoning(
+            request,
+            reasoning,
+            model_info=model_info,
+            can_disable=bool(self._reasoning_off_fields),
+            normal_max_tokens=self._normal_max_tokens,
+        )
 
     def _build_responses_request_body(
         self,
@@ -718,9 +753,10 @@ class OpenAIChatProvider(BaseProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         """Validate OpenAI-chat request conversion before streaming."""
-        self._build_request_body(request, reasoning=reasoning)
+        self._build_request_body(request, reasoning=reasoning, model_info=model_info)
 
     def preflight_responses(
         self,
@@ -797,7 +833,8 @@ class OpenAIChatProvider(BaseProvider):
         used_retry_kinds: set[str] | None = None,
         endpoint: RequestEndpoint | None = None,
         extra_headers: Mapping[str, str] | None = None,
-    ) -> tuple[Any, dict, ProviderAttempt]:
+        reasoning_correction: ReasoningCorrection | None = None,
+    ) -> tuple[Any, dict, ProviderAttempt, dict]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
         if used_retry_kinds is None:
@@ -807,6 +844,7 @@ class OpenAIChatProvider(BaseProvider):
             attempt = await execution.open_attempt(operation_kind)
             stream: Any | None = None
             retain_attempt = False
+            create_body = body
             try:
                 create_body = self._prepare_create_body(body)
                 client = (
@@ -827,7 +865,7 @@ class OpenAIChatProvider(BaseProvider):
                 )
                 stream = self._normalize_stream(stream, body)
                 retain_attempt = True
-                return stream, body, attempt
+                return stream, body, attempt, create_body
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -835,11 +873,17 @@ class OpenAIChatProvider(BaseProvider):
                     error, attempt, execution
                 ):
                     continue
-                retry_body = self._next_create_retry_body(error, body, used_retry_kinds)
+                retry_body = self._next_create_retry_body(
+                    error,
+                    body,
+                    used_retry_kinds,
+                    reasoning_correction=reasoning_correction,
+                    sent_body=create_body,
+                )
                 if retry_body is not None:
                     correction = await attempt.correct(error)
                     if correction is ProviderCorrectionAction.RETRY:
-                        body = retry_body
+                        body = self._apply_learned_output_cap(retry_body)
                         continue
                     raise
                 decision = await attempt.fail(
@@ -872,7 +916,17 @@ class OpenAIChatProvider(BaseProvider):
         error: Exception,
         body: dict,
         used_retry_kinds: set[str],
+        *,
+        reasoning_correction: ReasoningCorrection | None = None,
+        sent_body: Mapping[str, Any] | None = None,
     ) -> dict | None:
+        if reasoning_correction is not None and "reasoning" not in used_retry_kinds:
+            retry_body = reasoning_correction.retry_body(
+                error, body, sent_body=sent_body
+            )
+            if retry_body is not None:
+                used_retry_kinds.add("reasoning")
+                return retry_body
         retry_body = self._retry_body_for_output_cap(error, body)
         if retry_body is not None:
             return retry_body
@@ -935,11 +989,27 @@ class OpenAIChatProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
         endpoint_context: EndpointContext | None = None,
         request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
-        body = self._build_request_body(request, reasoning=reasoning)
+        prepared_request, wire_reasoning = self._prepare_messages_reasoning(
+            request, reasoning, model_info
+        )
+        body = self._build_request_body(prepared_request, reasoning=wire_reasoning)
+        off_fields = self._reasoning_off_fields
+        correction = (
+            ReasoningCorrection(
+                off_fields,
+                self._profile.request_policy.max_tokens_field,
+                self._normal_max_tokens,
+            )
+            if reasoning.control is ReasoningControl.PREFER_OFF
+            and wire_reasoning.control is ReasoningControl.OFF
+            and off_fields
+            else None
+        )
         tool_names = OpenAIToolNameCodec.from_request(request)
         message_id = f"msg_{uuid.uuid4()}"
         runner = _OpenAIChatStreamRunner(
@@ -962,6 +1032,7 @@ class OpenAIChatProvider(BaseProvider):
             reasoning=reasoning,
             endpoint_context=endpoint_context,
             extra_headers=self._upstream_headers(request_headers or {}),
+            reasoning_correction=correction,
         )
         return runner.run()
 
@@ -1022,6 +1093,7 @@ class _OpenAIChatStreamRunner:
         reasoning: ReasoningPolicy,
         endpoint_context: EndpointContext | None = None,
         extra_headers: Mapping[str, str] | None = None,
+        reasoning_correction: ReasoningCorrection | None = None,
     ) -> None:
         self._provider = provider
         self._body = body
@@ -1033,6 +1105,7 @@ class _OpenAIChatStreamRunner:
         self._request_id = request_id
         self._response_model = response_model
         self._reasoning = reasoning
+        self._reasoning_correction = reasoning_correction
         self._extra_headers = dict(extra_headers or {})
         self._terminal_failure: ExecutionFailure | None = None
         self._endpoint = (
@@ -1106,13 +1179,14 @@ class _OpenAIChatStreamRunner:
             assembler = self._new_stream_assembler(output_reasoning=output_reasoning)
             scope: ProviderAttemptScope | None = None
             try:
-                stream, body, attempt = await self._provider._create_stream(
+                stream, body, attempt, sent_body = await self._provider._create_stream(
                     body,
                     execution,
                     ProviderOperationKind.GENERATION,
                     used_retry_kinds=used_retry_kinds,
                     endpoint=self._endpoint,
                     extra_headers=self._extra_headers,
+                    reasoning_correction=self._reasoning_correction,
                 )
                 scope = ProviderAttemptScope(
                     attempt,
@@ -1141,6 +1215,29 @@ class _OpenAIChatStreamRunner:
             except asyncio.CancelledError, GeneratorExit:
                 raise
             except Exception as error:
+                if (
+                    scope is not None
+                    and not recovery.committed
+                    and self._reasoning_correction is not None
+                    and "reasoning" not in used_retry_kinds
+                ):
+                    corrected_body = self._reasoning_correction.retry_body(
+                        error, body, sent_body=sent_body
+                    )
+                    if corrected_body is not None:
+                        used_retry_kinds.add("reasoning")
+                        retry = (
+                            execution.can_attempt
+                            if scope.attempt.accepted
+                            else await scope.attempt.correct(error)
+                            is ProviderCorrectionAction.RETRY
+                        )
+                        if retry:
+                            body = self._provider._apply_learned_output_cap(
+                                corrected_body
+                            )
+                            recovery.discard()
+                            continue
                 resolution = await self._resolve_attempt_failure(
                     error=error,
                     scope=scope,
@@ -1389,7 +1486,7 @@ class _OpenAIChatStreamRunner:
         while execution.can_attempt:
             scope: ProviderAttemptScope | None = None
             try:
-                stream, body, attempt = await self._provider._create_stream(
+                stream, body, attempt, _sent_body = await self._provider._create_stream(
                     body,
                     execution,
                     operation_kind,

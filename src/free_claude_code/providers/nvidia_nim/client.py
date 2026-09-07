@@ -8,6 +8,7 @@ from typing import Any
 import openai
 from loguru import logger
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.failures import ExecutionFailure
@@ -54,6 +55,17 @@ _PROFILE = OpenAIChatProfile(
 class NvidiaNimProvider(OpenAIChatProvider):
     """NVIDIA NIM provider using official OpenAI client."""
 
+    @property
+    def _reasoning_off_fields(self) -> tuple[tuple[str, ...], ...]:
+        return (
+            ("extra_body", "chat_template_kwargs", "thinking"),
+            ("extra_body", "chat_template_kwargs", "enable_thinking"),
+        )
+
+    @property
+    def _normal_max_tokens(self) -> int | None:
+        return self._nim_settings.max_tokens
+
     def __init__(
         self,
         config: ProviderConfig,
@@ -73,8 +85,12 @@ class NvidiaNimProvider(OpenAIChatProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> dict:
         """Internal helper for tests and shared building."""
+        request, reasoning = self._prepare_messages_reasoning(
+            request, reasoning, model_info
+        )
         return build_nim_request_body(
             request,
             self._nim_settings,

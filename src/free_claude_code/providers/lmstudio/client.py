@@ -16,6 +16,7 @@ import time
 import httpx
 from loguru import logger
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import ReasoningReplayMode, get_token_count
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.openai_responses import (
@@ -85,8 +86,9 @@ class LMStudioProvider(OpenAIChatProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
-        super().preflight_messages(request, reasoning=reasoning)
+        super().preflight_messages(request, reasoning=reasoning, model_info=model_info)
         self._preflight_context_budget(
             get_token_count(request.messages, request.system, request.tools)
         )

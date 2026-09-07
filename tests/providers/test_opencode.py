@@ -31,7 +31,10 @@ from free_claude_code.core.anthropic.stream_contracts import (
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.model_capabilities import ModelInputModality
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
-from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
+from free_claude_code.core.reasoning import (
+    DEFAULT_REASONING_POLICY,
+    ReasoningCapability,
+)
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.opencode import (
     OpenCodeProvider,
@@ -384,6 +387,7 @@ def test_catalog_resolves_package_precedence_status_alias_and_reasoning() -> Non
             ProviderModelInfo(
                 "provider-default",
                 supports_thinking=False,
+                reasoning_capability=ReasoningCapability.NONE,
                 input_modalities=frozenset({ModelInputModality.TEXT}),
                 context_window_tokens=131072,
                 max_output_tokens=8192,
@@ -1169,7 +1173,11 @@ async def test_model_listing_and_dispatch_use_same_snapshot() -> None:
 
     assert infos == frozenset(
         {
-            ProviderModelInfo("chat-selector", supports_thinking=False),
+            ProviderModelInfo(
+                "chat-selector",
+                supports_thinking=False,
+                reasoning_capability=ReasoningCapability.NONE,
+            ),
             ProviderModelInfo("responses-selector", supports_thinking=True),
         }
     )

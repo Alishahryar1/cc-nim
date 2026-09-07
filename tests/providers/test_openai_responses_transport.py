@@ -26,6 +26,53 @@ from free_claude_code.providers.openai_responses import OpenAIResponsesTransport
 from tests.providers.support import REASONING_ON, immediate_admission
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream_error", [False, True])
+async def test_tolerant_classifier_corrects_required_reasoning(stream_error):
+    bodies = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body.get("reasoning", {}).get("effort") == "none":
+            error = {
+                "code": "invalid_request_error",
+                "message": "Reasoning is mandatory and cannot be disabled.",
+            }
+            if stream_error:
+                return httpx2.Response(
+                    200,
+                    headers={"content-type": "text/event-stream"},
+                    text=_sse({"type": "error", **error, "sequence_number": 0}),
+                )
+            return httpx2.Response(400, json={"error": error})
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(_text_delta("<severity>0</severity>"), _completed_event()),
+        )
+
+    client = _client(handler)
+    try:
+        output = [
+            event
+            async for event in _transport(client).stream_messages(
+                _request(max_tokens=64, thinking={"type": "disabled"}),
+                input_tokens=11,
+                request_id="classifier",
+                response_model="public",
+                reasoning=ReasoningPolicy.prefer_off(),
+            )
+        ]
+        assert text_content(parse_sse_text("".join(output))) == "<severity>0</severity>"
+        assert len(bodies) == 2
+        assert bodies[0]["reasoning"]["effort"] == "none"
+        assert "max_output_tokens" not in bodies[0]
+        assert "reasoning" not in bodies[1]
+    finally:
+        await client.close()
+
+
 def _request(**overrides: object) -> MessagesRequest:
     payload: dict[str, object] = {
         "model": "upstream-model",

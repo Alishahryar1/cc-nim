@@ -52,13 +52,14 @@ async def _create_messages_response(
 ) -> object:
     lease: RequestRuntimeLease | None = None
     try:
-        lease = await services.requests.acquire()
+        lease = await services.requests.acquire(include_model_infos=True)
         handler = MessagesHandler(
             lease.settings,
             provider_resolver=_provider_resolver(lease),
             token_counter=get_token_count,
             generation_id=lease.generation_id,
             request_headers=request_headers,
+            model_infos=lease.model_infos,
         )
         response = await handler.create(request_data, request_id=request_id)
     except ApplicationError as exc:

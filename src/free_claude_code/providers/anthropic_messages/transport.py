@@ -8,6 +8,7 @@ from typing import cast
 import httpx
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.errors import anthropic_status_for_error_type
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.native import (
@@ -32,7 +33,11 @@ from free_claude_code.core.openai_responses import (
     ResponsesMessagesRequest,
     build_responses_messages_request,
 )
-from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.core.reasoning import (
+    DEFAULT_REASONING_POLICY,
+    ReasoningControl,
+    ReasoningPolicy,
+)
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
@@ -50,12 +55,20 @@ from free_claude_code.providers.failure_policy import (
     is_retryable_stream_error,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
+from free_claude_code.providers.reasoning_compatibility import (
+    ReasoningCorrection,
+    prepare_messages_reasoning,
+)
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
 )
 
-from .request_policy import MessagesModelCapabilities, resolve_messages_options
+from .request_policy import (
+    DEFAULT_MESSAGES_OUTPUT_TOKENS,
+    MessagesModelCapabilities,
+    resolve_messages_options,
+)
 
 type _Presenter = NativeMessagesRelay | AnthropicToResponsesStream
 
@@ -81,8 +94,18 @@ class AnthropicMessagesTransport:
         self._capabilities = capabilities
 
     def _messages_body(
-        self, request: MessagesRequest, reasoning: ReasoningPolicy
+        self,
+        request: MessagesRequest,
+        reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> PreparedMessagesRequest:
+        request, reasoning = prepare_messages_reasoning(
+            request,
+            reasoning,
+            model_info=model_info,
+            can_disable=True,
+            normal_max_tokens=DEFAULT_MESSAGES_OUTPUT_TOKENS,
+        )
         try:
             options = resolve_messages_options(
                 model=request.model,
@@ -122,8 +145,9 @@ class AnthropicMessagesTransport:
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
-        self._messages_body(request, reasoning)
+        self._messages_body(request, reasoning, model_info)
 
     def preflight_responses(
         self,
@@ -141,10 +165,30 @@ class AnthropicMessagesTransport:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
-        prepared = self._messages_body(request, reasoning)
+        prepared_request, wire_reasoning = prepare_messages_reasoning(
+            request,
+            reasoning,
+            model_info=model_info,
+            can_disable=True,
+            normal_max_tokens=DEFAULT_MESSAGES_OUTPUT_TOKENS,
+        )
+        prepared = self._messages_body(prepared_request, wire_reasoning)
+        correction = (
+            ReasoningCorrection(
+                (("thinking",),),
+                "max_tokens",
+                DEFAULT_MESSAGES_OUTPUT_TOKENS,
+                self._capabilities.max_output_tokens,
+            )
+            if reasoning.control is ReasoningControl.PREFER_OFF
+            and wire_reasoning.control is ReasoningControl.OFF
+            else None
+        )
         return self._stream(
             prepared.body,
+            reasoning_correction=correction,
             betas=prepared.betas,
             endpoint_context=endpoint_context,
             request_id=request_id,
@@ -184,10 +228,12 @@ class AnthropicMessagesTransport:
         endpoint_context: EndpointContext,
         request_id: str | None,
         presenter_factory: Callable[[], _Presenter],
+        reasoning_correction: ReasoningCorrection | None = None,
     ) -> AsyncIterator[str]:
         execution = self._admission.start_execution(request_id=request_id)
         run = self._run(
             body,
+            reasoning_correction=reasoning_correction,
             betas=betas,
             endpoint_context=endpoint_context,
             execution=execution,
@@ -215,6 +261,7 @@ class AnthropicMessagesTransport:
         endpoint_context: EndpointContext,
         execution: ProviderExecution,
         presenter_factory: Callable[[], _Presenter],
+        reasoning_correction: ReasoningCorrection | None = None,
     ) -> AsyncIterator[str]:
         recovery = RecoveryController()
         refreshed = False
@@ -318,6 +365,24 @@ class AnthropicMessagesTransport:
                         recovery.discard()
                         continue
                 attempt_failure = None
+                if (
+                    scope is not None
+                    and reasoning_correction is not None
+                    and not recovery.committed
+                ):
+                    corrected_body = reasoning_correction.retry_body(error, body)
+                    if corrected_body is not None:
+                        retry = (
+                            execution.can_attempt
+                            if scope.attempt.accepted
+                            else await scope.attempt.correct(error)
+                            is ProviderCorrectionAction.RETRY
+                        )
+                        reasoning_correction = None
+                        if retry:
+                            body = corrected_body
+                            recovery.discard()
+                            continue
                 if scope is not None and not scope.attempt.accepted:
                     attempt_failure = await scope.attempt.fail(error)
                 if attempt_failure is not None and attempt_failure.retry_allowed:

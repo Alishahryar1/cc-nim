@@ -265,7 +265,7 @@ async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
     create = AsyncMock(side_effect=[error, object()])
 
     with patch.object(groq_provider._client.chat.completions, "create", create):
-        _stream, used_body, attempt = await groq_provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await groq_provider._create_stream(
             body,
             groq_provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -292,7 +292,7 @@ async def test_learned_cap_clamps_next_request_without_a_400(groq_provider):
 
     create = AsyncMock(return_value=object())
     with patch.object(groq_provider._client.chat.completions, "create", create):
-        _stream, used_body, attempt = await groq_provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await groq_provider._create_stream(
             body,
             groq_provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,

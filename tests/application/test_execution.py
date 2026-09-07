@@ -8,6 +8,7 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.routing import (
     ProviderModelTarget,
     ResolvedModelRoute,
@@ -19,7 +20,7 @@ from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
-from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.core.reasoning import ReasoningCapability, ReasoningPolicy
 
 
 class FakeProvider:
@@ -33,6 +34,7 @@ class FakeProvider:
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         self.preflight_calls.append((request, reasoning))
 
@@ -53,6 +55,7 @@ class FakeProvider:
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -118,6 +121,7 @@ class ResponsesFakeProvider:
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         raise AssertionError("Responses test provider received a Messages request")
 
@@ -130,6 +134,7 @@ class ResponsesFakeProvider:
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         raise AssertionError("Responses test provider received a Messages request")
         yield ""
@@ -194,6 +199,7 @@ class ControlledProvider(FakeProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -226,6 +232,7 @@ class FailingPreflightProvider(FakeProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         raise ValueError("invalid provider request")
 
@@ -240,6 +247,7 @@ class ApplicationErrorPreflightProvider(FakeProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         raise self._error
 
@@ -254,6 +262,7 @@ class ExecutionFailurePreflightProvider(FakeProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         super().preflight_messages(request, reasoning=reasoning)
         raise self._failure
@@ -269,6 +278,7 @@ class FailingStreamConstructionProvider(FakeProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         raise RuntimeError("stream construction failed")
 
@@ -287,6 +297,7 @@ class ExecutionFailureStreamConstructionProvider(FakeProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         del request, input_tokens, request_id, response_model, reasoning
         raise self._failure
@@ -315,6 +326,7 @@ class CloseControlledProvider(FakeProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -367,6 +379,52 @@ def _routed_request(
         ),
         reasoning=ReasoningPolicy.on(),
     )
+
+
+@pytest.mark.asyncio
+async def test_fallback_receives_its_own_cached_capability_in_preflight_and_stream():
+    seen = []
+
+    class MetadataProvider(ControlledProvider):
+        def preflight_messages(self, request, **kwargs):
+            seen.append(("preflight", request.model, kwargs["model_info"]))
+
+        async def stream_messages(self, request, input_tokens=0, **kwargs):
+            seen.append(("stream", request.model, kwargs["model_info"]))
+            async for event in super().stream_messages(request, input_tokens, **kwargs):
+                yield event
+
+    primary_info = ProviderModelInfo(
+        "provider/provider-model", reasoning_capability=ReasoningCapability.NONE
+    )
+    fallback_info = ProviderModelInfo(
+        "fallback/fallback-model", reasoning_capability=ReasoningCapability.REQUIRED
+    )
+    primary = MetadataProvider(
+        [ExecutionFailure(FailureKind.UNAVAILABLE, 503, "unavailable", True)]
+    )
+    fallback = MetadataProvider(["verdict"])
+    providers = {"provider": primary, "fallback": fallback}
+    executor = ProviderExecutor(
+        lambda name: providers[name],
+        progress_timeout_seconds=10,
+        model_infos=(primary_info, fallback_info),
+    )
+    output = [
+        event
+        async for event in executor.stream_messages(
+            _routed_request(_target("fallback", "fallback-model")),
+            raw_log_payload={},
+            request_id="capability-fallback",
+        )
+    ]
+    assert output == ["verdict"]
+    assert seen == [
+        ("preflight", "provider-model", primary_info),
+        ("stream", "provider-model", primary_info),
+        ("preflight", "fallback-model", fallback_info),
+        ("stream", "fallback-model", fallback_info),
+    ]
 
 
 def _routed_responses_request(
@@ -924,6 +982,7 @@ async def test_candidate_requests_are_isolated_from_provider_mutation() -> None:
             response_model: str | None = None,
             reasoning: ReasoningPolicy,
             request_headers: Mapping[str, str] | None = None,
+            model_info: ProviderModelInfo | None = None,
         ) -> AsyncIterator[str]:
             request.messages[0].content = "mutated"
             async for chunk in super().stream_messages(

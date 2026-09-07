@@ -346,7 +346,7 @@ async def test_exact_issue_retries_with_default_and_learns_model() -> None:
     create = AsyncMock(side_effect=[_vocabulary_error(), object()])
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, used_body, attempt = await provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -365,7 +365,12 @@ async def test_exact_issue_retries_with_default_and_learns_model() -> None:
     assert next_body["reasoning_effort"] == "default"
     next_create = AsyncMock(return_value=object())
     with patch.object(provider._client.chat.completions, "create", next_create):
-        _stream, next_used_body, next_attempt = await provider._create_stream(
+        (
+            _stream,
+            next_used_body,
+            next_attempt,
+            _sent_body,
+        ) = await provider._create_stream(
             next_body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -435,7 +440,7 @@ async def test_unknown_vocabulary_retries_without_effort_and_negative_caches() -
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, used_body, attempt = await provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -490,7 +495,7 @@ async def test_concurrent_first_requests_can_learn_without_state_corruption() ->
         return object()
 
     async def execute(body: dict):
-        _stream, used_body, attempt = await provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -526,7 +531,7 @@ async def test_stale_cache_self_heals_without_guessing_original_effort() -> None
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, corrected_body, attempt = await provider._create_stream(
+        _stream, corrected_body, attempt, _sent_body = await provider._create_stream(
             cached_body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -657,7 +662,7 @@ async def test_output_cap_and_reasoning_corrections_share_one_session() -> None:
     execution = provider._admission.start_execution()
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, used_body, attempt = await provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             execution,
             ProviderOperationKind.GENERATION,
