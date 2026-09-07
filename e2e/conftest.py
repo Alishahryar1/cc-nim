@@ -13,6 +13,7 @@ import pytest
 import uvicorn
 from playwright.sync_api import Page
 
+from e2e.code_support import CodeControl
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.application.chat import (
@@ -229,10 +230,16 @@ class _ModelListingProvider(BaseProvider):
 
 
 @pytest.fixture
+def code_control(tmp_path):
+    return CodeControl(tmp_path / "code")
+
+
+@pytest.fixture
 def admin_base_url(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    code_control: CodeControl,
 ) -> Iterator[str]:
     """Serve one fully isolated Admin application on an OS-assigned port."""
 
@@ -397,6 +404,7 @@ def admin_base_url(
         configuration=ConfigurationService(ManagedConfigStore()),
         transcriber=None,
         chat_service=chat,
+        code_service=code_control.service,
     )
     app = RuntimeASGIApp(
         create_app(
@@ -405,6 +413,7 @@ def admin_base_url(
                 admin=runtime,
                 tasks=runtime,
                 chat=chat,
+                code=code_control.service,
             )
         ),
         runtime,
@@ -441,17 +450,21 @@ def admin_base_url(
         )
     )
 
+    async def serve() -> None:
+        code_control.loop = asyncio.get_running_loop()
+        await server.serve(sockets=[listener])
+
     def run_server() -> None:
         if sys.platform == "win32":
             # This HTTP-only fixture owns no subprocess transports. A browser
             # reset can interrupt Proactor socket cleanup on Python 3.14.0;
             # use the selector loop here, leaving Playwright's loop unchanged.
             asyncio.run(
-                server.serve(sockets=[listener]),
+                serve(),
                 loop_factory=asyncio.SelectorEventLoop,
             )
         else:
-            server.run(sockets=[listener])
+            asyncio.run(serve())
 
     thread = threading.Thread(
         target=run_server,

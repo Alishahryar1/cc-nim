@@ -11,8 +11,26 @@ from free_claude_code.cli.launchers.codex_model_catalog import (
     build_codex_model_catalog,
     write_codex_model_catalog,
 )
-from free_claude_code.cli.launchers.model_catalog import client_models_from_response
+from free_claude_code.cli.launchers.model_catalog import (
+    ClientModel,
+    client_models_from_response,
+)
 from free_claude_code.config.paths import codex_model_catalog_path
+from free_claude_code.config.settings import Settings
+
+
+def current_codex_models(
+    runtime: RequestRuntimePort, settings: Settings | None = None
+) -> tuple[ClientModel, ...]:
+    """Read the current FCC inventory without a request to the server itself."""
+    response = build_models_list_response(
+        settings or runtime.current_settings(),
+        runtime,
+        view=ModelCatalogView.RESPONSES,
+    )
+    return client_models_from_response(
+        response.model_dump(by_alias=True, exclude_none=True)
+    )
 
 
 class CodexModelCatalogPublisher:
@@ -39,16 +57,7 @@ class CodexModelCatalogPublisher:
         runtime: RequestRuntimePort,
         catalog_path: Path,
     ) -> None:
-        models_response = build_models_list_response(
-            runtime.current_settings(),
-            runtime,
-            view=ModelCatalogView.RESPONSES,
-        )
-        catalog = build_codex_model_catalog(
-            client_models_from_response(
-                models_response.model_dump(by_alias=True, exclude_none=True)
-            )
-        )
+        catalog = build_codex_model_catalog(current_codex_models(runtime))
         models = catalog.get("models")
         if not isinstance(models, list) or not models:
             raise ValueError("Codex model catalog contains no routable models.")

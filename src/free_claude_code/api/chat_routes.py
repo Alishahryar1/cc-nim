@@ -13,11 +13,9 @@ from free_claude_code.application.chat import (
     ChatApplicationPort,
     ChatCompaction,
     ChatContextEstimate,
-    ChatEventOverflowError,
     ChatModelOption,
     ChatOperationAcknowledgement,
     ChatPreferences,
-    ChatPublishedEvent,
     ChatReasoning,
     ChatSession,
     ChatSessionSummary,
@@ -25,12 +23,16 @@ from free_claude_code.application.chat import (
     ChatUnavailableError,
     ChatValidationError,
 )
+from free_claude_code.application.session_events import (
+    EventOverflowError,
+    PublishedEvent,
+)
 from free_claude_code.core.json_types import JsonObject
 
 from .admin_routes import admin_page_response
 from .admin_security import require_loopback_admin
-from .chat_markdown import render_chat_markdown
 from .dependencies import get_services
+from .markdown import render_markdown
 from .ports import ApiServices
 
 router = APIRouter()
@@ -116,7 +118,7 @@ async def chat_events(
         try:
             async for event in subscription:
                 yield _sse_event(event)
-        except ChatEventOverflowError as exc:
+        except EventOverflowError as exc:
             yield ServerSentEvent(
                 event="feed.resync_required",
                 id=str(exc.cursor),
@@ -357,7 +359,7 @@ def _chat(services: ApiServices) -> ChatApplicationPort:
     return services.chat
 
 
-def _sse_event(event: ChatPublishedEvent) -> ServerSentEvent:
+def _sse_event(event: PublishedEvent) -> ServerSentEvent:
     return ServerSentEvent(
         event=event.event,
         id=str(event.id),
@@ -512,7 +514,7 @@ def _turn_payload(turn: ChatTurn) -> JsonObject:
                     "ordinal": segment.ordinal,
                     "kind": segment.kind.value,
                     "text": segment.text,
-                    "html": render_chat_markdown(segment.text),
+                    "html": render_markdown(segment.text),
                 }
                 for segment in generation.segments
             ],
@@ -526,7 +528,7 @@ def _compaction_payload(compaction: ChatCompaction | None) -> JsonObject | None:
     return {
         "covered_through_sequence": compaction.covered_through_sequence,
         "summary": compaction.summary,
-        "summary_html": render_chat_markdown(compaction.summary),
+        "summary_html": render_markdown(compaction.summary),
         "estimated_tokens": compaction.estimated_tokens,
         "requested_model": compaction.requested_model,
         "actual_model": compaction.actual_model,
