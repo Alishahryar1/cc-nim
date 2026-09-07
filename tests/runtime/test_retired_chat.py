@@ -115,6 +115,13 @@ async def test_fresh_and_repeated_startup_do_not_create_chat_directory():
     assert not (paths.config_dir_path() / "chat").exists()
 
 
+def test_startup_removes_history_on_uvloop():
+    uvloop = pytest.importorskip("uvloop")
+    _, owned = _history()
+    asyncio.run(_start_and_close(), loop_factory=uvloop.new_event_loop)
+    assert not [path for path in owned if path.exists()]
+
+
 @pytest.mark.asyncio
 async def test_busy_history_is_left_intact_and_removed_on_next_startup(cleanup_logs):
     directory, owned = _history()

@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 
+from anyio import to_thread
 from loguru import logger
 
 import free_claude_code.cli.managed as cli_managed
@@ -192,7 +193,7 @@ class ApplicationRuntime:
                     asyncio.create_task(self._configuration.initialize())
                 )
                 await _await_owned_task(
-                    asyncio.create_task(asyncio.to_thread(remove_retired_chat_history))
+                    asyncio.create_task(to_thread.run_sync(remove_retired_chat_history))
                 )
                 if self._draining:
                     raise ApplicationUnavailableError(
