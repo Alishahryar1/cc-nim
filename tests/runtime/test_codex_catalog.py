@@ -4,12 +4,14 @@ from unittest.mock import patch
 
 import pytest
 
+from free_claude_code.application.code_sessions.models import CodeValidationError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import (
     RequestRuntimeLease,
     RequestRuntimePort,
 )
 from free_claude_code.config.settings import Settings
+from free_claude_code.runtime.codex_app_server import CodexHarnessFactory
 from free_claude_code.runtime.codex_catalog import CodexModelCatalogPublisher
 
 
@@ -102,3 +104,19 @@ def test_empty_projection_preserves_existing_catalog(tmp_path: Path) -> None:
         publisher.publish(_runtime())
 
     assert catalog_path.read_text(encoding="utf-8") == "last known good\n"
+
+
+def test_code_picker_and_native_selection_use_the_same_advertised_efforts():
+    factory = CodexHarnessFactory(_runtime(), binary="codex")
+    advertised = factory.catalog()
+    assert advertised.default_model == "nvidia_nim/configured"
+    model = advertised.models[1]
+    selected = factory.prepare(model.id, None)
+    assert selected.model == model.id
+    assert selected.context.settings.model == model.id
+    assert selected.reasoning_effort == model.default_reasoning_effort == "medium"
+    assert factory.prepare(model.id, "high").reasoning_effort == "high"
+    with pytest.raises(CodeValidationError, match="effort"):
+        factory.prepare(model.id, "unsupported")
+    with pytest.raises(CodeValidationError, match="model"):
+        factory.prepare("missing/model", None)

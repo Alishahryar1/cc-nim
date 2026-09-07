@@ -7,8 +7,10 @@ from free_claude_code.application.session_events import EventSubscription
 from free_claude_code.core.json_types import JsonObject
 
 from .models import (
+    CodeCatalog,
     CodeDetail,
     CodeItem,
+    CodeItemPage,
     CodePage,
     CodePrompt,
     CodeRun,
@@ -54,6 +56,9 @@ class HarnessSelection(Protocol):
     def model(self) -> str: ...
 
     @property
+    def reasoning_effort(self) -> str | None: ...
+
+    @property
     def configuration_key(self) -> str: ...
 
     async def open(self, cwd: str, sink: EventSink) -> HarnessConnection: ...
@@ -62,7 +67,9 @@ class HarnessSelection(Protocol):
 class HarnessFactory(Protocol):
     def availability(self) -> tuple[bool, str | None]: ...
 
-    def prepare(self) -> HarnessSelection: ...
+    def catalog(self) -> CodeCatalog: ...
+
+    def prepare(self, model: str, reasoning_effort: str | None) -> HarnessSelection: ...
 
     async def open_history(self, cwd: str, sink: EventSink) -> HarnessConnection: ...
 
@@ -77,26 +84,45 @@ class CodeStore(Protocol):
     async def get_session(self, session_id: str) -> CodeSession: ...
 
     async def list_sessions(
-        self, cursor: tuple[int, str] | None, limit: int
+        self, cursor: tuple[int, str] | None, limit: int, query: str = ""
     ) -> CodePage: ...
 
     async def pending_deletions(self) -> tuple[CodeSession, ...]: ...
 
     async def is_deleted(self, session_id: str) -> bool: ...
 
-    async def get_run(self, run_id: str) -> CodeRun | None: ...
+    async def get_run(self, session_id: str, run_id: str) -> CodeRun | None: ...
+
+    async def runs(self, session_id: str) -> tuple[CodeRun, ...]: ...
 
     async def latest_run(self, session_id: str) -> CodeRun | None: ...
 
     async def items(
-        self, session_id: str, before: int | None, limit: int | None
+        self, session_id: str, before: tuple[int, int] | None, limit: int | None
     ) -> tuple[CodeItem, ...]: ...
 
     async def prompts(self, session_id: str) -> tuple[CodePrompt, ...]: ...
 
-    async def save(
+    async def item_page(
+        self, session_id: str, before: tuple[int, int] | None, limit: int | None
+    ) -> CodeItemPage: ...
+
+    async def update_settings(
+        self, session: CodeSession, expected_revision: int
+    ) -> CodeSession: ...
+
+    async def admit_run(
+        self, session: CodeSession, run: CodeRun, item: CodeItem, expected_revision: int
+    ) -> tuple[CodeSession, CodeRun]: ...
+
+    async def claim_prompt(
+        self, session_id: str, prompt_id: str, response_id: str, generation: str
+    ) -> CodePrompt: ...
+
+    async def save_progress(
         self,
         session: CodeSession,
+        expected_revision: int,
         *,
         run: CodeRun | None = None,
         items: Sequence[CodeItem] = (),
@@ -115,20 +141,22 @@ class CodeApplicationPort(Protocol):
 
     def availability(self) -> tuple[bool, str | None]: ...
 
+    def catalog(self) -> CodeCatalog: ...
+
     async def create_session(self, session_id: str, cwd: str) -> CodeSession: ...
 
     async def list_sessions(
-        self, cursor: tuple[int, str] | None = None, limit: int = 25
+        self, cursor: tuple[int, str] | None = None, limit: int = 25, query: str = ""
     ) -> CodePage: ...
 
     async def get_detail(
-        self, session_id: str, *, before: int | None = None
+        self, session_id: str, *, before: tuple[int, int] | None = None
     ) -> CodeDetail: ...
 
     async def subscribe(self) -> tuple[EventSubscription, JsonObject]: ...
 
-    async def rename(
-        self, session_id: str, revision: int, title: str
+    async def update_settings(
+        self, session_id: str, revision: int, changes: JsonObject
     ) -> CodeSession: ...
 
     async def send(

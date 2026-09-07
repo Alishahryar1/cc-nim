@@ -78,7 +78,7 @@ def test_chat_navigation_create_and_browser_history(
     expect(page.locator(".action-bar")).to_be_hidden()
     page.get_by_role("button", name="Chats", exact=False).click()
     expect(page).to_have_url(f"{admin_base_url}/admin/chat")
-    expect(page.locator(".chat-session-card")).to_have_count(1)
+    expect(page.locator(".session-card")).to_have_count(1)
     page.go_back()
     expect(page.get_by_role("textbox", name="Message", exact=True)).to_be_visible()
     page.go_forward()
@@ -163,7 +163,7 @@ def test_model_refresh_updates_chat_bootstrap(
     card.get_by_role("button", name="Refresh models", exact=True).click()
     expect(card.locator(".provider-check-result")).to_have_text("3 models available")
     page.get_by_role("button", name="Chat Sessions").click()
-    page.locator(".chat-session-card").click()
+    page.locator(".session-card").click()
 
     expect(page.get_by_role("combobox", name="Selected model")).to_have_value(target)
     page.get_by_role("textbox", name="Message", exact=True).fill("still available")
@@ -259,14 +259,14 @@ def test_delayed_older_page_cannot_cross_into_another_chat(
     expect(page.get_by_text("B only", exact=True)).to_be_visible()
 
     page.get_by_role("button", name="Chats", exact=False).click()
-    page.locator(".chat-session-card", has_text="[delay-older-page] Chat A").click()
+    page.locator(".session-card", has_text="[delay-older-page] Chat A").click()
     load_older = page.get_by_role("button", name="Load older messages")
     expect(load_older).to_be_visible()
     with page.expect_request(lambda request: "/turns?before=" in request.url):
         load_older.click()
 
     page.get_by_role("button", name="Chats", exact=False).click()
-    page.locator(".chat-session-card", has_text="B only").click()
+    page.locator(".session-card", has_text="B only").click()
     expect(page.get_by_text("B only", exact=True)).to_be_visible()
     page.wait_for_timeout(1_000)
     expect(page.get_by_text("A OLD LEAK", exact=True)).to_have_count(0)
@@ -288,7 +288,7 @@ def test_out_of_order_library_search_keeps_latest_results(
         )
         assert renamed.ok
     page.get_by_role("button", name="Chat Sessions").click()
-    expect(page.locator(".chat-session-card")).to_have_count(2)
+    expect(page.locator(".session-card")).to_have_count(2)
 
     search = page.get_by_role("searchbox", name="Search chats")
     with page.expect_request(lambda request: "query=race-old" in request.url):
@@ -296,16 +296,10 @@ def test_out_of_order_library_search_keeps_latest_results(
     with page.expect_response(lambda response: "query=race-new" in response.url):
         search.fill("race-new")
 
-    expect(
-        page.locator(".chat-session-card", has_text="race-new result")
-    ).to_be_visible()
+    expect(page.locator(".session-card", has_text="race-new result")).to_be_visible()
     page.wait_for_timeout(1_000)
-    expect(
-        page.locator(".chat-session-card", has_text="race-new result")
-    ).to_be_visible()
-    expect(
-        page.locator(".chat-session-card", has_text="race-old result")
-    ).to_have_count(0)
+    expect(page.locator(".session-card", has_text="race-new result")).to_be_visible()
+    expect(page.locator(".session-card", has_text="race-old result")).to_have_count(0)
 
 
 def test_double_load_more_appends_each_session_once(
@@ -320,15 +314,15 @@ def test_double_load_more_appends_each_session_once(
         )
         assert created.ok
     page.get_by_role("button", name="Chat Sessions").click()
-    expect(page.locator(".chat-session-card")).to_have_count(25)
+    expect(page.locator(".session-card")).to_have_count(25)
     more = page.get_by_role("button", name="Load more")
     expect(more).to_be_visible()
 
     more.evaluate("button => { button.click(); button.click(); }")
 
-    expect(page.locator(".chat-session-card")).to_have_count(26, timeout=3_000)
+    expect(page.locator(".session-card")).to_have_count(26, timeout=3_000)
     page.wait_for_timeout(750)
-    expect(page.locator(".chat-session-card")).to_have_count(26)
+    expect(page.locator(".session-card")).to_have_count(26)
 
 
 def test_chat_streams_thinking_and_persists_answer(
@@ -340,7 +334,9 @@ def test_chat_streams_thinking_and_persists_answer(
     page.get_by_role("textbox", name="Message", exact=True).fill("hello")
     page.get_by_role("button", name="Send").click()
     expect(page.get_by_text("E2E answer")).to_be_visible()
-    expect(page.locator(".chat-thinking summary", has_text="Thinking")).to_be_visible()
+    expect(
+        page.locator(".session-thinking summary", has_text="Thinking")
+    ).to_be_visible()
     expect(page.get_by_role("button", name="Regenerate")).to_be_visible()
     expect(page.locator("#chatContextMeter")).to_contain_text("Context:")
 
@@ -405,7 +401,7 @@ def test_fragmented_stream_does_not_rebuild_transcript_per_delta(
     page.get_by_role("button", name="Send").click()
 
     expect(page.get_by_role("button", name="Regenerate")).to_be_visible(timeout=10_000)
-    expect(page.locator(".assistant-message .chat-markdown").last).to_contain_text(
+    expect(page.locator(".assistant-message .session-markdown").last).to_contain_text(
         "abcd" * 20
     )
     render_count = page.evaluate("window.__chatTranscriptRenderCount")
@@ -445,7 +441,7 @@ def test_provider_failure_appears_only_in_assistant_reply(
 
     expect(page.get_by_role("button", name="Retry")).to_be_visible()
     expect(
-        page.locator(".assistant-message .chat-generation-status.failed")
+        page.locator(".assistant-message .session-generation-status.failed")
     ).to_have_text("E2E provider failed")
     expect(page.locator("#chatNotice")).to_be_hidden()
     expect(page.get_by_text("E2E provider failed", exact=True)).to_have_count(1)
@@ -619,7 +615,7 @@ def test_two_sessions_run_concurrently_across_navigation(
     expect(page.get_by_role("button", name="Stop")).to_be_visible()
 
     page.get_by_role("button", name="Chats", exact=False).click()
-    expect(page.locator(".chat-session-status", has_text="Thinking…")).to_have_count(2)
+    expect(page.locator(".session-status", has_text="Thinking…")).to_have_count(2)
 
     page.goto(first_url)
     expect(page.get_by_text("E2E answer", exact=True)).to_be_visible()
@@ -648,14 +644,14 @@ def test_library_card_tracks_background_operation_and_durable_summary(
         message.fill("[slow] live library preview")
         message.press("Enter")
 
-        card = other.locator(".chat-session-card", has_text="Library observer")
+        card = other.locator(".session-card", has_text="Library observer")
         expect(card).to_be_visible(timeout=3_000)
         expect(card.locator("p")).to_have_text("[slow] live library preview")
-        expect(card.locator(".chat-session-status")).to_have_text("Thinking…")
+        expect(card.locator(".session-status")).to_have_text("Thinking…")
 
         page.get_by_role("button", name="Stop").click()
         expect(page.get_by_role("button", name="Retry")).to_be_visible()
-        expect(card.locator(".chat-session-status")).to_have_count(0, timeout=3_000)
+        expect(card.locator(".session-status")).to_have_count(0, timeout=3_000)
         expect(card.locator("p")).to_have_text("[slow] live library preview")
         expect(card.locator("span").first).to_contain_text("just now")
     finally:
@@ -888,7 +884,7 @@ def test_failed_regeneration_replaces_the_reply_without_a_page_notice(
     expect(page.get_by_text("E2E answer", exact=True)).to_have_count(0)
     expect(page.get_by_text("Partial replacement", exact=True)).to_be_visible()
     expect(
-        page.locator(".assistant-message .chat-generation-status.failed")
+        page.locator(".assistant-message .session-generation-status.failed")
     ).to_have_text("E2E provider failed")
     expect(page.locator("#chatNotice")).to_be_hidden()
     expect(page.get_by_text("E2E provider failed", exact=True)).to_have_count(1)
@@ -1002,7 +998,7 @@ def test_chat_composer_is_one_compact_surface_and_grows_to_six_lines(
 ) -> None:
     page.set_viewport_size({"width": 1_258, "height": 566})
     _new_chat(page, admin_base_url)
-    composer = page.locator(".chat-composer")
+    composer = page.locator(".session-composer")
     message = page.get_by_role("textbox", name="Message", exact=True)
 
     surface = composer.evaluate(
@@ -1063,12 +1059,12 @@ def test_chat_uses_desktop_width_with_one_responsive_gutter(
     page.reload()
     expect(page.get_by_text("E2E answer")).to_be_visible()
 
-    layout = page.locator(".chat-session-shell").evaluate(
+    layout = page.locator(".session-shell").evaluate(
         """shell => {
             const main = document.querySelector(".main").getBoundingClientRect();
             const shellBox = shell.getBoundingClientRect();
-            const composer = shell.querySelector(".chat-composer").getBoundingClientRect();
-            const transcript = shell.querySelector(".chat-transcript").getBoundingClientRect();
+            const composer = shell.querySelector(".session-composer").getBoundingClientRect();
+            const transcript = shell.querySelector(".session-transcript").getBoundingClientRect();
             const user = shell.querySelector(".user-message").getBoundingClientRect();
             const assistant = shell.querySelector(".assistant-message").getBoundingClientRect();
             return {
@@ -1115,7 +1111,7 @@ def test_chat_rename_prompt_and_delete(
     page.on("dialog", lambda dialog: dialog.accept())
     page.get_by_role("button", name="Delete").click()
     expect(page).to_have_url(f"{admin_base_url}/admin/chat")
-    expect(page.locator(".chat-session-card")).to_have_count(0)
+    expect(page.locator(".session-card")).to_have_count(0)
 
 
 def test_delayed_title_save_cannot_restore_chat_after_back_navigation(

@@ -28,15 +28,13 @@ class CodeControl:
 
     async def hold_send(self):
         self.admission = asyncio.Event()
-        original = self.service._store.save
+        original = self.service._store.admit_run
 
-        async def save(session, **kwargs):
-            run = kwargs.get("run")
-            if run is not None and run.status == "preparing":
-                await self.admission.wait()
-            await original(session, **kwargs)
+        async def admit(session, run, item, expected_revision):
+            await self.admission.wait()
+            return await original(session, run, item, expected_revision)
 
-        self.admission_patch = patch.object(self.service._store, "save", save)
+        self.admission_patch = patch.object(self.service._store, "admit_run", admit)
         self.admission_patch.start()
 
     async def release_send(self):

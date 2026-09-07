@@ -25,6 +25,8 @@ class Record(BaseModel):
 class CodeSession(Record):
     id: str
     cwd: str
+    model: str
+    reasoning_effort: str | None = None
     harness: Literal["codex"] = "codex"
     title: str = "New code session"
     auto_title: bool = True
@@ -42,11 +44,14 @@ class CodeRun(Record):
     session_id: str
     text: str
     model: str
+    reasoning_effort: str | None = None
+    ordinal: int = 0
     status: RunStatus = "preparing"
     submission_started: bool = False
     native_turn_id: str | None = None
     stop_requested: bool = False
     error: str | None = None
+    error_details: JsonObject = Field(default_factory=dict)
     created_at: int = Field(default_factory=now_ms)
     finished_at: int | None = None
 
@@ -55,7 +60,7 @@ class CodeItem(Record):
     id: str
     session_id: str
     sequence: int
-    run_id: str | None = None
+    run_id: str
     native_turn_id: str | None = None
     native_item_id: str | None = None
     kind: str
@@ -90,7 +95,29 @@ class CodeDetail:
     epoch: str
     version: int
     cursor: int
-    next_before: int | None = None
+    next_before: tuple[int, int] | None = None
+    runs: tuple[CodeRun, ...] = ()
+    active_prompt_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CodeItemPage:
+    items: tuple[CodeItem, ...]
+    runs: tuple[CodeRun, ...]
+    next_before: tuple[int, int] | None = None
+
+
+class CodeModel(Record):
+    id: str
+    display_name: str
+    reasoning_efforts: tuple[str, ...] = ()
+    default_reasoning_effort: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CodeCatalog:
+    default_model: str
+    models: tuple[CodeModel, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,12 +168,23 @@ class HarnessEvent:
     request_id: str | int | None = None
     status: RunStatus = "completed"
     message: str | None = None
+    will_retry: bool = False
+    error_details: JsonObject = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class NativeTurn:
+    id: str
+    items: tuple[ItemUpdate, ...] = ()
+    status: RunStatus = "completed"
+    error: str | None = None
+    error_details: JsonObject = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class NativeThread:
     id: str
-    items: tuple[ItemUpdate, ...] = ()
+    turns: tuple[NativeTurn, ...] = ()
 
 
 class CodeError(Exception):

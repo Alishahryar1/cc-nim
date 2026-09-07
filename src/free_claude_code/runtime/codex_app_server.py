@@ -13,7 +13,9 @@ from contextlib import ExitStack, suppress
 from dataclasses import dataclass, replace
 
 from free_claude_code.application.code_sessions.models import (
+    CodeCatalog,
     CodeConflictError,
+    CodeModel,
     CodeUnavailableError,
     CodeValidationError,
     HarnessEvent,
@@ -167,6 +169,7 @@ class CodexAppServer:
         }
         if self._reasoning.get(selection.model, True):
             params["summary"] = "auto"
+            params["effort"] = selection.reasoning_effort
         result = await self.rpc("turn/start", params)
         turn_id = string_value(object_value(result.get("turn")).get("id"))
         if not turn_id:
@@ -495,6 +498,7 @@ class _CodexSelection:
     model: str
     configuration_key: str
     fingerprints: dict[str, str]
+    reasoning_effort: str | None
 
     async def open(self, cwd: str, sink: EventSink) -> CodexAppServer:
         resources = ExitStack()
@@ -548,15 +552,35 @@ class CodexHarnessFactory:
             return True, None
         return False, "Codex is not installed. " + SPEC.install_hint
 
-    def prepare(self) -> _CodexSelection:
+    def catalog(self) -> CodeCatalog:
+        settings = self._runtime.current_settings()
+        models = current_codex_models(self._runtime, settings)
+        entries = array_value(build_codex_model_catalog(models).get("models"))
+        return CodeCatalog(
+            settings.model,
+            tuple(
+                _model_option(model.provider_model_ref, object_value(entry))
+                for model, entry in zip(models, entries, strict=True)
+            ),
+        )
+
+    def prepare(self, model: str, reasoning_effort: str | None) -> _CodexSelection:
         binary = self._binary or shutil.which("codex")
         if binary is None:
             raise CodeUnavailableError("Codex is not installed. " + SPEC.install_hint)
         settings = self._runtime.current_settings()
         models = current_codex_models(self._runtime, settings)
-        if not any(model.provider_model_ref == settings.model for model in models):
-            raise CodeUnavailableError(
-                "The FCC default model is unavailable. Check its provider in Admin."
+        selected = next(
+            (
+                candidate
+                for candidate in models
+                if candidate.provider_model_ref == model
+            ),
+            None,
+        )
+        if selected is None:
+            raise CodeValidationError(
+                "This model is unavailable. Choose another model."
             )
         catalog = build_codex_model_catalog(models)
         entries = {
@@ -564,20 +588,29 @@ class CodexHarnessFactory:
             for value in array_value(catalog.get("models"))
             if (entry := object_value(value))
         }
+        option = _model_option(model, entries[selected.wire_slug])
+        if (
+            reasoning_effort is not None
+            and reasoning_effort not in option.reasoning_efforts
+        ):
+            raise CodeValidationError(
+                "This reasoning effort is unavailable. Choose another effort or Model default."
+            )
+        effort = reasoning_effort or option.default_reasoning_effort
         fingerprints = {
             model.provider_model_ref: _fingerprint(entries[model.wire_slug])
             for model in models
         }
         context = LaunchContext(
             binary,
-            settings,
+            settings.model_copy(update={"model": model}),
             local_proxy_root_url(settings),
             settings.proxy_auth_token,
             dict(self._env if self._env is not None else os.environ),
             models,
         )
         return _CodexSelection(
-            context, settings.model, fingerprints[settings.model], fingerprints
+            context, model, fingerprints[model], fingerprints, effort
         )
 
     async def open_history(self, cwd: str, sink: EventSink) -> CodexAppServer:
@@ -595,6 +628,19 @@ class CodexHarnessFactory:
         )
         await connection.start()
         return connection
+
+
+def _model_option(model: str, entry: JsonObject) -> CodeModel:
+    return CodeModel(
+        id=model,
+        display_name=string_value(entry.get("display_name")) or model,
+        reasoning_efforts=tuple(
+            string_value(object_value(level).get("effort"))
+            for level in array_value(entry.get("supported_reasoning_levels"))
+        ),
+        default_reasoning_effort=string_value(entry.get("default_reasoning_level"))
+        or None,
+    )
 
 
 def _fingerprint(entry: JsonObject) -> str:

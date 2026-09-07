@@ -1,5 +1,7 @@
 import re
+import uuid
 
+import pytest
 from playwright.sync_api import expect
 
 from free_claude_code.application.code_sessions.models import (
@@ -45,7 +47,7 @@ def test_code_streams_survive_refresh_and_all_viewers_leaving(
     )
     code_control.run(connection.text("turn-1", "reply", "First finding", complete=True))
     expect(page.get_by_text("First finding", exact=True)).to_be_visible()
-    page.get_by_text("Thinking", exact=True).click()
+    page.locator("summary").filter(has_text="Thinking").click()
     expect(page.get_by_text("Reading the files", exact=True)).to_be_visible()
     expect(page.get_by_role("button", name="Regenerate", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Edit message", exact=True)).to_have_count(0)
@@ -103,6 +105,7 @@ def test_old_detail_cannot_replace_streamed_output(
     send(page, "Keep the latest output")
     connection = code_control.connection()
     code_control.run(connection.text("turn-1", "reply", "Old output", complete=True))
+    code_control.run(connection.prompt(0))
     expect(page.get_by_text("Old output", exact=True)).to_be_visible()
     page.add_init_script("""(() => {
       const original = window.fetch;
@@ -118,11 +121,13 @@ def test_old_detail_cannot_replace_streamed_output(
     page.goto(url)
     page.wait_for_function("window.detailCaptured === true")
     code_control.run(connection.text("turn-1", "reply", "Newest output", complete=True))
+    code_control.run(connection.resolve(0))
     code_control.run(connection.finish("turn-1"))
     page.evaluate("window.releaseDetail()")
     expect(page.get_by_text("Newest output", exact=True)).to_be_visible()
     expect(page.get_by_text("Old output", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Send", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Allow", exact=True)).to_be_disabled()
 
 
 def test_competing_tabs_keep_the_rejected_draft(
@@ -200,17 +205,16 @@ def test_rename_and_delete_sync_library_without_touching_project(
     second = context.new_page()
     try:
         second.goto(url)
-        page.get_by_role("button", name="Rename", exact=True).click()
-        page.get_by_role("textbox", name="Title", exact=True).fill("My project")
-        page.get_by_role("button", name="Save title", exact=True).click()
+        page.get_by_role("textbox", name="Code title", exact=True).fill("My project")
+        page.get_by_role("textbox", name="Code title", exact=True).press("Enter")
         expect(
-            second.get_by_role("heading", name="My project", exact=True)
-        ).to_be_visible()
+            second.get_by_role("textbox", name="Code title", exact=True)
+        ).to_have_value("My project")
         page.get_by_role("button", name="Delete", exact=True).click()
         page.get_by_role("button", name="Delete session", exact=True).click()
         expect(page).to_have_url(f"{admin_base_url}/admin/code")
         expect(second).to_have_url(f"{admin_base_url}/admin/code")
-        expect(second.locator(".code-session-card")).to_have_count(0)
+        expect(second.locator(".session-card")).to_have_count(0)
         assert project.read_text() == "unchanged"
     finally:
         second.close()
@@ -219,6 +223,7 @@ def test_rename_and_delete_sync_library_without_touching_project(
 def test_question_input_survives_streaming_and_secret_answer_is_not_stored(
     page, admin_base_url, tmp_path, code_control
 ):
+    control_feed(page)
     create_session(page, admin_base_url, tmp_path)
     send(page, "Ask me a question")
     connection = code_control.connection()
@@ -268,6 +273,11 @@ def test_question_input_survives_streaming_and_secret_answer_is_not_stored(
     )
     expect(page.get_by_text("Still checking", exact=True)).to_be_visible()
     expect(secret).to_have_value("private-answer")
+    page.evaluate("window.codeFeed.onerror(new Event('error'))")
+    expect(
+        page.get_by_role("button", name="Submit answers", exact=True)
+    ).to_be_enabled()
+    expect(secret).to_have_value("private-answer")
     page.get_by_role("button", name="Submit answers", exact=True).click()
     expect(
         page.get_by_role("button", name="Submit answers", exact=True)
@@ -281,3 +291,239 @@ def test_question_input_survives_streaming_and_secret_answer_is_not_stored(
     assert all(
         "private-answer" not in value.model_dump_json() for value in detail.prompts
     )
+
+
+def control_feed(page):
+    page.add_init_script("""(() => {
+      const Native = window.EventSource;
+      window.EventSource = class extends Native {
+        constructor(...args) { super(...args); if (String(args[0]).includes('/api/code/events')) window.codeFeed = this; }
+        addEventListener(type, listener, ...options) {
+          return super.addEventListener(type, event => {
+            if (window.dropCodeEvents?.includes(type)) return;
+            listener(event);
+          }, ...options);
+        }
+      };
+    })();""")
+
+
+@pytest.mark.parametrize("endpoint", ["sessions", "bootstrap"])
+def test_first_http_sync_failure_recovers_without_reloading(
+    page, admin_base_url, endpoint
+):
+    page.add_init_script(
+        """(endpoint => {
+      const original = window.fetch;
+      window.fetch = async (...args) => {
+        if (!window.failedCodeLoad && new URL(String(args[0]), location.origin).pathname === `/admin/api/code/${endpoint}`) {
+          window.failedCodeLoad = true;
+          throw new TypeError('Initial snapshot failed');
+        }
+        return original(...args);
+      };
+    })("""
+        + repr(endpoint)
+        + ");"
+    )
+    page.goto(f"{admin_base_url}/admin/code")
+    expect(
+        page.get_by_role("button", name="New code session", exact=True)
+    ).to_be_enabled()
+    assert page.evaluate("window.failedCodeLoad")
+    expect(page.locator("#codeNotice")).to_be_hidden()
+
+
+def test_unavailable_feed_shows_reason_and_clears_it_on_recovery(
+    page, admin_base_url, code_control
+):
+    async def availability(available):
+        code_control.service._accepting = available
+        code_control.service._message = (
+            None if available else "Code storage is unavailable"
+        )
+
+    code_control.run(availability(False))
+    page.goto(f"{admin_base_url}/admin/code")
+    expect(page.locator("#codeNotice")).to_contain_text("Code storage is unavailable")
+    expect(page.locator("#codeNew")).to_be_disabled()
+    code_control.run(availability(True))
+    expect(page.locator("#codeNew")).to_be_enabled()
+    expect(page.locator("#codeNotice")).to_be_hidden()
+
+
+def test_reconnect_retires_out_of_page_prompt_without_discarding_live_form_input(
+    page, admin_base_url, tmp_path, code_control
+):
+    control_feed(page)
+    create_session(page, admin_base_url, tmp_path)
+    send(page, "Work")
+    connection = code_control.connection()
+    code_control.run(connection.prompt(0, turn_id=None))
+    expect(page.get_by_role("button", name="Allow", exact=True)).to_be_enabled()
+    page.evaluate("window.dropCodeEvents = ['prompt.updated']")
+    code_control.run(connection.resolve(0))
+    for index in range(55):
+        code_control.run(
+            connection.text("turn-1", str(index), f"Line {index}", complete=True)
+        )
+    code_control.run(connection.finish("turn-1"))
+    page.get_by_role("textbox", name="Message", exact=True).fill("Keep draft")
+    page.evaluate(
+        "window.dropCodeEvents = []; window.codeFeed.onerror(new Event('error'))"
+    )
+    expect(page.get_by_role("button", name="Send", exact=True)).to_be_enabled()
+    expect(page.get_by_role("button", name="Allow", exact=True)).to_be_disabled()
+    expect(page.get_by_text("No longer active", exact=True)).to_be_visible()
+    expect(page.get_by_role("textbox", name="Message", exact=True)).to_have_value(
+        "Keep draft"
+    )
+
+
+def test_failed_reply_stays_after_its_output_once_and_not_in_composer(
+    page, admin_base_url, tmp_path, code_control
+):
+    url = create_session(page, admin_base_url, tmp_path)
+    send(page, "First")
+    connection = code_control.connection()
+    code_control.run(
+        connection.text(
+            "turn-1", "reasoning", "Reasoning so far", kind="reasoning", complete=True
+        )
+    )
+    code_control.run(
+        connection.text("turn-1", "tool", "Tool so far", kind="tool", complete=True)
+    )
+    code_control.run(connection.text("turn-1", "reply", "Partial reply", complete=True))
+    code_control.run(
+        connection.finish("turn-1", "failed", "Provider refused the request")
+    )
+    expect(
+        page.locator(".code-outcome").filter(has_text="Provider refused the request")
+    ).to_have_count(1)
+    expect(page.locator("#codeComposerStatus")).not_to_contain_text("Provider refused")
+    expect(page.locator("#codeNotice")).to_be_hidden()
+    send(page, "Second")
+    code_control.run(connection.finish("turn-2"))
+    page.goto(url)
+    expect(page.locator(".code-run")).to_have_count(2)
+    expect(page.locator(".code-run").first).to_contain_text("Partial reply")
+    expect(page.locator(".code-run").first.locator(".code-outcome")).to_contain_text(
+        "Provider refused"
+    )
+    expect(page.locator(".code-run").last).to_contain_text("Second")
+
+
+@pytest.mark.parametrize("refresh_first", [True, False])
+def test_model_effort_picker_syncs_tabs_and_keeps_missing_selection(
+    page, context, admin_base_url, tmp_path, code_control, refresh_first
+):
+    code_control.harness.configurations["provider/other"] = "other"
+    url = create_session(page, admin_base_url, tmp_path)
+    second = context.new_page()
+    try:
+        second.goto(url)
+        page.get_by_role("combobox", name="Selected model", exact=True).fill(
+            "provider/other"
+        )
+        page.get_by_role("option", name="provider/other", exact=True).click()
+        expect(second.locator("#codeModel")).to_have_value("provider/other")
+        page.locator("#codeReasoning").select_option("high")
+        expect(second.locator("#codeReasoning")).to_have_value("high")
+        send(page, "Use choice")
+        connection = code_control.connection()
+        assert connection.inputs[0][2] == "provider/other"
+        assert connection.efforts == ["high"]
+        expect(page.locator("#codeModel")).to_be_disabled()
+        expect(second.locator("#codeReasoning")).to_be_disabled()
+        code_control.run(connection.finish("turn-1"))
+        page.locator("#codeReasoning").select_option("")
+        expect(second.locator("#codeReasoning")).to_have_value("")
+        page.get_by_role("textbox", name="Message", exact=True).fill("Preserve me")
+        code_control.harness.configurations.pop("provider/other")
+        if refresh_first:
+            page.evaluate("window.CodeSessions.refresh()")
+        else:
+            page.locator("#codeSend").click()
+            expect(page.locator("#codeNotice")).to_contain_text("unavailable")
+        expect(page.locator("#codeModel")).to_have_value("provider/other")
+        expect(page.locator("#codeSend")).to_be_disabled()
+        expect(page.locator("#codeComposer")).to_have_value("Preserve me")
+        expect(page.locator("#codeComposerStatus")).to_contain_text("unavailable")
+    finally:
+        second.close()
+
+
+def test_library_reconnect_removes_missed_deletion_and_searches_beyond_first_page(
+    page, admin_base_url, tmp_path, code_control
+):
+    control_feed(page)
+
+    async def seed():
+        first = await code_control.service.create_session(
+            str(uuid.uuid4()), str(tmp_path)
+        )
+        await code_control.service.update_settings(
+            first.id, first.revision, {"title": "Needle project"}
+        )
+        for _ in range(26):
+            await code_control.service.create_session(str(uuid.uuid4()), str(tmp_path))
+        return first.id
+
+    # Start the isolated service before seeding it.
+    page.goto(f"{admin_base_url}/admin/code")
+    expect(page.locator("#codeNew")).to_be_enabled()
+    session_id = code_control.run(seed())
+    page.get_by_role("searchbox", name="Search titles and folders").fill("Needle")
+    expect(page.locator(".session-card")).to_have_count(1)
+    expect(page.locator(".session-card")).to_contain_text("Needle project")
+    page.evaluate("window.dropCodeEvents = ['session.deleted']")
+
+    async def remove_seed():
+        detail = await code_control.service.get_detail(session_id)
+        await code_control.service.delete_session(session_id, detail.session.revision)
+        await code_control.service.wait_idle(session_id)
+
+    code_control.run(remove_seed())
+    page.evaluate(
+        "window.dropCodeEvents = []; window.codeFeed.onerror(new Event('error'))"
+    )
+    expect(page.locator(".session-card")).to_have_count(0)
+    expect(page.get_by_text("No matching sessions.", exact=True)).to_be_visible()
+
+
+@pytest.mark.parametrize("width,height", [(1440, 1000), (390, 844)])
+def test_code_composer_uses_chat_geometry_and_preserves_focus(
+    page, admin_base_url, tmp_path, code_control, width, height
+):
+    page.set_viewport_size({"width": width, "height": height})
+    create_session(page, admin_base_url, tmp_path)
+    composer = page.locator("#codeComposer")
+    composer.fill("a draft\nwith a second line")
+    composer.evaluate("input => input.setSelectionRange(2, 6)")
+    expected = composer.evaluate(
+        "input => { const s=getComputedStyle(input); return [s.minHeight,s.maxHeight,s.padding,s.lineHeight,s.resize]; }"
+    )
+    page.locator("#codeModel").click()
+    page.keyboard.press("Escape")
+    composer.focus()
+    composer.evaluate("input => input.setSelectionRange(2, 6)")
+    page.evaluate("window.CodeSessions.refresh()")
+    expect(composer).to_be_focused()
+    assert composer.evaluate("input => [input.selectionStart,input.selectionEnd]") == [
+        2,
+        6,
+    ]
+    assert (
+        page.locator("#codeComposer").bounding_box()["y"]
+        + page.locator("#codeComposer").bounding_box()["height"]
+        <= height
+    )
+    page.goto(f"{admin_base_url}/admin/chat")
+    page.get_by_role("button", name="New chat", exact=True).click()
+    chat = page.locator("#chatComposer")
+    expect(chat).to_be_visible()
+    actual = chat.evaluate(
+        "input => { const s=getComputedStyle(input); return [s.minHeight,s.maxHeight,s.padding,s.lineHeight,s.resize]; }"
+    )
+    assert actual == expected

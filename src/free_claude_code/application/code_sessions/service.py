@@ -16,6 +16,7 @@ from free_claude_code.core.json_types import JsonObject, JsonValue
 
 from .models import (
     ACTIVE_RUN_STATUSES,
+    CodeCatalog,
     CodeConflictError,
     CodeDetail,
     CodeItem,
@@ -29,6 +30,7 @@ from .models import (
     HarnessEvent,
     ItemUpdate,
     NativeHistoryMissing,
+    NativeThread,
     RunStatus,
     now_ms,
 )
@@ -41,6 +43,7 @@ class _Owner:
     run: CodeRun | None
     items: dict[str, CodeItem]
     prompts: dict[str, CodePrompt]
+    runs: dict[str, CodeRun]
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     connection: HarnessConnection | None = None
@@ -112,6 +115,9 @@ class CodeService:
         if not self._accepting:
             return False, self._message
         return self._harness.availability()
+
+    def catalog(self) -> CodeCatalog:
+        return self._harness.catalog()
 
     def begin_shutdown(self) -> None:
         self._accepting = False
@@ -192,6 +198,7 @@ class CodeService:
             if owner is None:
                 session = await self._store.get_session(session_id)
                 items = await self._store.items(session_id, None, None)
+                runs = await self._store.runs(session_id)
                 owner = _Owner(
                     session,
                     await self._store.latest_run(session_id),
@@ -200,6 +207,7 @@ class CodeService:
                         prompt.id: prompt
                         for prompt in await self._store.prompts(session_id)
                     },
+                    {run.id: run for run in runs},
                     sequence=max((item.sequence for item in items), default=0),
                     known_turns={
                         item.native_turn_id for item in items if item.native_turn_id
@@ -228,16 +236,20 @@ class CodeService:
             raise CodeValidationError(
                 "Choose an existing folder on the FCC computer."
             ) from None
-        session = await self._store.create(CodeSession(id=session_id, cwd=str(folder)))
+        session = await self._store.create(
+            CodeSession(
+                id=session_id, cwd=str(folder), model=self.catalog().default_model
+            )
+        )
         owner = await self._owner(session.id)
         async with owner.lock:
             self._publish(owner, "session.updated")
         return session
 
     async def list_sessions(
-        self, cursor: tuple[int, str] | None = None, limit: int = 25
+        self, cursor: tuple[int, str] | None = None, limit: int = 25, query: str = ""
     ) -> CodePage:
-        return await self._store.list_sessions(cursor, max(1, min(limit, 25)))
+        return await self._store.list_sessions(cursor, max(1, min(limit, 25)), query)
 
     async def subscribe(self) -> tuple[EventSubscription, JsonObject]:
         self._require_available()
@@ -245,7 +257,8 @@ class CodeService:
         summaries = [
             self._summary(owner)
             for owner in tuple(self._owners.values())
-            if owner.busy or owner.pending or owner.session.status != "ready"
+            if not owner.deleted
+            and (owner.busy or owner.pending or owner.session.status != "ready")
         ]
         return subscription, {
             "epoch": self.epoch,
@@ -258,24 +271,25 @@ class CodeService:
         return self._events.cursor
 
     async def get_detail(
-        self, session_id: str, *, before: int | None = None
+        self, session_id: str, *, before: tuple[int, int] | None = None
     ) -> CodeDetail:
         owner = await self._owner(session_id)
         async with owner.lock:
             self._check_owner(owner)
-            items = sorted(owner.items.values(), key=lambda item: item.sequence)
-            older = [item for item in items if before is None or item.sequence < before]
+            await self._flush_locked(owner)
+            page_before = before
+            if owner.busy and owner.run:
+                active_start = (owner.run.ordinal, 0)
+                page_before = min(before, active_start) if before else active_start
+            page = await self._store.item_page(session_id, page_before, 50)
             active = [
                 item
-                for item in items
+                for item in owner.items.values()
                 if owner.busy and owner.run and item.run_id == owner.run.id
             ]
-            completed = [item for item in older if item not in active]
-            page = completed[-50:]
-            next_before = page[0].sequence if page and len(completed) > 50 else None
             selected = sorted(
-                {item.id: item for item in [*page, *active]}.values(),
-                key=lambda item: item.sequence,
+                {item.id: item for item in [*page.items, *active]}.values(),
+                key=lambda item: (owner.runs[item.run_id].ordinal, item.sequence),
             )
             turns = {item.native_turn_id for item in selected if item.native_turn_id}
             if owner.run and owner.run.native_turn_id:
@@ -294,20 +308,72 @@ class CodeService:
                 self.epoch,
                 owner.version,
                 self.cursor,
-                next_before,
+                page.next_before,
+                tuple(
+                    {
+                        run.id: run
+                        for run in (*page.runs, *((owner.run,) if owner.run else ()))
+                    }.values()
+                ),
+                tuple(
+                    prompt.id
+                    for prompt in owner.prompts.values()
+                    if prompt.status in {"pending", "answering"}
+                ),
             )
 
-    async def rename(self, session_id: str, revision: int, title: str) -> CodeSession:
-        return await self._command(self._rename(session_id, revision, title))
+    async def update_settings(
+        self, session_id: str, revision: int, changes: JsonObject
+    ) -> CodeSession:
+        return await self._command(self._update_settings(session_id, revision, changes))
 
-    async def _rename(self, session_id: str, revision: int, title: str) -> CodeSession:
-        if not title.strip() or len(title) > 200:
-            raise CodeValidationError("Enter a title of at most 200 characters.")
+    async def _update_settings(
+        self, session_id: str, revision: int, changes: JsonObject
+    ) -> CodeSession:
+        if not changes or changes.keys() - {"title", "model", "reasoning_effort"}:
+            raise CodeValidationError(
+                "Choose a title, model or reasoning effort to update."
+            )
         owner = await self._owner(session_id)
         async with owner.lock:
             self._editable(owner, revision)
-            session = _revision(owner.session, title=title.strip(), auto_title=False)
-            await self._persist(owner, session)
+            updates: dict[str, object] = dict(changes)
+            if "title" in changes:
+                title = changes["title"]
+                if not isinstance(title, str) or not title.strip() or len(title) > 200:
+                    raise CodeValidationError(
+                        "Enter a title of at most 200 characters."
+                    )
+                updates.update(title=title.strip(), auto_title=False)
+            if changes.keys() & {"model", "reasoning_effort"}:
+                if owner.busy or owner.pending:
+                    raise CodeConflictError(
+                        "Finish this turn and its prompts before changing settings."
+                    )
+                model = changes.get("model", owner.session.model)
+                entry = next(
+                    (entry for entry in self.catalog().models if entry.id == model),
+                    None,
+                )
+                if entry is None:
+                    raise CodeValidationError(
+                        "This model is unavailable. Choose another model."
+                    )
+                effort = changes.get("reasoning_effort", owner.session.reasoning_effort)
+                if (
+                    "reasoning_effort" not in changes
+                    and model != owner.session.model
+                    and effort not in entry.reasoning_efforts
+                ):
+                    effort = None
+                if effort is not None and effort not in entry.reasoning_efforts:
+                    raise CodeValidationError(
+                        "This reasoning effort is unavailable. Choose another effort or Model default."
+                    )
+                updates.update(model=model, reasoning_effort=effort)
+            session = await self._store.update_settings(
+                _revision(owner.session, **updates), revision
+            )
             owner.session = session
             self._publish(owner, "session.updated")
             return session
@@ -340,7 +406,7 @@ class CodeService:
             )
         owner = await self._owner(session_id)
         async with owner.lock:
-            previous = await self._store.get_run(operation_id)
+            previous = await self._store.get_run(session_id, operation_id)
             if previous:
                 if previous.session_id != session_id or previous.text != text:
                     raise CodeConflictError(
@@ -356,9 +422,15 @@ class CodeService:
                 raise CodeConflictError(
                     "This session is busy. Your draft has been kept."
                 )
-            selection = self._harness.prepare()
+            selection = self._harness.prepare(
+                owner.session.model, owner.session.reasoning_effort
+            )
             run = CodeRun(
-                id=operation_id, session_id=session_id, text=text, model=selection.model
+                id=operation_id,
+                session_id=session_id,
+                text=text,
+                model=selection.model,
+                reasoning_effort=selection.reasoning_effort,
             )
             title = (
                 " ".join(text.split())[:80]
@@ -377,8 +449,9 @@ class CodeService:
                 text=text,
                 complete=True,
             )
-            await self._persist(owner, session, run=run, items=(item,))
+            session, run = await self._store.admit_run(session, run, item, revision)
             owner.session, owner.run = session, run
+            owner.runs[run.id] = run
             owner.items[item.id] = item
             owner.sequence = item.sequence
             owner.finished = asyncio.Event()
@@ -395,7 +468,7 @@ class CodeService:
         _validate_id(operation_id)
         owner = await self._owner(session_id)
         async with owner.lock:
-            run = await self._store.get_run(operation_id)
+            run = await self._store.get_run(session_id, operation_id)
             if run is None or run.session_id != session_id:
                 raise CodeNotFoundError("Code turn not found.")
             if owner.run is None or owner.run.id != operation_id or not owner.busy:
@@ -440,15 +513,10 @@ class CodeService:
                 raise CodeConflictError(
                     "This prompt was already answered or is no longer active."
                 )
-            if any(
-                other.response_id == response_id for other in owner.prompts.values()
-            ):
-                raise CodeConflictError("This answer ID was used for another prompt.")
             response = connection.prepare_answer(prompt.request_id, answer)
-            claimed = prompt.model_copy(
-                update={"status": "answering", "response_id": response_id}
+            claimed = await self._store.claim_prompt(
+                session_id, prompt_id, response_id, connection.generation
             )
-            await self._persist(owner, owner.session, prompts=(claimed,))
             owner.prompts[prompt_id] = claimed
             self._publish(
                 owner, "prompt.updated", prompt=claimed.model_dump(mode="json")
@@ -537,9 +605,7 @@ class CodeService:
                     await self._persist(owner, session)
                     owner.session = session
                     owner.loaded_thread_id = native.id
-                    for item in native.items:
-                        self._update_item(owner, item, historical=True)
-                    await self._flush_locked(owner)
+                    await self._recover_locked(owner, native)
                 run = owner.run
                 if run is None or run.id != run_id or not owner.busy:
                     return
@@ -585,6 +651,77 @@ class CodeService:
         finally:
             if not self._accepting or owner.storage_failed:
                 await self._close_connection(owner)
+
+    async def _recover_locked(self, owner: _Owner, native: NativeThread) -> None:
+        mapped: dict[str, CodeRun] = {}
+        for turn in native.turns:
+            identities = {
+                item.client_id
+                for item in turn.items
+                if item.kind == "user" and item.client_id
+            }
+            candidates = [
+                run
+                for run in owner.runs.values()
+                if run.native_turn_id == turn.id or run.id in identities
+            ]
+            if len(candidates) > 1 or any(
+                identity not in owner.runs for identity in identities
+            ):
+                raise CodeUnavailableError(
+                    "Codex history contains conflicting turn identities. Saved history was retained."
+                )
+            if candidates:
+                run = candidates[0]
+                if (
+                    not run.submission_started
+                    or run.native_turn_id not in {None, turn.id}
+                    or run.id in {value.id for value in mapped.values()}
+                ):
+                    raise CodeUnavailableError(
+                        "Codex history could not be matched to its saved turns."
+                    )
+                mapped[turn.id] = run
+        unmatched = [turn for turn in native.turns if turn.id not in mapped]
+        pending = [
+            run
+            for run in owner.runs.values()
+            if run.submission_started
+            and run.native_turn_id is None
+            and run.id not in {value.id for value in mapped.values()}
+        ]
+        if unmatched:
+            if len(unmatched) != 1 or len(pending) != 1:
+                raise CodeUnavailableError(
+                    "Codex history could not be matched to its saved turns. No input was resent."
+                )
+            mapped[unmatched[0].id] = pending[0]
+        for turn in native.turns:
+            previous = mapped[turn.id]
+            # Restart/connection loss has already settled interrupted work. Recover
+            # source content and missing diagnostics without rewriting that outcome.
+            run = previous.model_copy(
+                update={
+                    "native_turn_id": turn.id,
+                    "error": previous.error or turn.error,
+                    "error_details": previous.error_details or turn.error_details,
+                }
+            )
+            for item in turn.items:
+                self._update_item(owner, item, recovered_run=run)
+            items = tuple(owner.items[item_id] for item_id in owner.dirty)
+            await self._persist(owner, owner.session, run=run, items=items)
+            owner.dirty.clear()
+            owner.dirty_characters = 0
+            owner.known_turns.add(turn.id)
+            if owner.run and owner.run.id == run.id:
+                owner.run = run
+            self._publish(
+                owner,
+                "run.updated",
+                runs=[run.model_dump(mode="json")],
+                items=[item.model_dump(mode="json") for item in items],
+            )
 
     def _schedule_interrupt(self, owner: _Owner) -> None:
         run, connection = owner.run, owner.connection
@@ -729,7 +866,9 @@ class CodeService:
                     if event.turn_id:
                         owner.known_turns.add(event.turn_id)
                     if event.kind == "turn_completed":
-                        await self._finish_locked(owner, event.status, event.message)
+                        await self._finish_locked(
+                            owner, event.status, event.message, event.error_details
+                        )
                     else:
                         self._publish(owner, "run.updated")
                         self._schedule_interrupt(owner)
@@ -783,11 +922,12 @@ class CodeService:
                                 "prompt.updated",
                                 prompt=resolved.model_dump(mode="json"),
                             )
-                elif event.kind == "error":
+                elif event.kind == "error" and matches:
                     self._publish(
                         owner,
-                        "session.notice",
+                        "run.notice",
                         message=event.message or "Codex reported an error.",
+                        will_retry=event.will_retry,
                     )
                 elif event.kind == "closed":
                     owner.connection = None
@@ -810,8 +950,12 @@ class CodeService:
                 )
 
     def _update_item(
-        self, owner: _Owner, update: ItemUpdate, *, historical: bool = False
+        self, owner: _Owner, update: ItemUpdate, *, recovered_run: CodeRun | None = None
     ) -> None:
+        run = recovered_run or owner.run
+        if run is None:
+            raise CodeUnavailableError("Codex returned output without a saved turn.")
+        historical = recovered_run is not None
         owner.known_turns.add(update.turn_id)
         existing = next(
             (
@@ -822,8 +966,16 @@ class CodeService:
             ),
             None,
         )
-        if existing is None and update.client_id:
-            existing = owner.items.get(update.client_id)
+        if existing is None and update.kind == "user":
+            if update.client_id is not None and update.client_id != run.id:
+                raise CodeUnavailableError(
+                    "Codex returned a different message identity."
+                )
+            existing = owner.items.get(run.id)
+        if existing is not None and existing.run_id != run.id:
+            raise CodeUnavailableError(
+                "Codex returned output belonging to another turn."
+            )
         if existing is None:
             owner.sequence += 1
         preserve = bool(historical and existing and existing.complete)
@@ -835,16 +987,11 @@ class CodeService:
             detail = (
                 (existing.detail or detail) if preserve else (detail or existing.detail)
             )
-        run_id = (
-            existing.run_id
-            if existing
-            else (owner.run.id if owner.run and not historical else None)
-        )
         item = CodeItem(
             id=existing.id if existing else str(uuid.uuid4()),
             session_id=owner.session.id,
             sequence=existing.sequence if existing else owner.sequence,
-            run_id=run_id,
+            run_id=run.id,
             native_turn_id=update.turn_id,
             native_item_id=update.item_id,
             kind=update.kind,
@@ -884,14 +1031,23 @@ class CodeService:
             self._publish(owner, "item.updated", item=item.model_dump(mode="json"))
 
     async def _finish_locked(
-        self, owner: _Owner, status: RunStatus, message: str | None = None
+        self,
+        owner: _Owner,
+        status: RunStatus,
+        message: str | None = None,
+        error_details: JsonObject | None = None,
     ) -> None:
         if owner.run is None or not owner.busy:
             return
         run = owner.run.model_copy(
-            update={"status": status, "error": message, "finished_at": now_ms()}
+            update={
+                "status": status,
+                "error": message,
+                "error_details": error_details or {},
+                "finished_at": now_ms(),
+            }
         )
-        session = _revision(owner.session, error=message)
+        session = _revision(owner.session, error=None)
         prompts = tuple(
             prompt.model_copy(update={"status": "expired"})
             for prompt in owner.prompts.values()
@@ -942,7 +1098,11 @@ class CodeService:
                 "Code storage failed. Restart FCC to restore saved history."
             )
         try:
-            await self._store.save(session, run=run, items=items, prompts=prompts)
+            await self._store.save_progress(
+                session, owner.session.revision, run=run, items=items, prompts=prompts
+            )
+            if run is not None:
+                owner.runs[run.id] = run
         except CodeConflictError, CodeNotFoundError:
             raise
         except Exception:
@@ -1039,7 +1199,11 @@ class CodeService:
                 owner.items.clear()
                 owner.prompts.clear()
                 owner.run = None
+                owner.runs.clear()
                 self._publish(owner, "session.deleted")
+            async with self._load_lock:
+                if self._owners.get(owner.session.id) is owner:
+                    del self._owners[owner.session.id]
         except Exception as exc:
             await self._close_connection(owner)
             status = (

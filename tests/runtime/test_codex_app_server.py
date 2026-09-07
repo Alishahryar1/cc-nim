@@ -40,7 +40,9 @@ async def test_jsonl_large_unicode_events_can_precede_rpc_ack(tmp_path):
     try:
         assert (await native.create_thread()).id == "native-1"
         assert (
-            await native.start_turn("hello", FakeHarness().prepare(), "input-1")
+            await native.start_turn(
+                "hello", FakeHarness().prepare("provider/model", None), "input-1"
+            )
             == "turn-1"
         )
         await asyncio.wait_for(completed.wait(), 3)
@@ -57,7 +59,9 @@ async def test_server_rpc_during_start_preserves_numeric_zero_id(tmp_path):
     native, events, completed, prompted = await connect(tmp_path, "prompt")
     try:
         await native.create_thread()
-        await native.start_turn("hello", FakeHarness().prepare(), "input-1")
+        await native.start_turn(
+            "hello", FakeHarness().prepare("provider/model", None), "input-1"
+        )
         await asyncio.wait_for(prompted.wait(), 3)
         response = native.prepare_answer(0, {"choice": "0"})
         await native.respond(0, response)
@@ -137,7 +141,9 @@ async def test_spawned_agent_prompt_is_visible_in_its_registered_root_session(tm
     native, events, completed, prompted = await connect(tmp_path, "child-prompt")
     try:
         await native.create_thread()
-        await native.start_turn("delegate", FakeHarness().prepare(), "input-1")
+        await native.start_turn(
+            "delegate", FakeHarness().prepare("provider/model", None), "input-1"
+        )
         await asyncio.wait_for(prompted.wait(), 3)
         event = next(event for event in events if event.kind == "prompt")
         assert event.thread_id == "native-1"
@@ -147,3 +153,43 @@ async def test_spawned_agent_prompt_is_visible_in_its_registered_root_session(tm
         await asyncio.wait_for(completed.wait(), 3)
     finally:
         await native.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reasoning", [True, False])
+async def test_turn_start_resets_sticky_effort_and_preserves_client_identity(
+    tmp_path, monkeypatch, reasoning
+):
+    async def receive(event):
+        pass
+
+    native = CodexAppServer(
+        [],
+        {},
+        str(tmp_path),
+        receive,
+        model_slugs={"provider/model": "native-slug"},
+        reasoning={"provider/model": reasoning},
+    )
+    native.thread_id = "thread"
+    requests = []
+
+    async def rpc(method, params):
+        assert method == "turn/start"
+        requests.append(params)
+        return {"turn": {"id": "turn"}}
+
+    monkeypatch.setattr(native, "rpc", rpc)
+    harness = FakeHarness()
+    for effort in (None, "high", None):
+        await native.start_turn(
+            "hello", harness.prepare("provider/model", effort), "operation"
+        )
+    assert [request.get("effort") for request in requests] == (
+        ["medium", "high", "medium"] if reasoning else [None, None, None]
+    )
+    assert all(
+        request["clientUserMessageId"] == "operation"
+        and request["model"] == "native-slug"
+        for request in requests
+    )

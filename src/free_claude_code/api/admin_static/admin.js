@@ -1181,6 +1181,7 @@ async function loadModelOptions(refresh = false) {
   });
   setModelOptions(result.models);
   if (refresh && window.ChatSessions) await window.ChatSessions.refresh();
+  if (refresh && window.CodeSessions) await window.CodeSessions.refresh();
   return result;
 }
 

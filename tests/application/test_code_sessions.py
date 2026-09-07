@@ -7,6 +7,7 @@ import pytest_asyncio
 from free_claude_code.application.code_sessions import CodeConflictError, CodeService
 from free_claude_code.application.code_sessions.models import (
     CodeUnavailableError,
+    CodeValidationError,
     HarnessEvent,
     ItemUpdate,
 )
@@ -33,6 +34,288 @@ async def code(tmp_path):
 async def session_for(code):
     service, _, directory = code
     return await service.create_session(new_id(), str(directory))
+
+
+@pytest.mark.asyncio
+async def test_selected_model_and_effort_are_session_settings_captured_on_send(code):
+    service, harness, _ = code
+    harness.configurations["provider/other"] = "other"
+    session = await session_for(code)
+    for effort in (None, "high", None):
+        session = await service.update_settings(
+            session.id,
+            session.revision,
+            {"model": "provider/other", "reasoning_effort": effort},
+        )
+        run = await service.send(
+            session.id,
+            new_id(),
+            session.revision,
+            "hello",
+            expected_epoch=service.epoch,
+        )
+        await harness.wait_inputs(run.ordinal)
+        connection = harness.connections[0]
+        with pytest.raises(CodeConflictError):
+            await service.update_settings(
+                session.id, session.revision + 1, {"reasoning_effort": "low"}
+            )
+        await connection.finish(f"turn-{run.ordinal}")
+        session = (await service.get_detail(session.id)).session
+    assert connection.efforts == ["medium", "high", "medium"]
+    assert {value[2] for value in connection.inputs} == {"provider/other"}
+    assert len(harness.connections) == 1
+    harness.configurations.pop("provider/other")
+    with pytest.raises(CodeValidationError, match="unavailable"):
+        await service.send(
+            session.id,
+            new_id(),
+            session.revision,
+            "kept draft",
+            expected_epoch=service.epoch,
+        )
+    assert (await service.get_detail(session.id)).session.model == "provider/other"
+
+
+@pytest.mark.asyncio
+async def test_catalog_effort_removal_requires_choice_but_model_change_resolves_default(
+    code,
+):
+    service, harness, _ = code
+    session = await session_for(code)
+    session = await service.update_settings(
+        session.id, session.revision, {"reasoning_effort": "xhigh"}
+    )
+    harness.efforts = ("low", "medium")
+    with pytest.raises(CodeValidationError, match="effort"):
+        await service.send(
+            session.id,
+            new_id(),
+            session.revision,
+            "hello",
+            expected_epoch=service.epoch,
+        )
+    harness.configurations["provider/other"] = "other"
+    session = await service.update_settings(
+        session.id, session.revision, {"model": "provider/other"}
+    )
+    assert session.reasoning_effort is None
+    assert session.model == "provider/other"
+
+
+@pytest.mark.asyncio
+async def test_failed_outcome_is_durable_once_after_partial_output_and_older_pagination(
+    code,
+):
+    service, harness, _ = code
+    session = await session_for(code)
+    run = await service.send(
+        session.id, new_id(), session.revision, "first", expected_epoch=service.epoch
+    )
+    await harness.started.wait()
+    connection = harness.connections[0]
+    for kind in ("text", "reasoning", "tool"):
+        await connection.text("turn-1", kind, f"partial {kind}", kind=kind)
+    await connection.finish("turn-1", "failed", "Provider rejected the request")
+    await connection.finish("turn-1", "failed", "duplicate")
+    detail = await service.get_detail(session.id)
+    assert detail.session.error is None
+    assert detail.runs == (detail.run,)
+    assert detail.run.error == "Provider rejected the request"
+    assert [item.text for item in detail.items] == [
+        "first",
+        "partial text",
+        "partial reasoning",
+        "partial tool",
+    ]
+    await service.send(
+        session.id,
+        new_id(),
+        detail.session.revision,
+        "second",
+        expected_epoch=service.epoch,
+    )
+    await harness.wait_inputs(2)
+    for index in range(55):
+        await connection.text("turn-2", str(index), str(index), complete=True)
+    active = await service.get_detail(session.id)
+    assert active.items[0].text == "first"
+    assert len(active.items) == 60
+    await connection.finish("turn-2")
+    latest = await service.get_detail(session.id)
+    assert run.id not in {value.id for value in latest.runs}
+    older = await service.get_detail(session.id, before=latest.next_before)
+    assert (
+        next(value for value in older.runs if value.id == run.id).error
+        == detail.run.error
+    )
+
+
+@pytest.mark.asyncio
+async def test_retry_notice_does_not_finish_run_and_stale_error_is_ignored(code):
+    service, harness, _ = code
+    session = await session_for(code)
+    await service.send(
+        session.id, new_id(), session.revision, "hello", expected_epoch=service.epoch
+    )
+    await harness.started.wait()
+    connection = harness.connections[0]
+    await connection.sink(
+        HarnessEvent(
+            connection.generation,
+            connection.thread_id,
+            "error",
+            turn_id="turn-1",
+            message="retry",
+            will_retry=True,
+        )
+    )
+    assert (await service.get_detail(session.id)).run.status == "running"
+    await connection.text("turn-1", "text", "success", complete=True)
+    await connection.finish("turn-1")
+    subscription, _ = await service.subscribe()
+    cursor = service.cursor
+    await connection.sink(
+        HarnessEvent(
+            connection.generation,
+            connection.thread_id,
+            "error",
+            turn_id="turn-1",
+            message="stale",
+        )
+    )
+    assert service.cursor == cursor
+    await subscription.aclose()
+    assert (await service.get_detail(session.id)).run.error is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("client_id", [True, False])
+async def test_acknowledgement_loss_recovers_old_turn_before_newer_send(
+    code, client_id
+):
+    service, harness, _ = code
+    session = await session_for(code)
+    harness.start_gate.clear()
+    first = await service.send(
+        session.id, new_id(), session.revision, "first", expected_epoch=service.epoch
+    )
+    await harness.submitted.wait()
+    connection = harness.connections[0]
+    harness.histories[connection.thread_id] = [
+        ItemUpdate(
+            "turn-1",
+            "native-user",
+            "user",
+            text="first",
+            complete=True,
+            client_id=first.id if client_id else None,
+        ),
+        ItemUpdate("turn-1", "tail", "text", text="recovered tail", complete=True),
+    ]
+    await connection.close()
+    await service.wait_idle(session.id)
+    detail = await service.get_detail(session.id)
+    assert detail.run.status == "failed"
+    await service.send(
+        session.id,
+        new_id(),
+        detail.session.revision,
+        "second",
+        expected_epoch=service.epoch,
+    )
+    await harness.wait_inputs(2)
+    recovered = await service.get_detail(session.id)
+    assert [item.text for item in recovered.items] == [
+        "first",
+        "recovered tail",
+        "second",
+    ]
+    assert recovered.runs[0].status == "failed"
+    assert recovered.items[0].id == first.id
+
+
+@pytest.mark.asyncio
+async def test_prompt_membership_and_deleted_subscription_are_authoritative(code):
+    service, harness, _ = code
+    session = await session_for(code)
+    await service.send(
+        session.id, new_id(), session.revision, "first", expected_epoch=service.epoch
+    )
+    await harness.started.wait()
+    connection = harness.connections[0]
+    await connection.prompt(0, turn_id=None)
+    detail = await service.get_detail(session.id)
+    assert detail.active_prompt_ids == (detail.prompts[0].id,)
+    await connection.resolve(0)
+    assert (await service.get_detail(session.id)).active_prompt_ids == ()
+    await connection.finish("turn-1")
+    session = (await service.get_detail(session.id)).session
+    await service.delete_session(session.id, session.revision)
+    await service.wait_idle(session.id)
+    subscription, ready = await service.subscribe()
+    assert ready["sessions"] == []
+    assert session.id not in service._owners
+    await subscription.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_native_history_fails_recovery_without_resending_input(code):
+    service, harness, _ = code
+    session = await session_for(code)
+    harness.start_gate.clear()
+    await service.send(
+        session.id, new_id(), session.revision, "first", expected_epoch=service.epoch
+    )
+    await harness.submitted.wait()
+    connection = harness.connections[0]
+    harness.histories[connection.thread_id] = [
+        ItemUpdate(turn_id, "item", "text", text="unmatched", complete=True)
+        for turn_id in ("unknown-1", "unknown-2")
+    ]
+    await connection.close()
+    await service.wait_idle(session.id)
+    detail = await service.get_detail(session.id)
+    await service.send(
+        session.id,
+        new_id(),
+        detail.session.revision,
+        "second",
+        expected_epoch=service.epoch,
+    )
+    await service.wait_idle(session.id)
+    detail = await service.get_detail(session.id)
+    assert detail.run.status == "failed"
+    assert "could not be matched" in detail.run.error
+    assert [item.text for item in detail.items] == ["first", "second"]
+    assert sum(len(connection.inputs) for connection in harness.connections) == 1
+
+
+@pytest.mark.asyncio
+async def test_settings_and_send_compete_for_the_same_revision(code):
+    service, harness, _ = code
+    session = await session_for(code)
+    outcomes = await asyncio.gather(
+        service.update_settings(
+            session.id, session.revision, {"reasoning_effort": "high"}
+        ),
+        service.send(
+            session.id,
+            new_id(),
+            session.revision,
+            "hello",
+            expected_epoch=service.epoch,
+        ),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(result, CodeConflictError) for result in outcomes) == 1
+    detail = await service.get_detail(session.id)
+    assert detail.session.revision == session.revision + 1
+    if detail.run:
+        assert detail.run.reasoning_effort == "medium"
+    else:
+        assert detail.session.reasoning_effort == "high"
+        assert harness.connections == []
 
 
 @pytest.mark.asyncio
@@ -97,7 +380,7 @@ async def test_poorer_native_history_keeps_captured_source_and_reasoning(code):
             raw={"item": {"id": "reasoning", "summary": []}, "stream": {}},
         )
     ]
-    harness.catalog[harness.model] = "changed"
+    harness.configurations[harness.model] = "changed"
     detail = await service.get_detail(session.id)
     await service.send(
         session.id,
@@ -165,7 +448,7 @@ async def test_storage_failure_retires_native_work_even_with_pending_prompt(
     async def fail_save(*args, **kwargs):
         raise CodeUnavailableError("Code disk unavailable")
 
-    monkeypatch.setattr(service._store, "save", fail_save)
+    monkeypatch.setattr(service._store, "save_progress", fail_save)
     await connection.text("turn-1", "text", "unsaved", complete=True)
     await asyncio.wait_for(service.wait_idle(session.id), 3)
     assert connection.closed
@@ -174,16 +457,16 @@ async def test_storage_failure_retires_native_work_even_with_pending_prompt(
 
 
 @pytest.mark.asyncio
-async def test_same_send_id_cannot_be_admitted_to_two_sessions(code, monkeypatch):
+async def test_same_send_id_in_two_sessions_has_independent_receipts(code, monkeypatch):
     service, harness, _ = code
     first, second = await session_for(code), await session_for(code)
     original = service._store.get_run
     looked_up = 0
     barrier = asyncio.Event()
 
-    async def simultaneous_lookup(run_id):
+    async def simultaneous_lookup(session_id, run_id):
         nonlocal looked_up
-        result = await original(run_id)
+        result = await original(session_id, run_id)
         looked_up += 1
         if looked_up == 2:
             barrier.set()
@@ -205,9 +488,11 @@ async def test_same_send_id_cannot_be_admitted_to_two_sessions(code, monkeypatch
         ),
         return_exceptions=True,
     )
-    assert sum(isinstance(value, CodeConflictError) for value in outcomes) == 1
-    await harness.started.wait()
-    assert sum(len(connection.inputs) for connection in harness.connections) == 1
+    assert {
+        value.session_id for value in outcomes if not isinstance(value, BaseException)
+    } == {first.id, second.id}
+    await harness.wait_inputs(2)
+    assert sum(len(connection.inputs) for connection in harness.connections) == 2
 
 
 async def idle_native(code):
@@ -236,7 +521,7 @@ async def test_deletion_fences_commands_and_repeated_delete_has_one_native_call(
             session.id, new_id(), session.revision, "late", expected_epoch=service.epoch
         )
     with pytest.raises(CodeConflictError):
-        await service.rename(session.id, session.revision, "late")
+        await service.update_settings(session.id, session.revision, {"title": "late"})
     harness.delete_gate.set()
     await service.wait_idle(session.id)
     assert harness.connections[0].deleted == [session.native_thread_id]
@@ -366,7 +651,7 @@ async def test_failed_stop_persistence_closes_work_without_waiting_for_more_outp
     async def failed_save(*args, **kwargs):
         raise CodeUnavailableError("Disk failed")
 
-    monkeypatch.setattr(service._store, "save", failed_save)
+    monkeypatch.setattr(service._store, "save_progress", failed_save)
     with pytest.raises(CodeUnavailableError):
         await service.stop(session.id, run.id)
     await asyncio.wait_for(service.wait_idle(session.id), 3)
@@ -623,14 +908,16 @@ async def test_streaming_does_not_invalidate_rename_revision(code):
     after = await service.get_detail(session.id)
     assert after.version > before.version
     assert after.session.revision == before.session.revision
-    await service.rename(session.id, before.session.revision, "My code")
+    await service.update_settings(
+        session.id, before.session.revision, {"title": "My code"}
+    )
     assert (await service.get_detail(session.id)).session.title == "My code"
 
 
 @pytest.mark.asyncio
 async def test_catalog_replacement_is_limited_to_selected_entry_and_session(code):
     service, harness, _ = code
-    harness.catalog["provider/other"] = "other-1"
+    harness.configurations["provider/other"] = "other-1"
     session = await session_for(code)
     await service.send(
         session.id, new_id(), session.revision, "first", expected_epoch=service.epoch
@@ -640,18 +927,21 @@ async def test_catalog_replacement_is_limited_to_selected_entry_and_session(code
     await original.finish("turn-1")
     harness.model = "provider/other"
     detail = await service.get_detail(session.id)
+    selected = await service.update_settings(
+        session.id, detail.session.revision, {"model": harness.model}
+    )
     await service.send(
         session.id,
         new_id(),
-        detail.session.revision,
+        selected.revision,
         "second",
         expected_epoch=service.epoch,
     )
     await harness.wait_inputs(2)
     await original.finish("turn-2")
     assert len(harness.connections) == 1
-    harness.catalog["unrelated/model"] = "new"
-    harness.catalog["provider/other"] = "changed"
+    harness.configurations["unrelated/model"] = "new"
+    harness.configurations["provider/other"] = "changed"
     detail = await service.get_detail(session.id)
     await service.send(
         session.id,
@@ -672,15 +962,11 @@ async def test_cancelled_http_admission_still_commits_and_executes_once(tmp_path
     release = asyncio.Event()
 
     class GatedStore(SQLiteCodeStore):
-        async def save(self, session, *, run=None, items=(), prompts=()):
-            await super().save(session, run=run, items=items, prompts=prompts)
-            if (
-                run is not None
-                and not run.submission_started
-                and run.status == "preparing"
-            ):
-                committed.set()
-                await release.wait()
+        async def admit_run(self, session, run, item, expected_revision):
+            result = await super().admit_run(session, run, item, expected_revision)
+            committed.set()
+            await release.wait()
+            return result
 
     harness = FakeHarness()
     service = CodeService(

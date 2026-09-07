@@ -1,5 +1,20 @@
 (() => {
   "use strict";
+  const UI = window.SessionUI;
+  const modelComboboxes = new Set();
+  let modelControl,
+    reasoningControl,
+    catalog = [],
+    catalogLoaded = false,
+    settingsPending = false;
+  let visibleIds = [],
+    query = "",
+    libraryToken = 0,
+    listFlight = null,
+    listAgain = false,
+    retryTimer = null;
+  let syncNotice = "",
+    availabilityNotice = "";
   const base = "/admin/api/code";
   const activeStatuses = new Set(["preparing", "running", "stopping"]);
   const records = new Map();
@@ -57,6 +72,8 @@
         cursor: -1,
         items: new Map(),
         prompts: new Map(),
+        activePrompts: new Map(),
+        runs: new Map(),
         loaded: false,
         nextBefore: null,
       });
@@ -66,10 +83,11 @@
     return activeStatuses.has(record?.run?.status);
   }
   function pending(record) {
-    return [...(record?.prompts.values() || [])].some(({ value }) =>
-      ["pending", "answering"].includes(value.status),
+    return [...(record?.activePrompts.values() || [])].some(
+      (entry) => entry.active,
     );
   }
+
   function ready(record) {
     return synchronized && record?.loaded && record.session?.status === "ready";
   }
@@ -86,25 +104,56 @@
     const record = get(id),
       version = data.version;
     if (version >= record.version) {
-      record.session = data.session;
+      if (!record.session || data.session.revision >= record.session.revision)
+        record.session = data.session;
+      if (
+        record.run?.id !== data.run?.id ||
+        !activeStatuses.has(data.run?.status)
+      )
+        record.runNotice = "";
       record.run = data.run;
       record.version = version;
       record.cursor = Math.max(record.cursor, data.cursor || 0);
       if (record.run) accepted(id, record.run.id);
     }
-    mergeEntries(record.items, data.item ? [data.item] : data.items, version);
     mergeEntries(
-      record.prompts,
-      data.prompt ? [data.prompt] : data.prompts,
+      record.runs,
+      [...(data.runs || []), ...(data.run ? [data.run] : [])],
       version,
     );
+    mergeEntries(record.items, data.item ? [data.item] : data.items, version);
+    const prompts = data.prompt ? [data.prompt] : data.prompts || [];
+    mergeEntries(record.prompts, prompts, version);
+    for (const prompt of prompts) {
+      if ((record.activePrompts.get(prompt.id)?.version ?? -1) <= version)
+        record.activePrompts.set(prompt.id, {
+          active: ["pending", "answering"].includes(prompt.status),
+          version,
+        });
+    }
+    if (data.active_prompt_ids) {
+      const active = new Set(data.active_prompt_ids);
+      for (const promptId of new Set([
+        ...record.activePrompts.keys(),
+        ...active,
+      ])) {
+        if ((record.activePrompts.get(promptId)?.version ?? -1) <= version)
+          record.activePrompts.set(promptId, {
+            active: active.has(promptId),
+            version,
+          });
+      }
+    }
   }
+
   function receive(type, event) {
     const data = JSON.parse(event.data);
     if (data.epoch !== epoch) return;
+    const previousRevision = records.get(data.session_id)?.session?.revision;
     if (type === "session.deleted") {
       deleted.add(data.session_id);
       records.delete(data.session_id);
+      visibleIds = visibleIds.filter((id) => id !== data.session_id);
       if (selected === data.session_id) {
         navigate(null);
         notice = "Session deleted.";
@@ -113,35 +162,104 @@
       merge(data);
       if (type === "session.notice" && data.session_id === selected)
         notice = data.message;
+      if (type === "run.notice") {
+        const record = records.get(data.session_id);
+        if (record && busy(record) && data.version >= record.version)
+          record.runNotice = data.will_retry
+            ? `Retrying… ${data.message}`
+            : data.message;
+      }
     }
+    if (
+      !selected &&
+      (type === "session.deleted" ||
+        data.session?.revision !== previousRevision)
+    )
+      void refreshLibrary();
     render();
   }
+
   async function list(cursor = null) {
     const requestEpoch = epoch,
-      token = syncToken;
-    const data = await api(
-      `${base}/sessions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
-    );
-    if (requestEpoch !== epoch || data.epoch !== epoch || token !== syncToken)
+      token = syncToken,
+      route = viewToken,
+      search = query,
+      request = ++libraryToken;
+    const params = new URLSearchParams({ query: search });
+    if (cursor) params.set("cursor", cursor);
+    const data = await api(`${base}/sessions?${params}`);
+    if (
+      requestEpoch !== epoch ||
+      data.epoch !== epoch ||
+      token !== syncToken ||
+      route !== viewToken ||
+      search !== query ||
+      request !== libraryToken
+    )
       return;
+    const ids = cursor ? [...visibleIds] : [];
     for (const session of data.sessions) {
       if (deleted.has(session.id)) continue;
       const record = get(session.id);
-      if (record.cursor <= data.cursor) record.session = session;
+      if (
+        (!record.session || session.revision >= record.session.revision) &&
+        record.cursor <= data.cursor
+      )
+        record.session = session;
+      if (!ids.includes(session.id)) ids.push(session.id);
     }
+    visibleIds = ids;
     nextCursor = data.next_cursor;
     render();
   }
+  async function refreshLibrary() {
+    listAgain = true;
+    if (listFlight) return listFlight;
+    listFlight = (async () => {
+      while (listAgain && !selected) {
+        listAgain = false;
+        try {
+          await list();
+        } catch (error) {
+          restart(error.message);
+          break;
+        }
+      }
+    })();
+    try {
+      await listFlight;
+    } finally {
+      listFlight = null;
+    }
+  }
+
   async function detail(id, before = null) {
     const requestEpoch = epoch,
-      token = viewToken;
-    const data = await api(
-      `${base}/sessions/${id}${before ? `/items?before=${before}` : ""}`,
-    );
+      token = viewToken,
+      connection = syncToken;
+    let data;
+    try {
+      data = await api(
+        `${base}/sessions/${id}${before ? `/items?before=${encodeURIComponent(before)}` : ""}`,
+      );
+    } catch (error) {
+      if (token !== viewToken || connection !== syncToken || selected !== id)
+        return;
+      if (error.status === 404) {
+        deleted.add(id);
+        records.delete(id);
+        navigate(null);
+        notice = "This session was deleted.";
+        render();
+        return;
+      }
+      throw error;
+    }
     if (
       requestEpoch !== epoch ||
       data.epoch !== epoch ||
       token !== viewToken ||
+      connection !== syncToken ||
       selected !== id ||
       deleted.has(id)
     )
@@ -152,10 +270,27 @@
     record.nextBefore = data.next_before;
     render();
   }
+  async function bootstrap() {
+    const token = syncToken;
+    try {
+      const data = await api(`${base}/bootstrap`);
+      if (token !== syncToken || (epoch && data.epoch !== epoch)) return;
+      available = data.available;
+      catalog = data.models;
+      catalogLoaded = true;
+      availabilityNotice = data.message || "";
+    } catch (error) {
+      if (token === syncToken) catalogLoaded = false;
+      throw error;
+    }
+  }
+
   async function synchronize(readyData) {
     const token = ++syncToken;
     synchronized = false;
     connected = true;
+    clearTimeout(retryTimer);
+    retryTimer = null;
     if (epoch !== readyData.epoch) {
       epoch = readyData.epoch;
       records.clear();
@@ -168,31 +303,40 @@
       const results = await Promise.allSettled([
         list(),
         selected ? detail(selected) : Promise.resolve(),
-        api(`${base}/bootstrap`).then((data) => {
-          if (token === syncToken) {
-            available = data.available;
-            if (data.message) notice = data.message;
-          }
-        }),
+        bootstrap(),
       ]);
       if (token !== syncToken || !connected) return;
-      if (results[0].status === "rejected") throw results[0].reason;
-      if (results[2].status === "rejected") throw results[2].reason;
-      if (results[1].status === "rejected") notice = results[1].reason.message;
+      for (const result of results)
+        if (result.status === "rejected") throw result.reason;
       synchronized = true;
-      for (const id of records.keys()) {
-        if (saved(id).pending) void deliver(id);
-      }
+      syncNotice = "";
+      for (const id of records.keys()) if (saved(id).pending) void deliver(id);
     } catch (error) {
-      if (token === syncToken) notice = error.message;
+      if (token === syncToken) restart(error.message);
     }
     render();
   }
+  function restart(message = "Reconnecting…") {
+    if (feed) feed.close();
+    feed = null;
+    connected = false;
+    synchronized = false;
+    ++syncToken;
+    syncNotice = message;
+    if (retryTimer === null)
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        connect();
+      }, 1000);
+    render();
+  }
+
   function connect() {
-    if (feed) return;
-    feed = new EventSource(`${base}/events`);
-    feed.addEventListener("feed.ready", (event) => {
-      void synchronize(JSON.parse(event.data));
+    if (feed || retryTimer !== null) return;
+    const source = new EventSource(`${base}/events`);
+    feed = source;
+    source.addEventListener("feed.ready", (event) => {
+      if (feed === source) void synchronize(JSON.parse(event.data));
     });
     for (const type of [
       "session.updated",
@@ -201,18 +345,27 @@
       "item.updated",
       "prompt.updated",
       "session.notice",
-    ]) {
-      feed.addEventListener(type, (event) => receive(type, event));
-    }
-    const disconnected = () => {
-      connected = false;
-      synchronized = false;
-      ++syncToken;
-      render();
+      "run.notice",
+    ])
+      source.addEventListener(type, (event) => {
+        if (feed === source) receive(type, event);
+      });
+    const disconnected = async () => {
+      if (feed !== source) return;
+      restart();
+      // A stopped store cannot open its event feed. Read its availability
+      // so that the retry screen can explain why it is unavailable.
+      try {
+        await bootstrap();
+        render();
+      } catch {
+        /* The scheduled connection retries the reads. */
+      }
     };
-    feed.addEventListener("feed.resync_required", disconnected);
-    feed.onerror = disconnected;
+    source.addEventListener("feed.resync_required", disconnected);
+    source.onerror = disconnected;
   }
+
   function navigate(id) {
     const path = id ? `/admin/code/${id}` : "/admin/code";
     history.pushState({}, "", path);
@@ -226,33 +379,20 @@
       selected = id;
       ++viewToken;
       rendered = null;
+      settingsPending = false;
       notice = "";
       render();
-      if (epoch && id)
-        void detail(id).catch((error) => {
-          if (selected === id) {
-            notice = error.message;
-            render();
-          }
+      if (connected && epoch) {
+        const reading = id ? detail(id) : refreshLibrary();
+        const token = viewToken;
+        void reading.catch((error) => {
+          if (token === viewToken) restart(error.message);
         });
-      else if (epoch)
-        void list().catch((error) => {
-          notice = error.message;
-          render();
-        });
+      }
     }
     connect();
-    void api(`${base}/bootstrap`)
-      .then((data) => {
-        available = data.available;
-        if (data.message) notice = data.message;
-        render();
-      })
-      .catch((error) => {
-        notice = error.message;
-        render();
-      });
   }
+
   function accepted(id, operationId) {
     const state = saved(id);
     if (state.pending?.operation_id !== operationId) return;
@@ -260,8 +400,11 @@
     delete state.pending;
     if (state.draft === oldText) state.draft = "";
     save(id, state);
-    if (selected === id && root?.querySelector("textarea")?.value === oldText)
-      root.querySelector("textarea").value = "";
+    if (
+      selected === id &&
+      root?.querySelector("#codeComposer")?.value === oldText
+    )
+      root.querySelector("#codeComposer").value = "";
   }
   async function deliver(id) {
     const command = saved(id).pending;
@@ -283,6 +426,13 @@
         }
         if (selected === id) notice = error.message;
       }
+      if (error.status === 400 || error.status === 409) {
+        try {
+          await bootstrap();
+        } catch (failure) {
+          restart(failure.message);
+        }
+      }
     } finally {
       sends.delete(id);
       render();
@@ -290,9 +440,17 @@
   }
   function submit() {
     const record = records.get(selected);
-    if (!ready(record) || busy(record) || pending(record) || !available) return;
+    if (
+      !ready(record) ||
+      busy(record) ||
+      pending(record) ||
+      !available ||
+      settingsPending ||
+      selectionError(record)
+    )
+      return;
     const state = saved(selected),
-      text = root.querySelector("textarea").value;
+      text = root.querySelector("#codeComposer").value;
     if (!state.pending && !text.trim()) return;
     state.draft = text;
     state.pending ||= {
@@ -386,31 +544,55 @@
       },
     );
   }
-  function rename() {
-    const record = records.get(selected),
-      id = selected,
-      revision = record.session.revision;
-    dialog(
-      "Rename session",
-      (form) => {
-        const input = element("input");
-        input.value = record.session.title;
-        input.required = true;
-        input.maxLength = 200;
-        label(form, "Title", input);
-        return input;
-      },
-      "Save title",
-      (input) =>
-        api(`${base}/sessions/${id}`, {
-          method: "PATCH",
-          body: JSON.stringify({
-            expected_revision: revision,
-            title: input.value,
-          }),
+  async function updateSettings(changes) {
+    const id = selected,
+      record = records.get(id);
+    if (!ready(record) || settingsPending) return;
+    settingsPending = true;
+    notice = "";
+    renderControls();
+    try {
+      const session = await api(`${base}/sessions/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          expected_revision: record.session.revision,
+          ...changes,
         }),
-    );
+      });
+      if (
+        !deleted.has(id) &&
+        session.revision >= (records.get(id)?.session?.revision || 0)
+      )
+        get(id).session = session;
+    } catch (error) {
+      if (selected === id) {
+        notice = error.message;
+        try {
+          await detail(id);
+        } catch (failure) {
+          restart(failure.message);
+        }
+      }
+    } finally {
+      if (selected === id) {
+        settingsPending = false;
+        render();
+      }
+    }
   }
+  function selectionError(record) {
+    if (!record?.session) return "";
+    if (!catalogLoaded) return "Model list unavailable. Reconnecting…";
+    const model = catalog.find((model) => model.id === record.session.model);
+    if (!model) return "Selected model is unavailable. Choose another model.";
+    if (
+      record.session.reasoning_effort &&
+      !model.reasoning_efforts.includes(record.session.reasoning_effort)
+    )
+      return "Selected thinking effort is unavailable. Choose another effort or Model default.";
+    return "";
+  }
+
   function remove() {
     const record = records.get(selected),
       id = selected,
@@ -450,112 +632,152 @@
   }
   function shell() {
     root.replaceChildren();
-    const node = element("div", undefined, "code-shell");
-    const header = element("header", undefined, "code-header"),
-      titleGroup = element("div");
-    titleGroup.append(
-      element("h2", "Code sessions"),
-      element("p", "", "code-folder"),
-    );
-    const actions = element("div", undefined, "code-actions");
-    if (selected) {
-      actions.append(
-        button("All sessions", () => navigate(null)),
-        button("Rename", rename),
-        button("Delete", remove),
-      );
-    } else
-      actions.append(button("New code session", newSession, "primary-button"));
-    header.append(titleGroup, actions);
-    const message = element("p", "", "code-notice");
+    modelComboboxes.clear();
+    modelControl = reasoningControl = null;
+    const message = element("div", "", "session-notice");
+    message.id = "codeNotice";
     message.setAttribute("role", "status");
-    node.append(header, message);
     if (selected) {
-      const transcript = element("div", undefined, "code-transcript");
-      const older = button("Load older messages", async () => {
-        const id = selected,
-          oldHeight = transcript.scrollHeight,
-          top = transcript.scrollTop;
-        older.disabled = true;
-        try {
-          await detail(id, records.get(id).nextBefore);
-          if (selected === id)
-            transcript.scrollTop = top + transcript.scrollHeight - oldHeight;
-        } catch (error) {
-          notice = error.message;
-        }
-        older.disabled = false;
-        render();
-      });
-      older.classList.add("code-older");
+      const id = selected,
+        record = get(id);
+      const controls = element("div", undefined, "session-controls");
+      modelControl = UI.modelControl(
+        "codeModel",
+        record.session?.model || "",
+        () => catalog.map((model) => model.id),
+        modelComboboxes,
+        (model) => {
+          void updateSettings({ model });
+        },
+      );
+      reasoningControl = UI.reasoningControl(
+        "codeReasoning",
+        [],
+        "",
+        (value) => {
+          void updateSettings({ reasoning_effort: value || null });
+        },
+      );
+      controls.append(modelControl.group, reasoningControl.group);
+      const deletion = button("Delete", remove, "danger-button");
+      deletion.id = "codeDelete";
+      const header = UI.header(
+        "← Code sessions",
+        () => navigate(null),
+        record.session?.title || "Code session",
+        "Code title",
+        (title) => {
+          if (
+            selected === id &&
+            title.value !== records.get(id)?.session?.title
+          )
+            void updateSettings({ title: title.value });
+        },
+        [deletion],
+        controls,
+      );
+      header.append(element("p", "", "code-folder"));
+      const transcript = element("div", undefined, "session-transcript");
+      transcript.id = "codeTranscript";
+      transcript.setAttribute("aria-label", "Conversation");
+      const older = button(
+        "Load older messages",
+        async () => {
+          const oldHeight = transcript.scrollHeight,
+            top = transcript.scrollTop;
+          older.disabled = true;
+          try {
+            await detail(id, records.get(id).nextBefore);
+            if (selected === id)
+              transcript.scrollTop = top + transcript.scrollHeight - oldHeight;
+          } catch (error) {
+            restart(error.message);
+          }
+          older.disabled = false;
+          render();
+        },
+        "secondary-button session-older",
+      );
+      older.id = "codeOlder";
       transcript.append(
         older,
         element("div", undefined, "code-items"),
         element("div", undefined, "code-prompts"),
       );
-      const composer = element("form", undefined, "code-composer"),
-        input = element("textarea");
-      input.setAttribute("aria-label", "Message");
-      input.placeholder = "Ask Codex to work on this folder…";
-      input.value = saved(selected).draft || "";
-      const id = selected;
-      input.addEventListener("input", () => {
-        save(id, { ...saved(id), draft: input.value });
-        renderControls();
-      });
-      input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-          event.preventDefault();
-          submit();
-        }
-      });
-      composer.addEventListener("submit", (event) => {
-        event.preventDefault();
-        submit();
-      });
-      const footer = element("div", undefined, "code-actions");
-      const send = button(
-        "Send",
-        () => {
-          busy(records.get(selected)) ? void stop() : submit();
+      const composer = UI.composer(
+        "code",
+        saved(id).draft || "",
+        "Ask Codex to work on this folder…",
+        (value) => {
+          save(id, { ...saved(id), draft: value });
+          renderControls();
         },
-        "primary-button",
+        submit,
+        () => {
+          void stop();
+        },
       );
-      send.classList.add("code-send");
-      footer.append(element("span", "", "code-status"), send);
-      composer.append(input, footer);
-      node.append(transcript, composer);
+      root.append(UI.shell(header, message, transcript, composer));
+      UI.resizeComposer(composer.querySelector("textarea"));
     } else {
-      node.append(element("div", undefined, "code-library"));
-      const more = button("Load more sessions", async () => {
-        libraryLoading = true;
+      const create = button("New code session", newSession, "primary-button");
+      create.id = "codeNew";
+      const header = UI.libraryHeader(
+        "Code sessions",
+        "Work with Codex in a project folder.",
+        create,
+      );
+      const search = UI.search("Search titles and folders", query, (value) => {
+        query = value;
+        visibleIds = [];
+        nextCursor = null;
+        ++libraryToken;
         render();
-        try {
-          await list(nextCursor);
-        } catch (error) {
-          notice = error.message;
-        }
-        libraryLoading = false;
-        render();
+        void refreshLibrary();
       });
-      more.classList.add("code-more");
-      node.append(more);
+      const more = button(
+        "Load more sessions",
+        async () => {
+          libraryLoading = true;
+          render();
+          try {
+            await list(nextCursor);
+          } catch (error) {
+            restart(error.message);
+          }
+          libraryLoading = false;
+          render();
+        },
+        "secondary-button session-load-more",
+      );
+      more.id = "codeMore";
+      const library = element("div", undefined, "session-list");
+      library.id = "codeLibrary";
+      const wrapper = element("div", undefined, "session-library");
+      wrapper.append(header, search, message, library, more);
+      root.append(wrapper);
     }
-    root.append(node);
     rendered = selected || "library";
   }
+
   function render() {
     if (!root) return;
     if (rendered !== (selected || "library")) shell();
-    root.querySelector(".code-shell > .code-notice").textContent =
+    const message = root.querySelector("#codeNotice");
+    message.textContent =
       notice ||
+      availabilityNotice ||
+      syncNotice ||
       (!connected ? "Connecting…" : !synchronized ? "Synchronizing…" : "");
+    message.hidden = !message.textContent;
     if (!selected) {
-      const library = root.querySelector(".code-library");
+      const library = root.querySelector("#codeLibrary");
       for (const child of [...library.children])
-        if (!child.dataset.id || !records.has(child.dataset.id)) child.remove();
-      for (const record of [...records.values()]
-        .filter((record) => record.session)
+        if (!child.dataset.id || !visibleIds.includes(child.dataset.id))
+          child.remove();
+      for (const record of visibleIds
+        .map((id) => records.get(id))
+        .filter((record) => record?.session)
         .sort(
           (a, b) =>
             b.session.updated_at - a.session.updated_at ||
@@ -565,87 +787,144 @@
           `[data-id="${CSS.escape(record.id)}"]`,
         );
         if (!card) {
-          card = button("", () => navigate(record.id), "code-session-card");
+          card = UI.card("", "", "", () => navigate(record.id));
           card.dataset.id = record.id;
-          card.append(element("strong"), element("span"), element("span"));
         }
         card.children[0].textContent = record.session.title;
         card.children[1].textContent = record.session.cwd;
         card.children[2].textContent = busy(record)
           ? "Running"
-          : record.session.error || "Codex";
+          : record.session.error || record.session.model;
         library.append(card);
       }
-      if (!library.children.length && synchronized)
+      if (!library.children.length)
         library.append(
           element(
-            "p",
-            "Start a code session to work with Codex in a project folder.",
-            "code-notice",
+            "div",
+            synchronized
+              ? query
+                ? "No matching sessions."
+                : "Start your first code session."
+              : "Loading sessions…",
+            "session-empty",
           ),
         );
-      root.querySelector(".code-header button").disabled = !synchronized;
-      const more = root.querySelector(".code-more");
+      root.querySelector("#codeNew").disabled = !synchronized;
+      const more = root.querySelector("#codeMore");
       more.hidden = !nextCursor;
       more.disabled = !synchronized || libraryLoading;
       return;
     }
-    const record = records.get(selected);
+    const record = records.get(selected),
+      title = root.querySelector(".session-title");
     if (record?.session) {
-      root.querySelector("h2").textContent = record.session.title;
+      if (document.activeElement !== title) title.value = record.session.title;
       root.querySelector(".code-folder").textContent = record.session.cwd;
     }
-    const transcript = root.querySelector(".code-transcript");
-    const bottom =
-      transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <
-      80;
-    const items = root.querySelector(".code-items");
-    for (const { value: item } of [...(record?.items.values() || [])].sort(
-      (a, b) => a.value.sequence - b.value.sequence,
-    ))
-      renderItem(items, item);
+    const transcript = root.querySelector("#codeTranscript"),
+      bottom = UI.nearBottom(transcript),
+      items = root.querySelector(".code-items");
+    const runs = [...(record?.runs.values() || [])]
+      .map((entry) => entry.value)
+      .sort((a, b) => a.ordinal - b.ordinal);
+    for (const run of runs) {
+      const source = [...record.items.values()]
+        .map((entry) => entry.value)
+        .filter((item) => item.run_id === run.id)
+        .sort((a, b) => a.sequence - b.sequence);
+      if (!source.length) continue;
+      let group = items.querySelector(`[data-run-id="${CSS.escape(run.id)}"]`);
+      if (!group) {
+        group = element("div", undefined, "code-run");
+        group.dataset.runId = run.id;
+        group.dataset.ordinal = run.ordinal;
+        group.append(
+          element("div", undefined, "code-run-items"),
+          UI.message("assistant", "Codex"),
+        );
+        group.lastChild.classList.add("code-outcome");
+        group.lastChild.append(element("div", "", "session-generation-status"));
+        const next = [...items.children].find(
+          (child) => Number(child.dataset.ordinal) > run.ordinal,
+        );
+        items.insertBefore(group, next || null);
+      }
+      for (const item of source) renderItem(group.firstChild, item);
+      const outcome = group.querySelector(".code-outcome");
+      outcome.hidden = !["failed", "interrupted"].includes(run.status);
+      const status = outcome.querySelector(".session-generation-status");
+      status.className = `session-generation-status ${run.status}`;
+      status.textContent =
+        run.error ||
+        (run.status === "interrupted" ? "Turn stopped." : "This turn failed.");
+    }
     const prompts = root.querySelector(".code-prompts");
     for (const { value: prompt } of record?.prompts.values() || [])
       renderPrompt(prompts, prompt);
     if (bottom) transcript.scrollTop = transcript.scrollHeight;
-    root.querySelector(".code-older").hidden = !record?.nextBefore;
+    root.querySelector("#codeOlder").hidden = !record?.nextBefore;
     renderControls();
   }
+
   function renderControls() {
-    if (!selected || !root?.querySelector("textarea")) return;
+    if (!selected || !root?.querySelector("#codeComposer")) return;
     const record = records.get(selected),
-      isBusy = busy(record);
-    const send = root.querySelector(".code-send");
-    send.textContent = isBusy
-      ? "Stop"
-      : saved(selected).pending
-        ? "Retry Send"
-        : "Send";
-    send.disabled = isBusy
-      ? record.run.stop_requested
-      : !ready(record) ||
-        !available ||
-        pending(record) ||
-        sends.has(selected) ||
-        (!root.querySelector("textarea").value.trim() &&
-          !saved(selected).pending);
-    root.querySelector("textarea").disabled =
-      !record?.loaded || record?.session?.status !== "ready";
-    const actions = root.querySelectorAll(".code-header button");
-    actions[1].disabled = !ready(record);
-    actions[2].textContent =
+      isBusy = busy(record),
+      input = root.querySelector("#codeComposer");
+    const send = root.querySelector("#codeSend"),
+      stop = root.querySelector("#codeStop");
+    send.hidden = isBusy;
+    stop.hidden = !isBusy;
+    stop.disabled = !connected || record?.run?.stop_requested;
+    send.textContent = saved(selected).pending ? "Retry Send" : "Send";
+    send.disabled =
+      !ready(record) ||
+      !available ||
+      pending(record) ||
+      sends.has(selected) ||
+      settingsPending ||
+      !!selectionError(record) ||
+      (!input.value.trim() && !saved(selected).pending);
+    input.disabled = !record?.loaded || record?.session?.status !== "ready";
+    root.querySelector(".session-title").disabled =
+      !ready(record) || settingsPending;
+    const deletion = root.querySelector("#codeDelete");
+    deletion.textContent =
       record?.session?.status === "delete_uncertain"
         ? "Check deletion"
         : "Delete";
-    actions[2].disabled =
+    deletion.disabled =
       !synchronized ||
       !record?.loaded ||
       record.session?.status === "deleting" ||
       isBusy ||
       pending(record);
-    root.querySelector(".code-status").textContent =
+    const disabled =
+      !ready(record) ||
+      isBusy ||
+      pending(record) ||
+      settingsPending ||
+      !catalogLoaded;
+    modelControl.update(record?.session?.model || "", disabled);
+    const model = catalog.find((model) => model.id === record?.session?.model),
+      effort = record?.session?.reasoning_effort;
+    const options = [
+      [
+        "",
+        model?.default_reasoning_effort
+          ? `Model default (${model.default_reasoning_effort})`
+          : "Model default",
+      ],
+      ...(model?.reasoning_efforts || []).map((value) => [value, value]),
+    ];
+    if (effort && !model?.reasoning_efforts.includes(effort))
+      options.push([effort, `${effort} (unavailable)`]);
+    reasoningControl.update(options, effort || "");
+    reasoningControl.select.disabled =
+      disabled || !model?.reasoning_efforts.length;
+    root.querySelector("#codeComposerStatus").textContent =
       record?.session?.error ||
-      record?.run?.error ||
+      selectionError(record) ||
       (record?.session?.status !== "ready"
         ? "Deleting…"
         : record.run?.stop_requested && isBusy
@@ -653,37 +932,45 @@
           : pending(record)
             ? "Waiting for input"
             : isBusy
-              ? "Working…"
+              ? record.runNotice || "Working…"
               : "Codex");
     for (const node of root.querySelectorAll(".code-prompt")) {
       const prompt = record?.prompts.get(node.dataset.id)?.value;
       for (const control of node.querySelectorAll("input, select, button"))
         control.disabled =
           !ready(record) ||
+          !record.activePrompts.get(node.dataset.id)?.active ||
           prompt?.status !== "pending" ||
           node.dataset.claiming === "true";
     }
+    UI.resizeComposer(input);
   }
+
   function renderItem(parent, item) {
     let node = parent.querySelector(`[data-id="${CSS.escape(item.id)}"]`);
     if (!node) {
-      node = element("article", undefined, "code-item");
+      node = UI.message(
+        item.kind === "user" ? "user" : "assistant",
+        item.kind === "user" ? "You" : "Codex",
+      );
+      node.classList.add("code-item");
       node.dataset.id = item.id;
       node.dataset.kind = item.kind;
-      node.append(element("strong", item.kind === "user" ? "You" : "Codex"));
       let content = node;
-      if (!["text", "user"].includes(item.kind)) {
-        content = element("details");
-        content.append(
-          element(
-            "summary",
-            item.title || (item.kind === "reasoning" ? "Thinking" : "Tool"),
-          ),
-        );
+      if (item.kind === "reasoning") {
+        content = UI.thinking();
+        node.append(content);
+      } else if (!["text", "user"].includes(item.kind)) {
+        content = element("details", undefined, "code-tool");
+        content.append(element("summary", item.title || "Tool"));
         node.append(content);
       }
       content.append(
-        element(item.kind === "user" ? "pre" : "div", "", "code-prose"),
+        element(
+          "div",
+          "",
+          `code-prose ${item.kind === "user" ? "session-message-plain" : "session-markdown"}`,
+        ),
         element("pre", "", "code-item-detail"),
       );
       node.dataset.sequence = item.sequence;
@@ -692,8 +979,8 @@
       );
       parent.insertBefore(node, next || null);
     }
-    const content = node.querySelector(".code-prose");
-    const value = item.html ?? item.text;
+    const content = node.querySelector(".code-prose"),
+      value = item.html ?? item.text;
     if (node.codeText !== value) {
       if (item.html != null) content.innerHTML = item.html;
       else content.textContent = item.text;
@@ -703,6 +990,7 @@
     detail.textContent = item.detail;
     detail.hidden = !item.detail;
   }
+
   function renderPrompt(parent, prompt) {
     let node = parent.querySelector(`[data-id="${CSS.escape(prompt.id)}"]`);
     if (!node) {
@@ -718,6 +1006,10 @@
     }
     node.querySelector(".code-prompt-state").textContent =
       prompt.error ||
+      (!records.get(selected)?.activePrompts.get(prompt.id)?.active &&
+      ["pending", "answering"].includes(prompt.status)
+        ? "No longer active"
+        : "") ||
       {
         answering: "Answer sent…",
         resolved: "Resolved",
@@ -731,7 +1023,12 @@
     let responseId = null,
       submitting = false;
     const answer = async (value) => {
-      if (submitting || !ready(records.get(sessionId))) return;
+      if (
+        submitting ||
+        !ready(records.get(sessionId)) ||
+        !records.get(sessionId).activePrompts.get(prompt.id)?.active
+      )
+        return;
       responseId ||= crypto.randomUUID();
       submitting = true;
       form.dataset.claiming = "true";
@@ -960,5 +1257,19 @@
       if (desiredPath) activate(desiredPath);
     },
     activate,
+    async refresh() {
+      if (!api || !epoch) return;
+      try {
+        await bootstrap();
+        render();
+      } catch (error) {
+        restart(error.message);
+      }
+    },
   };
+  document.addEventListener("pointerdown", (event) => {
+    for (const combobox of modelComboboxes)
+      if (combobox.isOpen && !combobox.element.contains(event.target))
+        combobox.close();
+  });
 })();

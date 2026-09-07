@@ -11,6 +11,7 @@ from free_claude_code.application.code_sessions.models import (
     HarnessEvent,
     ItemUpdate,
     NativeThread,
+    NativeTurn,
     PromptRequest,
     RunStatus,
 )
@@ -67,6 +68,7 @@ class CodexProtocol:
                 status=status,
                 message=string_value(object_value(turn.get("error")).get("message"))
                 or None,
+                error_details=object_value(turn.get("error")),
             )
         if method == "error":
             return HarnessEvent(
@@ -75,6 +77,8 @@ class CodexProtocol:
                 "error",
                 turn_id=turn_id,
                 message=string_value(object_value(params.get("error")).get("message")),
+                will_retry=params.get("willRetry") is True,
+                error_details=object_value(params.get("error")),
             )
         if method == "serverRequest/resolved":
             request_id = params.get("requestId")
@@ -136,10 +140,11 @@ class CodexProtocol:
         thread_id = string_value(thread.get("id"))
         if not thread_id:
             raise CodeValidationError("Codex did not return a conversation ID.")
-        items: list[ItemUpdate] = []
+        turns: list[NativeTurn] = []
         for raw_turn in array_value(thread.get("turns")):
             turn = object_value(raw_turn)
             turn_id = string_value(turn.get("id"))
+            items: list[ItemUpdate] = []
             for value in array_value(turn.get("items")):
                 raw = object_value(value)
                 item_id = string_value(raw.get("id"))
@@ -148,7 +153,25 @@ class CodexProtocol:
                 accumulated = self._items.setdefault((turn_id, item_id), _Item())
                 accumulated.raw = {**accumulated.raw, **raw}
                 items.append(self._project(turn_id, item_id, accumulated, True))
-        return NativeThread(thread_id, tuple(items))
+            if turn_id:
+                error = object_value(turn.get("error"))
+                status: RunStatus = (
+                    "failed"
+                    if turn.get("status") == "failed"
+                    else "interrupted"
+                    if turn.get("status") == "interrupted"
+                    else "completed"
+                )
+                turns.append(
+                    NativeTurn(
+                        turn_id,
+                        tuple(items),
+                        status,
+                        string_value(error.get("message")) or None,
+                        error,
+                    )
+                )
+        return NativeThread(thread_id, tuple(turns))
 
     @staticmethod
     def _project(turn_id: str, item_id: str, item: _Item, complete: bool) -> ItemUpdate:
@@ -390,7 +413,13 @@ class NativePrompt:
                 }:
                     unsupported = True
                 choices = _enum_options(definition)
-                if field_type == "array" and not choices:
+                if field_type == "array" and (
+                    not choices
+                    or any(
+                        not isinstance(object_value(choice).get("value"), str)
+                        for choice in choices
+                    )
+                ):
                     unsupported = True
                 fields.append(
                     {

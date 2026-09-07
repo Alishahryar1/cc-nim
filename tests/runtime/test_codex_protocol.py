@@ -65,6 +65,8 @@ def test_retryable_error_does_not_turn_into_completion():
     )
     assert event.kind == "error"
     assert event.message == "retry"
+    assert event.will_retry is True
+    assert event.error_details == {"message": "retry"}
 
 
 def test_command_completion_keeps_output_and_exit_code():
@@ -223,3 +225,76 @@ def test_native_form_rejects_invalid_documented_string_format():
         ]
         == "accept"
     )
+
+
+@pytest.mark.parametrize("choices,supported", [(["one", "two"], True), ([1, 2], False)])
+def test_multiselect_projection_matches_the_negotiated_string_contract(
+    choices, supported
+):
+    prompt = NativePrompt(
+        "mcpServer/elicitation/request",
+        1,
+        {
+            "threadId": "thread",
+            "mode": "form",
+            "serverName": "tool",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "selection": {
+                        "type": "array",
+                        "items": {
+                            "oneOf": [
+                                {"const": value, "title": str(value)}
+                                for value in choices
+                            ]
+                        },
+                    }
+                },
+            },
+        },
+    )
+    assert prompt.form["unsupported"] is not supported
+    if supported:
+        assert prompt.answer({"action": "accept", "values": {"selection": choices}})[
+            "content"
+        ] == {"selection": choices}
+    else:
+        with pytest.raises(CodeValidationError, match="not supported"):
+            prompt.answer({"action": "accept", "values": {"selection": choices}})
+    for action in ("decline", "cancel"):
+        assert prompt.answer({"action": action}) == {"action": action, "content": None}
+
+
+def test_history_preserves_native_turns_client_ids_and_failure_details():
+    native = CodexProtocol("g").history(
+        {
+            "thread": {
+                "id": "thread",
+                "turns": [
+                    {
+                        "id": "first",
+                        "status": "failed",
+                        "error": {
+                            "message": "Rejected",
+                            "additionalDetails": "details",
+                        },
+                        "items": [
+                            {
+                                "id": "user",
+                                "type": "userMessage",
+                                "clientId": "operation",
+                                "content": [{"type": "text", "text": "Hello"}],
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+    )
+    assert native.turns[0].items[0].client_id == "operation"
+    assert native.turns[0].status == "failed"
+    assert native.turns[0].error_details == {
+        "message": "Rejected",
+        "additionalDetails": "details",
+    }

@@ -41,9 +41,11 @@ class CreatePayload(CommandPayload):
     harness: Literal["codex"] = "codex"
 
 
-class RenamePayload(CommandPayload):
+class SettingsPayload(CommandPayload):
     expected_revision: int = Field(gt=0)
-    title: str = Field(min_length=1, max_length=200)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    model: str | None = Field(default=None, min_length=1)
+    reasoning_effort: str | None = None
 
 
 class SendPayload(CommandPayload):
@@ -78,11 +80,14 @@ def code_page(request: Request, session_id: str | None = None):
 def bootstrap(services: ApiServices = Depends(get_services)) -> JsonObject:
     code = _code(services)
     available, message = code.availability()
+    catalog = code.catalog()
     return {
         "available": available,
         "message": message,
         "harnesses": [{"id": "codex", "name": "Codex"}],
         "epoch": code.epoch,
+        "models": [model.model_dump(mode="json") for model in catalog.models],
+        "default_model": catalog.default_model,
     }
 
 
@@ -125,12 +130,13 @@ async def events(
 @router.get("/admin/api/code/sessions")
 async def list_sessions(
     cursor: str | None = None,
+    query: str = Query(default="", max_length=4096),
     limit: int = Query(default=25, ge=1, le=25),
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     code = _code(services)
     snapshot_cursor = code.cursor
-    page = await code.list_sessions(_decode_cursor(cursor), limit)
+    page = await code.list_sessions(_decode_cursor(cursor), limit, query)
     return {
         "sessions": [_session_payload(session) for session in page.sessions],
         "next_cursor": _encode_cursor(page.next_cursor),
@@ -158,21 +164,25 @@ async def detail(
 @router.get("/admin/api/code/sessions/{session_id}/items")
 async def older_items(
     session_id: str,
-    before: int = Query(gt=0),
+    before: str,
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
-    return _detail_payload(await _code(services).get_detail(session_id, before=before))
+    return _detail_payload(
+        await _code(services).get_detail(session_id, before=_decode_item_cursor(before))
+    )
 
 
 @router.patch("/admin/api/code/sessions/{session_id}")
-async def rename(
+async def update_settings(
     session_id: str,
-    payload: RenamePayload,
+    payload: SettingsPayload,
     services: ApiServices = Depends(get_services),
 ) -> JsonObject:
     return _session_payload(
-        await _code(services).rename(
-            session_id, payload.expected_revision, payload.title
+        await _code(services).update_settings(
+            session_id,
+            payload.expected_revision,
+            payload.model_dump(exclude={"expected_revision"}, exclude_unset=True),
         )
     )
 
@@ -262,12 +272,14 @@ def _detail_payload(detail: CodeDetail) -> JsonObject:
     return {
         "session": _session_payload(detail.session),
         "run": _run_payload(detail.run) if detail.run else None,
+        "runs": [_run_payload(run) for run in detail.runs],
+        "active_prompt_ids": list(detail.active_prompt_ids),
         "items": [_item_payload(item) for item in detail.items],
         "prompts": [_prompt_payload(prompt) for prompt in detail.prompts],
         "epoch": detail.epoch,
         "version": detail.version,
         "cursor": detail.cursor,
-        "next_before": detail.next_before,
+        "next_before": _encode_cursor(detail.next_before),
     }
 
 
@@ -289,6 +301,9 @@ def _event_payload(data: Mapping[str, JsonValue]) -> JsonObject:
             _item_payload(CodeItem.model_validate(value)) for value in items
         ]
     prompts = data.get("prompts")
+    runs = data.get("runs")
+    if isinstance(runs, list):
+        result["runs"] = [_run_payload(CodeRun.model_validate(value)) for value in runs]
     if isinstance(prompts, list):
         result["prompts"] = [
             _prompt_payload(CodePrompt.model_validate(value)) for value in prompts
@@ -296,7 +311,7 @@ def _event_payload(data: Mapping[str, JsonValue]) -> JsonObject:
     return result
 
 
-def _encode_cursor(cursor: tuple[int, str] | None) -> str | None:
+def _encode_cursor(cursor: tuple[int, str] | tuple[int, int] | None) -> str | None:
     return (
         base64.urlsafe_b64encode(json.dumps(cursor).encode()).decode()
         if cursor
@@ -319,3 +334,17 @@ def _decode_cursor(cursor: str | None) -> tuple[int, str] | None:
         return value[0], value[1]
     except ValueError, UnicodeError:
         raise CodeValidationError("Invalid session page cursor.") from None
+
+
+def _decode_item_cursor(cursor: str) -> tuple[int, int]:
+    try:
+        value = json.loads(base64.urlsafe_b64decode(cursor).decode())
+        if (
+            not isinstance(value, list)
+            or len(value) != 2
+            or any(type(part) is not int or part < 1 for part in value)
+        ):
+            raise ValueError
+        return value[0], value[1]
+    except ValueError, UnicodeError:
+        raise CodeValidationError("Invalid transcript page cursor.") from None

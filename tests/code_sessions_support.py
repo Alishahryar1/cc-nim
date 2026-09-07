@@ -5,12 +5,16 @@ import uuid
 from dataclasses import dataclass
 
 from free_claude_code.application.code_sessions.models import (
+    CodeCatalog,
     CodeConflictError,
+    CodeModel,
     CodeUnavailableError,
+    CodeValidationError,
     HarnessEvent,
     ItemUpdate,
     NativeHistoryMissing,
     NativeThread,
+    NativeTurn,
     PromptRequest,
     RunStatus,
 )
@@ -22,7 +26,9 @@ class FakeHarness:
     def __init__(self):
         self.connections: list[FakeConnection] = []
         self.model = "provider/model"
-        self.catalog = {self.model: "capabilities-1"}
+        self.configurations = {self.model: "capabilities-1"}
+        self.efforts = ("low", "medium", "high", "xhigh")
+        self.default_effort = "medium"
         self.creation_gate = asyncio.Event()
         self.start_gate = asyncio.Event()
         self.creation_gate.set()
@@ -49,13 +55,35 @@ class FakeHarness:
     def availability(self):
         return True, None
 
-    def prepare(self):
+    def catalog(self):
+        return CodeCatalog(
+            self.model,
+            tuple(
+                CodeModel(
+                    id=model,
+                    display_name=model,
+                    reasoning_efforts=self.efforts,
+                    default_reasoning_effort=self.default_effort,
+                )
+                for model in self.configurations
+            ),
+        )
+
+    def prepare(self, model, reasoning_effort):
+        if model not in self.configurations:
+            raise CodeValidationError("This model is unavailable.")
+        if reasoning_effort is not None and reasoning_effort not in self.efforts:
+            raise CodeValidationError("This reasoning effort is unavailable.")
         return FakeSelection(
-            self, self.model, self.catalog[self.model], dict(self.catalog)
+            self,
+            model,
+            self.configurations[model],
+            dict(self.configurations),
+            reasoning_effort or self.default_effort,
         )
 
     async def open_history(self, cwd: str, sink: EventSink):
-        return await self.prepare().open(cwd, sink)
+        return await self.prepare(self.model, None).open(cwd, sink)
 
     async def wait_inputs(self, count: int):
         while sum(len(connection.inputs) for connection in self.connections) < count:
@@ -69,6 +97,7 @@ class FakeSelection:
     model: str
     configuration_key: str
     catalog: dict[str, str]
+    reasoning_effort: str | None
 
     async def open(self, cwd: str, sink: EventSink):
         connection = FakeConnection(self.harness, sink, self.catalog)
@@ -84,6 +113,7 @@ class FakeConnection:
         self.generation = str(uuid.uuid4())
         self.thread_id: str | None = None
         self.inputs: list[tuple[str, str, str]] = []
+        self.efforts: list[str | None] = []
         self.interrupts: list[str] = []
         self.deleted: list[str] = []
         self.resumed: list[str] = []
@@ -114,10 +144,19 @@ class FakeConnection:
     async def read_thread(self, thread_id: str):
         if thread_id not in self.harness.histories:
             raise NativeHistoryMissing("Native conversation not found.")
-        return NativeThread(thread_id, tuple(self.harness.histories[thread_id]))
+        groups: dict[str, list[ItemUpdate]] = {}
+        for item in self.harness.histories[thread_id]:
+            groups.setdefault(item.turn_id, []).append(item)
+        return NativeThread(
+            thread_id,
+            tuple(
+                NativeTurn(turn_id, tuple(items)) for turn_id, items in groups.items()
+            ),
+        )
 
     async def start_turn(self, text: str, selection: HarnessSelection, client_id: str):
         self.inputs.append((client_id, text, selection.model))
+        self.efforts.append(selection.reasoning_effort)
         self.harness.input_changed.set()
         self.harness.submitted.set()
         self.harness.turn_count += 1
@@ -143,7 +182,7 @@ class FakeConnection:
             )
         await self.finish(turn_id, "interrupted")
 
-    async def finish(self, turn_id: str, status: RunStatus = "completed"):
+    async def finish(self, turn_id: str, status: RunStatus = "completed", message=None):
         await self.sink(
             HarnessEvent(
                 self.generation,
@@ -151,6 +190,7 @@ class FakeConnection:
                 "turn_completed",
                 turn_id=turn_id,
                 status=status,
+                message=message,
             )
         )
 
