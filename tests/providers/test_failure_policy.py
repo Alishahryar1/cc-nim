@@ -1,5 +1,6 @@
 """Raw provider failure classification into the canonical neutral model."""
 
+import ssl
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 
@@ -118,6 +119,20 @@ def test_stream_retry_classification_only_accepts_post_open_timeouts() -> None:
     )
     assert not is_retryable_stream_error(httpx.WriteTimeout("write", request=request))
     assert not is_retryable_stream_error(httpx.PoolTimeout("pool", request=request))
+
+
+def test_ssl_want_read_error_uses_stream_failure_policy() -> None:
+    error = ssl.SSLWantReadError("the operation did not complete")
+
+    assert is_retryable_stream_error(error)
+    assert is_retryable_provider_error(error)
+    failure = classify_provider_failure(
+        error, provider_name="NIM", read_timeout_s=120, request_id="request"
+    )
+    assert failure.kind is FailureKind.TIMEOUT
+    assert failure.status_code == 502
+    assert failure.retryable
+    assert "timed out after 120s" in failure.message
 
 
 @pytest.mark.parametrize(
