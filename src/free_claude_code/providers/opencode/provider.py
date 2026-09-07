@@ -133,7 +133,12 @@ class OpenCodeProvider(OpenAIChatProvider):
         self, request_headers: Mapping[str, str]
     ) -> Mapping[str, str]:
         headers = {name.lower(): value for name, value in request_headers.items()}
-        for name in ("x-opencode-session", "session-id", "x-session-id"):
+        for name in (
+            "x-opencode-session",
+            "session-id",
+            "x-session-id",
+            "x-claude-code-session-id",
+        ):
             session_id = headers.get(name)
             if session_id and session_id.strip():
                 return {"x-opencode-session": session_id}

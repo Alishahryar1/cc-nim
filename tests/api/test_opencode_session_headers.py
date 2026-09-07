@@ -122,7 +122,12 @@ async def test_existing_session_id_reaches_opencode_without_forwarding_other_hea
             for name, value in provider._client.default_headers.items()
             if isinstance(value, str)
         }
-        for name in ("Session-Id", "X-OpenCode-Session", "X-Session-Id"):
+        for name in (
+            "Session-Id",
+            "X-OpenCode-Session",
+            "X-Session-Id",
+            "X-Claude-Code-Session-Id",
+        ):
             for conversation in ("conversation-a", "conversation-a", "conversation-b"):
                 response = await client.post(
                     f"/v1/{ingress}",
@@ -159,6 +164,7 @@ async def test_session_header_precedence_and_absence_do_not_invent_or_reuse_iden
             headers={
                 "x-opencode-session": "explicit-session",
                 "session-id": "native-session",
+                "X-Claude-Code-Session-Id": "claude-session",
             },
         )
         assert response.status_code == 200, response.text
@@ -173,7 +179,10 @@ async def test_session_header_precedence_and_absence_do_not_invent_or_reuse_iden
 
 
 @pytest.mark.parametrize("selector", ["responses-selector", "chat-selector"])
-async def test_concurrent_conversations_keep_their_session_ids_during_retry(selector):
+@pytest.mark.parametrize("session_header", ["session-id", "X-Claude-Code-Session-Id"])
+async def test_concurrent_conversations_keep_their_session_ids_during_retry(
+    selector, session_header
+):
     first_arrived = asyncio.Event()
     second_arrived = asyncio.Event()
     attempts = []
@@ -201,7 +210,7 @@ async def test_concurrent_conversations_keep_their_session_ids_during_retry(sele
                 client.post(
                     "/v1/responses",
                     json=request,
-                    headers={"session-id": "conversation-a"},
+                    headers={session_header: "conversation-a"},
                 )
             )
             try:
@@ -209,7 +218,7 @@ async def test_concurrent_conversations_keep_their_session_ids_during_retry(sele
                 second = await client.post(
                     "/v1/responses",
                     json=request,
-                    headers={"session-id": "conversation-b"},
+                    headers={session_header: "conversation-b"},
                 )
                 assert second.status_code == 200, second.text
                 result = await first
