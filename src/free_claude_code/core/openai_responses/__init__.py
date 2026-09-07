@@ -37,7 +37,13 @@ from .streaming.error_mapping import replay_unsafe_function_call_error
 from .streaming.event_builders import ResponseEventBuilder
 from .streaming.ledger import ResponsesOutputLedger
 from .tokens import estimate_responses_input_tokens
-from .tools import ResponsesToolIdentity, responses_tool_identity_from_anthropic_name
+from .tools import (
+    ResponsesToolIdentity,
+    convert_tools,
+    custom_tool_input_text_from_arguments,
+    responses_tool_identity_from_anthropic_name,
+    responses_tool_name_to_anthropic_name,
+)
 
 __all__ = [
     "OPENAI_RESPONSES_SSE_HEADERS",
@@ -62,6 +68,8 @@ __all__ = [
     "build_responses_messages_request",
     "build_responses_provider_request",
     "committed_response_failure_frame",
+    "convert_tools",
+    "custom_tool_input_text_from_arguments",
     "estimate_responses_input_tokens",
     "new_call_id",
     "new_message_item_id",
@@ -77,5 +85,6 @@ __all__ = [
     "responses_reasoning_policy",
     "responses_stream_failure_from_event",
     "responses_tool_identity_from_anthropic_name",
+    "responses_tool_name_to_anthropic_name",
     "tool_item",
 ]

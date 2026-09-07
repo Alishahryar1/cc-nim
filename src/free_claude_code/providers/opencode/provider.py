@@ -30,6 +30,7 @@ from .catalog import (
     OpenCodeModelRoute,
     OpenCodeUpstreamTransport,
 )
+from .responses_tools import OpenCodeResponsesTools
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +152,9 @@ class OpenCodeProvider(OpenAIChatProvider):
         route = self._require_route(snapshot, request.model)
         routed = _routed_responses_request(request, route)
         if route.transport is OpenCodeUpstreamTransport.RESPONSES:
-            self._responses.preflight_responses(routed, reasoning=reasoning)
+            self._responses.preflight_responses(
+                OpenCodeResponsesTools(routed).request, reasoning=reasoning
+            )
             return
         super().preflight_responses(routed, reasoning=reasoning)
 
@@ -255,6 +258,8 @@ class OpenCodeProvider(OpenAIChatProvider):
         selected_stream: AsyncIterator[str] | None = None
         try:
             if route.transport is OpenCodeUpstreamTransport.RESPONSES:
+                tools = OpenCodeResponsesTools(routed)
+                routed = tools.request
                 self._responses.preflight_responses(routed, reasoning=reasoning)
                 selected_stream = self._responses.stream_responses(
                     routed,
@@ -263,6 +268,9 @@ class OpenCodeProvider(OpenAIChatProvider):
                     response_model=response_model,
                     reasoning=reasoning,
                     endpoint_context=endpoint_context,
+                    presenter_factory=(lambda: tools.presenter(response_model))
+                    if tools.customs
+                    else None,
                 )
             else:
                 super().preflight_responses(routed, reasoning=reasoning)

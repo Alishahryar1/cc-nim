@@ -157,6 +157,7 @@ class OpenAIResponsesTransport:
         response_model: str,
         reasoning: ReasoningPolicy,
         endpoint_context: EndpointContext | None = None,
+        presenter_factory: ResponsesPresenterFactory | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens
         body = self._build_native_body(request, reasoning=reasoning)
@@ -165,9 +166,8 @@ class OpenAIResponsesTransport:
             endpoint_context=endpoint_context,
             request_id=request_id,
             response_model=response_model,
-            presenter_factory=lambda: NativeResponsesPresenter(
-                public_model=response_model
-            ),
+            presenter_factory=presenter_factory
+            or (lambda: NativeResponsesPresenter(public_model=response_model)),
         )
 
     def _build_messages_body(
