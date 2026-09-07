@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -394,6 +394,7 @@ class FakeProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         if False:
             yield ""
@@ -406,6 +407,7 @@ class FakeProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         if False:
             yield ""

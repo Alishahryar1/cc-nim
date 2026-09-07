@@ -1,7 +1,7 @@
 """Controlled provider boundary for model-fallback API and product tests."""
 
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -220,6 +220,7 @@ class ControlledFallbackProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, reasoning
         self.stream_models.append(request.model)
@@ -255,6 +256,7 @@ class ControlledFallbackProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, reasoning
         self.stream_models.append(request.model)

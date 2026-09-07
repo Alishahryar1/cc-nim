@@ -5,7 +5,7 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -101,6 +101,7 @@ class _ModelListingProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model
         summary = str(request.system).startswith("Summarize")
@@ -221,6 +222,7 @@ class _ModelListingProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         if False:
             yield ""

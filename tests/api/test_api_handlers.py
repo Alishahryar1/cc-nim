@@ -1,5 +1,5 @@
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -75,6 +75,7 @@ class FakeProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self.requests.append(request)
         self.stream_kwargs.append(
@@ -96,6 +97,7 @@ class FakeProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self.responses_requests.append(request)
         self.stream_kwargs.append(
@@ -376,6 +378,7 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
             request_id: str | None = None,
             response_model: str | None = None,
             reasoning: ReasoningPolicy,
+            request_headers: Mapping[str, str] | None = None,
         ) -> AsyncIterator[str]:
             self.requests.append(request)
             self.stream_kwargs.append(

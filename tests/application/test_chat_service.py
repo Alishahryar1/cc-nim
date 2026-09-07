@@ -1,7 +1,7 @@
 import asyncio
 import sqlite3
 import threading
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -232,6 +232,7 @@ class FakeChatProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model, reasoning
         text = "summary" if str(request.system).startswith("Summarize") else "answer"
@@ -305,6 +306,7 @@ class FakeChatProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         raise AssertionError(
             (request, input_tokens, request_id, response_model, reasoning)
@@ -341,6 +343,7 @@ class ContextRecoveryProvider(FakeChatProvider):
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         is_summary = str(request.system).startswith("Summarize")
         if is_summary:
@@ -401,6 +404,7 @@ class MixedFallbackFailureProvider(ContextRecoveryProvider):
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         if self.fail_candidates and not str(request.system).startswith("Summarize"):
             if request.model == "model":
@@ -432,6 +436,7 @@ class BackpressuredCompletionProvider(FakeChatProvider):
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del request, input_tokens, request_id, response_model, reasoning
         yield format_sse_event(
