@@ -1,4 +1,4 @@
-"""OpenCode requires explicit values for client-executed tool-search arguments."""
+"""Explicit argument schemas for providers requiring every search property."""
 
 from collections.abc import Mapping
 

@@ -21,6 +21,8 @@ from free_claude_code.core.openai_responses import (
     ResponsesConversionError,
     ResponsesProviderStream,
     ResponsesStreamFailure,
+    ResponsesToolAdapter,
+    ResponsesToolPolicy,
     build_native_responses_request,
     build_responses_provider_request,
     responses_stream_failure_from_event,
@@ -93,11 +95,13 @@ class OpenAIResponsesTransport:
         endpoint_transport: httpx2.AsyncBaseTransport | None = None,
         event_adapter_factory: Callable[[], ResponsesEventAdapter] | None = None,
         omitted_request_fields: frozenset[str] = frozenset(),
+        tool_policy: ResponsesToolPolicy = ResponsesToolPolicy(),
     ) -> None:
         self._client = client
         self._endpoint_transport = endpoint_transport
         self._event_adapter_factory = event_adapter_factory
         self._omitted_request_fields = omitted_request_fields
+        self._tool_policy = tool_policy
         self._admission = admission
         self._provider_name = provider_name
         self._read_timeout_s = read_timeout_s
@@ -157,17 +161,17 @@ class OpenAIResponsesTransport:
         response_model: str,
         reasoning: ReasoningPolicy,
         endpoint_context: EndpointContext | None = None,
-        presenter_factory: ResponsesPresenterFactory | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens
-        body = self._build_native_body(request, reasoning=reasoning)
+        body, tools = self._build_native_body(request, reasoning=reasoning)
         return self._run_stream(
             body,
             endpoint_context=endpoint_context,
             request_id=request_id,
             response_model=response_model,
-            presenter_factory=presenter_factory
-            or (lambda: NativeResponsesPresenter(public_model=response_model)),
+            presenter_factory=lambda: NativeResponsesPresenter(
+                public_model=response_model, tool_events=tools.event_adapter()
+            ),
         )
 
     def _build_messages_body(
@@ -194,18 +198,23 @@ class OpenAIResponsesTransport:
         request: OpenAIResponsesRequest,
         *,
         reasoning: ReasoningPolicy,
-    ) -> JsonObject:
+    ) -> tuple[JsonObject, ResponsesToolAdapter]:
         if not request.model.strip():
             raise InvalidRequestError("Responses request model must not be empty.")
         if request.input is None or request.input == "" or request.input == []:
             raise InvalidRequestError("Responses request input must not be empty.")
-        return self._prepare_body(
+        try:
+            tools = ResponsesToolAdapter(request, self._tool_policy)
+        except ResponsesConversionError as error:
+            raise InvalidRequestError(str(error)) from error
+        body = self._prepare_body(
             build_native_responses_request(
-                request,
+                tools.request,
                 model=request.model,
                 reasoning=reasoning,
             )
         )
+        return body, tools
 
     def _prepare_body(self, body: JsonObject) -> JsonObject:
         for field in self._omitted_request_fields:

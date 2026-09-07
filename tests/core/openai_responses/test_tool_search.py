@@ -4,7 +4,7 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from free_claude_code.core.json_types import JsonObject
-from free_claude_code.providers.opencode.tool_search import normalize_tool_search
+from free_claude_code.core.openai_responses.tool_search import normalize_tool_search
 
 
 def test_nested_search_arguments_keep_constraints_and_literal_data() -> None:

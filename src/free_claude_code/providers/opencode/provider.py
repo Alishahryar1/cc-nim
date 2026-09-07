@@ -10,7 +10,10 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.openai_responses import OpenAIResponsesRequest
+from free_claude_code.core.openai_responses import (
+    OpenAIResponsesRequest,
+    ResponsesToolPolicy,
+)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -30,7 +33,6 @@ from .catalog import (
     OpenCodeModelRoute,
     OpenCodeUpstreamTransport,
 )
-from .responses_tools import OpenCodeResponsesTools
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +102,11 @@ class OpenCodeProvider(OpenAIChatProvider):
             provider_name=profile.provider_name,
             read_timeout_s=config.http_read_timeout,
             log_raw_sse_events=config.log_raw_sse_events,
+            tool_policy=ResponsesToolPolicy(
+                custom_tools_as_functions=True,
+                explicit_search_parameters=True,
+                text_only_web_search=True,
+            ),
         )
 
     async def cleanup(self) -> None:
@@ -152,9 +159,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         route = self._require_route(snapshot, request.model)
         routed = _routed_responses_request(request, route)
         if route.transport is OpenCodeUpstreamTransport.RESPONSES:
-            self._responses.preflight_responses(
-                OpenCodeResponsesTools(routed).request, reasoning=reasoning
-            )
+            self._responses.preflight_responses(routed, reasoning=reasoning)
             return
         super().preflight_responses(routed, reasoning=reasoning)
 
@@ -258,8 +263,6 @@ class OpenCodeProvider(OpenAIChatProvider):
         selected_stream: AsyncIterator[str] | None = None
         try:
             if route.transport is OpenCodeUpstreamTransport.RESPONSES:
-                tools = OpenCodeResponsesTools(routed)
-                routed = tools.request
                 self._responses.preflight_responses(routed, reasoning=reasoning)
                 selected_stream = self._responses.stream_responses(
                     routed,
@@ -268,9 +271,6 @@ class OpenCodeProvider(OpenAIChatProvider):
                     response_model=response_model,
                     reasoning=reasoning,
                     endpoint_context=endpoint_context,
-                    presenter_factory=(lambda: tools.presenter(response_model))
-                    if tools.customs
-                    else None,
                 )
             else:
                 super().preflight_responses(routed, reasoning=reasoning)

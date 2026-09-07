@@ -10,6 +10,7 @@ from free_claude_code.core.openai_responses import (
     NativeResponsesRelay,
     ResponsesProviderStream,
     ResponsesStreamFailure,
+    ResponsesToolEventAdapter,
 )
 
 
@@ -65,8 +66,11 @@ class MessagesResponsesPresenter:
 class NativeResponsesPresenter:
     """Relay one Responses attempt as native Responses SSE."""
 
-    def __init__(self, *, public_model: str) -> None:
+    def __init__(
+        self, *, public_model: str, tool_events: ResponsesToolEventAdapter | None = None
+    ) -> None:
         self._relay = NativeResponsesRelay(public_model=public_model)
+        self._tool_events = tool_events
 
     @property
     def completed(self) -> bool:
@@ -80,6 +84,11 @@ class NativeResponsesPresenter:
         return ()
 
     def feed(self, event_type: str, payload: JsonObject) -> Iterable[str]:
+        if self._tool_events is not None:
+            return tuple(
+                self._relay.feed(kind, value)
+                for kind, value in self._tool_events.feed(event_type, payload)
+            )
         return (self._relay.feed(event_type, payload),)
 
     def terminal_failure(
@@ -92,7 +101,7 @@ class NativeResponsesPresenter:
             and raw_error.event_type == "response.failed"
             and raw_error.payload is not None
         ):
-            return (self._relay.feed(raw_error.event_type, raw_error.payload),)
+            return self.feed(raw_error.event_type, raw_error.payload)
         return (self._relay.synthesize_failure(failure),)
 
 

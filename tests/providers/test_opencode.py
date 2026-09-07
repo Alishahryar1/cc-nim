@@ -892,6 +892,116 @@ async def test_responses_ingress_uses_catalog_chat_transport_directly() -> None:
     assert events[-1].data["response"]["output"][0]["content"][0]["text"] == ("chat-ok")
 
 
+@pytest.mark.asyncio
+async def test_discovered_custom_tools_survive_sdk_calls_and_replay() -> None:
+    definition = {
+        "type": "namespace",
+        "name": "editor",
+        "description": "Editing tools",
+        "tools": [
+            {
+                "type": "custom",
+                "name": "edit",
+                "format": {"type": "text"},
+                "defer_loading": True,
+                "allowed_callers": ["direct"],
+                "extension": {"keep": True},
+            }
+        ],
+    }
+    expected_tool = definition["tools"][0]
+    assert isinstance(expected_tool, dict)
+    discovery = {
+        "type": "tool_search_output",
+        "call_id": "search_one",
+        "execution": "client",
+        "status": "completed",
+        "tools": [definition],
+    }
+    history = [discovery, {**discovery, "call_id": "search_two"}]
+
+    def upstream(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        for loaded in body["input"][:2]:
+            tool = loaded["tools"][0]["tools"][0]
+            assert tool["type"] == "function"
+            for field in ("defer_loading", "allowed_callers", "extension"):
+                assert tool[field] == expected_tool[field]
+        if len(body["input"]) > 2:
+            assert body["input"][2]["type"] == "function_call"
+            assert json.loads(body["input"][2]["arguments"]) == {"input": "patch"}
+            assert body["input"][3] == {
+                "type": "function_call_output",
+                "call_id": "edit_one",
+                "output": "applied",
+            }
+            return httpx2.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text=_responses_event_stream("done"),
+            )
+        packets = [
+            json.loads(line[6:])
+            for line in _responses_event_stream("done").splitlines()
+            if line.startswith("data: ")
+        ]
+        call = {
+            "type": "function_call",
+            "id": "edit_item",
+            "call_id": "edit_one",
+            "name": tool["name"],
+            "arguments": '{"input":"patch"}',
+            "status": "completed",
+        }
+        events = [
+            packets[0],
+            {
+                "type": "response.output_item.added",
+                "output_index": 0,
+                "item": {**call, "status": "in_progress", "arguments": ""},
+            },
+            {"type": "response.output_item.done", "output_index": 0, "item": call},
+            {**packets[-1], "response": {**packets[-1]["response"], "output": [call]}},
+        ]
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text="".join(
+                "data: " + json.dumps({**event, "sequence_number": i}) + "\n\n"
+                for i, event in enumerate(events)
+            ),
+        )
+
+    provider, requests, _ = _provider_with_wire_transports(
+        _catalog_payload(), generation_response=upstream
+    )
+    try:
+        response = await _collect_responses(
+            provider, "responses-selector", input=history
+        )
+        call = parse_sse_text(response)[-1].data["response"]["output"][0]
+        assert call["type"] == "custom_tool_call"
+        assert call["name"] == "edit" and call["namespace"] == "editor"
+        reply = await _collect_responses(
+            provider,
+            "responses-selector",
+            input=[
+                *history,
+                call,
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "edit_one",
+                    "output": "applied",
+                },
+            ],
+        )
+        assert "done" in reply
+    finally:
+        await provider.cleanup()
+    assert len(requests) == 2
+    assert history[0]["tools"] == [definition]
+
+
 @pytest.mark.parametrize(
     (
         "wire_api",
