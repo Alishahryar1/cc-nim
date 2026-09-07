@@ -23,7 +23,11 @@ from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
 from .errors import ResponsesConversionError
 from .models import OpenAIResponsesRequest
 from .reasoning_replay import decode_messages_reasoning
-from .tools import ResponsesToolIdentity, responses_tool_name_to_anthropic_name
+from .tools import (
+    ResponsesToolIdentity,
+    custom_tool_input_schema,
+    flatten_responses_tool_name,
+)
 
 _REQUEST_FIELDS = {
     "model",
@@ -167,9 +171,7 @@ class _ToolScope:
             self.tools.append(body)
 
     def _register(self, identity: ResponsesToolIdentity) -> None:
-        name = responses_tool_name_to_anthropic_name(
-            identity.name, namespace=identity.namespace
-        )
+        name = flatten_responses_tool_name(identity.name, namespace=identity.namespace)
         previous = self._flat.get(name)
         if previous is not None and previous != identity:
             raise ResponsesConversionError(
@@ -213,9 +215,7 @@ class _ToolScope:
                     )
                 _fields(format_value, {"type"}, "Custom tool format")
             body["input_schema"] = {
-                "type": "object",
-                "properties": {"input": {"type": "string"}},
-                "required": ["input"],
+                **custom_tool_input_schema(description=None),
                 "additionalProperties": False,
             }
         else:
@@ -233,9 +233,7 @@ class _ToolScope:
         return identity, body
 
     def alias(self, identity: ResponsesToolIdentity) -> str:
-        name = responses_tool_name_to_anthropic_name(
-            identity.name, namespace=identity.namespace
-        )
+        name = flatten_responses_tool_name(identity.name, namespace=identity.namespace)
         if self._flat.get(name) != identity:
             raise ResponsesConversionError("Unknown tool identity.")
         return self._codec.encode(name)

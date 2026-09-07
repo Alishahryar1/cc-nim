@@ -33,7 +33,7 @@ from free_claude_code.core.openai_responses import (
     openai_error_from_failure,
     reasoning_output_item,
     replay_unsafe_function_call_error,
-    responses_tool_identity_from_anthropic_name,
+    responses_tool_identity_from_wire_name,
     tool_item,
 )
 from free_claude_code.core.token_estimation import estimate_text_tokens
@@ -608,7 +608,7 @@ class ResponsesChatStreamOutput(ChatStreamOutput):
         return self._completer.complete_block(state)
 
     def _start_tool_block(self, tool_index: int, state: ChatToolState) -> str:
-        identity = responses_tool_identity_from_anthropic_name(
+        identity = responses_tool_identity_from_wire_name(
             self._request.tools, state.name
         )
         output_index = self._ledger.reserve_output_slot()
