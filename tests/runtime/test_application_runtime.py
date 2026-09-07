@@ -1330,3 +1330,35 @@ async def test_composition_publishes_startup_notice_after_runtime_and_repair() -
     assert "plans_directory" not in manager_constructor.call_args.kwargs
 
     assert await runtime.close() is True
+
+
+@pytest.mark.asyncio
+async def test_folder_picker_is_stopped_before_http_shutdown_drains(monkeypatch):
+    import uvicorn
+
+    from free_claude_code.cli.commands import RuntimeServer
+
+    runtime, _manager = _runtime_with_admin_provider(AdminModelProvider())
+    started = asyncio.Event()
+    signals = []
+
+    async def select(_initial, stop):
+        signals.append(stop)
+        started.set()
+        await stop.wait()
+        return None
+
+    monkeypatch.setattr(runtime._folder_picker, "_select", select)
+    request = asyncio.create_task(runtime.pick_folder(None))
+    await started.wait()
+
+    async def drain(_server, sockets=None):
+        assert signals[0].is_set()
+        assert await request is None
+
+    monkeypatch.setattr(uvicorn.Server, "shutdown", drain)
+    server = RuntimeServer(
+        uvicorn.Config("unused:app"), begin_shutdown=runtime.begin_shutdown
+    )
+    await server.shutdown()
+    assert await runtime.close() is True

@@ -167,6 +167,7 @@ function setActiveView(viewId, { scroll = false } = {}) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   if (activeView.id === "code") window.CodeSessions.activate(window.location.pathname);
+  else window.CodeSessions.deactivate();
 }
 
 function navigateToView(viewId) {
@@ -547,7 +548,7 @@ function updateProviderCheckResult(providerId, status, message) {
 
 function renderSections(sections, fields) {
   state.modelComboboxes.clear();
-  VIEW_GROUPS.forEach((view) => {
+  VIEW_GROUPS.filter((view) => view.sections.length).forEach((view) => {
     byId(view.containerId).innerHTML = "";
   });
 

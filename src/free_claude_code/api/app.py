@@ -36,7 +36,7 @@ from .request_ids import (
     attach_request_id_headers,
     get_request_id,
 )
-from .request_lifetime import InferenceRequestLifetimeMiddleware
+from .request_lifetime import ClientRequestLifetimeMiddleware
 from .routes import router
 from .validation_log import summarize_request_validation_body
 
@@ -46,7 +46,7 @@ def create_app(services: ApiServices) -> FastAPI:
     app = FastAPI(title="Claude Code Proxy", version=package_version())
     app.state.services = services
     app.add_middleware(AdminNoStoreMiddleware)
-    app.add_middleware(InferenceRequestLifetimeMiddleware)
+    app.add_middleware(ClientRequestLifetimeMiddleware)
     app.add_middleware(RequestCorrelationMiddleware)
 
     app.include_router(admin_router)

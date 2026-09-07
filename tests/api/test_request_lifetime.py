@@ -1,4 +1,4 @@
-"""Inference request lifetime contracts at the pure-ASGI boundary."""
+"""Client-owned request lifetime contracts at the pure-ASGI boundary."""
 
 import asyncio
 import json
@@ -11,7 +11,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import AdminRuntimePort, ApiServices
 from free_claude_code.api.request_lifetime import (
-    InferenceRequestLifetimeMiddleware,
+    ClientRequestLifetimeMiddleware,
 )
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import (
@@ -65,7 +65,7 @@ async def _unused_send(_message: Message) -> None:
         cast(Scope, {"type": "lifespan", "asgi": {"version": "3.0"}}),
     ],
 )
-async def test_non_inference_scopes_delegate_with_original_callables(
+async def test_other_scopes_delegate_with_original_callables(
     scope: Scope,
 ) -> None:
     observed: tuple[Scope, Receive, Send] | None = None
@@ -84,7 +84,7 @@ async def test_non_inference_scopes_delegate_with_original_callables(
         nonlocal observed
         observed = (received_scope, received_receive, received_send)
 
-    await InferenceRequestLifetimeMiddleware(cast(ASGIApp, app))(
+    await ClientRequestLifetimeMiddleware(cast(ASGIApp, app))(
         scope,
         receive,
         send,
@@ -99,6 +99,7 @@ async def test_non_inference_scopes_delegate_with_original_callables(
     [
         "/v1/messages",
         "/v1/responses",
+        "/admin/api/code/folder-picker",
     ],
 )
 async def test_request_body_frames_are_relayed_once_in_order(path: str) -> None:
@@ -132,7 +133,7 @@ async def test_request_body_frames_are_relayed_once_in_order(path: str) -> None:
         received.append(await app_receive())
         received.append(await app_receive())
 
-    await InferenceRequestLifetimeMiddleware(cast(ASGIApp, app))(
+    await ClientRequestLifetimeMiddleware(cast(ASGIApp, app))(
         _http_scope(path),
         receive,
         _unused_send,
@@ -162,7 +163,7 @@ async def test_receive_pump_buffers_only_a_bounded_number_of_frames() -> None:
         await stop_app.wait()
 
     request = asyncio.create_task(
-        InferenceRequestLifetimeMiddleware(cast(ASGIApp, app))(
+        ClientRequestLifetimeMiddleware(cast(ASGIApp, app))(
             _http_scope(),
             receive,
             _unused_send,
@@ -187,6 +188,8 @@ type DisconnectScenario = Callable[
 async def _run_disconnect_scenario(
     app: DisconnectScenario,
     ready: asyncio.Event,
+    *,
+    path: str = "/v1/messages",
 ) -> list[Message]:
     allow_disconnect = asyncio.Event()
     body_consumed = asyncio.Event()
@@ -210,8 +213,8 @@ async def _run_disconnect_scenario(
         sent.append(message)
 
     request = asyncio.create_task(
-        InferenceRequestLifetimeMiddleware(app)(
-            _http_scope(),
+        ClientRequestLifetimeMiddleware(app)(
+            _http_scope(path),
             receive,
             send,
         )
@@ -224,7 +227,10 @@ async def _run_disconnect_scenario(
 
 
 @pytest.mark.asyncio
-async def test_disconnect_before_response_start_cancels_application() -> None:
+@pytest.mark.parametrize(
+    "path", ["/v1/messages", "/v1/responses", "/admin/api/code/folder-picker"]
+)
+async def test_disconnect_before_response_start_cancels_application(path: str) -> None:
     app_started = asyncio.Event()
     app_closed = asyncio.Event()
 
@@ -236,7 +242,7 @@ async def test_disconnect_before_response_start_cancels_application() -> None:
         finally:
             app_closed.set()
 
-    sent = await _run_disconnect_scenario(app, app_started)
+    sent = await _run_disconnect_scenario(app, app_started, path=path)
 
     assert sent == []
     assert app_closed.is_set()
@@ -303,7 +309,7 @@ async def test_application_error_wins_and_receive_pump_is_closed() -> None:
         raise RuntimeError("application failed")
 
     with pytest.raises(RuntimeError, match="application failed"):
-        await InferenceRequestLifetimeMiddleware(cast(ASGIApp, app))(
+        await ClientRequestLifetimeMiddleware(cast(ASGIApp, app))(
             _http_scope(),
             receive,
             _unused_send,
@@ -326,7 +332,7 @@ async def test_receive_error_cancels_application_and_is_preserved() -> None:
             app_closed.set()
 
     with pytest.raises(RuntimeError, match="receive failed"):
-        await InferenceRequestLifetimeMiddleware(cast(ASGIApp, app))(
+        await ClientRequestLifetimeMiddleware(cast(ASGIApp, app))(
             _http_scope(),
             receive,
             _unused_send,
@@ -365,7 +371,7 @@ async def test_outer_cancellation_drains_both_owned_tasks() -> None:
             app_closed.set()
 
     request = asyncio.create_task(
-        InferenceRequestLifetimeMiddleware(cast(ASGIApp, app))(
+        ClientRequestLifetimeMiddleware(cast(ASGIApp, app))(
             _http_scope(),
             receive,
             _unused_send,

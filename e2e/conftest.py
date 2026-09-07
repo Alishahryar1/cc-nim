@@ -31,6 +31,7 @@ from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.asgi import RuntimeASGIApp
 from free_claude_code.runtime.configuration import ConfigurationService
+from free_claude_code.runtime.folder_picker import NativeFolderPicker
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 
 
@@ -182,6 +183,11 @@ def admin_base_url(
         configuration=ConfigurationService(ManagedConfigStore()),
         transcriber=None,
         code_service=code_control.service,
+    )
+    monkeypatch.setattr(
+        NativeFolderPicker,
+        "_select",
+        lambda _picker, initial, stop: code_control.folder_picker.select(initial, stop),
     )
     app = RuntimeASGIApp(
         create_app(
