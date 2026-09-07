@@ -308,7 +308,7 @@ async def test_tpm_and_reasoning_corrections_compose(
     execution = provider._admission.start_execution()
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, accepted_body, attempt = await provider._create_stream(
+        _stream, accepted_body, attempt, _sent_body = await provider._create_stream(
             body,
             execution,
             ProviderOperationKind.GENERATION,
@@ -331,14 +331,19 @@ async def test_distinct_bodies_get_independent_tpm_corrections() -> None:
     create = AsyncMock(side_effect=[_status_error(), object(), second_error, object()])
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, first_body, first_attempt = await provider._create_stream(
+        _stream, first_body, first_attempt, _sent_body = await provider._create_stream(
             _body(),
             execution,
             ProviderOperationKind.CONTINUATION,
         )
         await first_attempt.accept()
         await first_attempt.aclose()
-        _stream, second_body, second_attempt = await provider._create_stream(
+        (
+            _stream,
+            second_body,
+            second_attempt,
+            _sent_body,
+        ) = await provider._create_stream(
             _body(20_000),
             execution,
             ProviderOperationKind.TOOL_REPAIR,

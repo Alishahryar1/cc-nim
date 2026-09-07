@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
@@ -106,6 +107,7 @@ class StalledProvider:
         _request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         del reasoning
 
@@ -126,6 +128,7 @@ class StalledProvider:
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model, reasoning
         try:

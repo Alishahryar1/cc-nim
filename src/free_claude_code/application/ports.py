@@ -20,6 +20,7 @@ class ProviderPort(Protocol):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None: ...
 
     def stream_messages(
@@ -31,6 +32,7 @@ class ProviderPort(Protocol):
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]: ...
 
     def preflight_responses(

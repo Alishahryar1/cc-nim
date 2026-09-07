@@ -19,7 +19,11 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.core.model_capabilities import ModelInputModality
-from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.core.reasoning import (
+    ReasoningCapability,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
@@ -403,6 +407,7 @@ async def test_model_catalog_filters_modalities_and_maps_reasoning_capability(
             ProviderModelInfo(
                 "plain-chat",
                 supports_thinking=False,
+                reasoning_capability=ReasoningCapability.NONE,
                 input_modalities=frozenset({ModelInputModality.TEXT}),
             ),
             ProviderModelInfo(

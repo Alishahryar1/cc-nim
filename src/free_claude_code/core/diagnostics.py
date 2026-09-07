@@ -56,6 +56,18 @@ class UpstreamErrorDetail:
     category_hint: str | None = None
     body_truncated: bool = False
 
+    def is_invalid_request(self, *, code: object = None) -> bool:
+        """Recognize HTTP validation failures and explicit streamed equivalents."""
+        if self.status_code is not None:
+            return self.status_code in {400, 422}
+        codes = {
+            "invalid_request_error",
+            "invalid_request",
+            "unsupported_parameter",
+            "unsupported_value",
+        }
+        return self.category_hint in codes or (isinstance(code, str) and code in codes)
+
 
 def redact_sensitive_error_text(text: str) -> str:
     """Redact recognizable credentials while preserving diagnostic context."""

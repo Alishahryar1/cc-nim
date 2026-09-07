@@ -48,6 +48,10 @@ _PROFILE = OpenAIChatProfile(
 class MistralProvider(OpenAIChatProvider):
     """Mistral API using ``https://api.mistral.ai/v1/chat/completions``."""
 
+    @property
+    def _reasoning_off_fields(self) -> tuple[tuple[str, ...], ...]:
+        return (("reasoning_effort",),)
+
     def __init__(
         self, config: ProviderConfig, *, admission: ProviderAdmissionController
     ):

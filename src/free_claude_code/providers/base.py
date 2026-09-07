@@ -50,6 +50,7 @@ class BaseProvider(ABC):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         """Validate a Messages request before opening its SSE stream."""
 
@@ -123,6 +124,7 @@ class BaseProvider(ABC):
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
 

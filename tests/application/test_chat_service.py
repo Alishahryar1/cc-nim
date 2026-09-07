@@ -212,6 +212,7 @@ class FakeChatProvider:
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         del reasoning
         self.requests.append(request)
@@ -233,6 +234,7 @@ class FakeChatProvider:
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model, reasoning
         text = "summary" if str(request.system).startswith("Summarize") else "answer"
@@ -344,6 +346,7 @@ class ContextRecoveryProvider(FakeChatProvider):
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         is_summary = str(request.system).startswith("Summarize")
         if is_summary:
@@ -405,6 +408,7 @@ class MixedFallbackFailureProvider(ContextRecoveryProvider):
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         if self.fail_candidates and not str(request.system).startswith("Summarize"):
             if request.model == "model":
@@ -437,6 +441,7 @@ class BackpressuredCompletionProvider(FakeChatProvider):
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         del request, input_tokens, request_id, response_model, reasoning
         yield format_sse_event(

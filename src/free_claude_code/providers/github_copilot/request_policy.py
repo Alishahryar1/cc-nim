@@ -16,6 +16,9 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatRequestPolicy,
 )
+from free_claude_code.providers.reasoning_compatibility import (
+    prepare_messages_reasoning,
+)
 
 from .types import CopilotModel
 
@@ -52,6 +55,18 @@ def non_messages_reasoning(
     model: CopilotModel,
 ) -> ReasoningPolicy:
     """Reject controls these egresses cannot encode before any inference."""
+    if policy.control is ReasoningControl.PREFER_OFF and isinstance(
+        request, MessagesRequest
+    ):
+        prepared, wire_policy = prepare_messages_reasoning(
+            request,
+            policy,
+            model_info=model.info,
+            can_disable="none" in (model.supported_efforts or ()),
+            normal_max_tokens=None,
+        )
+        non_messages_reasoning(prepared, wire_policy, model)
+        return policy
     raw_effort = (
         (request.output_config.get("effort") if request.output_config else None)
         if isinstance(request, MessagesRequest)

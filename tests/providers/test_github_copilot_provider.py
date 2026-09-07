@@ -29,6 +29,7 @@ from free_claude_code.core.openai_responses.reasoning_replay import (
 )
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
+    ReasoningCapability,
     ReasoningEffort,
     ReasoningPolicy,
 )
@@ -244,6 +245,66 @@ class Harness:
         await self.provider.cleanup()
         assert self.runtime.close_calls == 0
         await self.auth.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("egress", list(CopilotEgress))
+@pytest.mark.parametrize("supports_off", [False, True])
+async def test_classifier_uses_current_lease_controls_and_clears_raw_hints(
+    tmp_path, egress, supports_off
+):
+    harness = Harness(tmp_path, egress)
+    current = harness.runtime.available[0]
+    efforts = ("none", "high") if supports_off else ("high",)
+    harness.runtime.available = (
+        replace(
+            current,
+            supported_efforts=efforts,
+            info=replace(
+                current.info,
+                reasoning_capability=ReasoningCapability.OPTIONAL
+                if supports_off
+                else ReasoningCapability.UNKNOWN,
+            ),
+        ),
+    )
+    request = MessagesRequest.model_validate(
+        {
+            "model": harness.runtime.name,
+            "messages": [{"role": "user", "content": "classify"}],
+            "max_tokens": 64,
+            "thinking": {"type": "enabled", "budget_tokens": 1024},
+            "output_config": {"effort": "xhigh"},
+        }
+    )
+    try:
+        output = [
+            event
+            async for event in harness.provider.stream_messages(
+                request,
+                reasoning=ReasoningPolicy.prefer_off(),
+                model_info=ProviderModelInfo(
+                    harness.runtime.name, reasoning_capability=ReasoningCapability.NONE
+                ),
+            )
+        ]
+        assert text_content(parse_sse_text("".join(output))) == "ok"
+        body = json.loads(harness.seen[0].content)
+        if egress is CopilotEgress.MESSAGES:
+            assert body["thinking"] == {"type": "disabled"}
+            assert body["max_tokens"] == (64 if supports_off else 4096)
+        elif egress is CopilotEgress.RESPONSES:
+            assert body.get("reasoning") == (
+                {"effort": "none"} if supports_off else None
+            )
+            assert body.get("max_output_tokens") == (64 if supports_off else None)
+        else:
+            assert body.get("reasoning_effort") == ("none" if supports_off else None)
+            assert body.get("max_tokens") == (64 if supports_off else None)
+        assert request.thinking is not None and request.thinking.budget_tokens == 1024
+        assert all(wire.closed for wire in harness.wires)
+    finally:
+        await harness.close()
 
 
 def _request(

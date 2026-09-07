@@ -8,9 +8,17 @@ import httpx2
 import openai
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
-from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
-from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.core.anthropic.stream_contracts import (
+    parse_sse_text,
+    text_content,
+)
+from free_claude_code.core.reasoning import (
+    ReasoningCapability,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from free_claude_code.providers.admission import ProviderOperationKind
 from free_claude_code.providers.groq import GroqProvider
 from free_claude_code.providers.groq.client import (
@@ -89,6 +97,61 @@ def _chunk(*, content: str | None = None, finish_reason: str | None = None):
 async def _successful_stream(text: str = "visible"):
     yield _chunk(content=text)
     yield _chunk(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "`reasoning_effort` must be one of `default`",
+        "reasoning_effort value `none` must be one of `default`",
+        "accepted options for reasoning_effort include default",
+    ],
+)
+async def test_classifier_correction_does_not_change_later_requests(message):
+    provider = _provider()
+    sent = []
+
+    async def create(**body):
+        sent.append(body)
+        if len(sent) == 1:
+            raise _BadRequest(message, body={"message": message})
+        return _successful_stream("<severity>0</severity>")
+
+    try:
+        with patch.object(provider._client.chat.completions, "create", create):
+            classifier = "".join(
+                [
+                    event
+                    async for event in provider.stream_messages(
+                        make_messages_request(_MODEL, max_tokens=64),
+                        reasoning=ReasoningPolicy.prefer_off(),
+                        model_info=ProviderModelInfo(
+                            _MODEL, reasoning_capability=ReasoningCapability.OPTIONAL
+                        ),
+                    )
+                ]
+            )
+            ordinary = "".join(
+                [
+                    event
+                    async for event in provider.stream_messages(
+                        _request(),
+                        reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+                    )
+                ]
+            )
+    finally:
+        await provider.cleanup()
+
+    assert text_content(parse_sse_text(classifier)) == "<severity>0</severity>"
+    assert text_content(parse_sse_text(ordinary)) == "<severity>0</severity>"
+    assert len(sent) == 3
+    assert sent[2]["reasoning_effort"] == "high"
+    assert sent[0]["reasoning_effort"] == "none"
+    assert sent[0]["max_completion_tokens"] == 64
+    assert "reasoning_effort" not in sent[1]
+    assert "max_completion_tokens" not in sent[1]
 
 
 def test_parse_exact_issue_vocabulary_excludes_rejected_value() -> None:
@@ -346,7 +409,7 @@ async def test_exact_issue_retries_with_default_and_learns_model() -> None:
     create = AsyncMock(side_effect=[_vocabulary_error(), object()])
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, used_body, attempt = await provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -365,7 +428,12 @@ async def test_exact_issue_retries_with_default_and_learns_model() -> None:
     assert next_body["reasoning_effort"] == "default"
     next_create = AsyncMock(return_value=object())
     with patch.object(provider._client.chat.completions, "create", next_create):
-        _stream, next_used_body, next_attempt = await provider._create_stream(
+        (
+            _stream,
+            next_used_body,
+            next_attempt,
+            _sent_body,
+        ) = await provider._create_stream(
             next_body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -435,7 +503,7 @@ async def test_unknown_vocabulary_retries_without_effort_and_negative_caches() -
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, used_body, attempt = await provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -490,7 +558,7 @@ async def test_concurrent_first_requests_can_learn_without_state_corruption() ->
         return object()
 
     async def execute(body: dict):
-        _stream, used_body, attempt = await provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -526,7 +594,7 @@ async def test_stale_cache_self_heals_without_guessing_original_effort() -> None
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, corrected_body, attempt = await provider._create_stream(
+        _stream, corrected_body, attempt, _sent_body = await provider._create_stream(
             cached_body,
             provider._admission.start_execution(),
             ProviderOperationKind.GENERATION,
@@ -657,7 +725,7 @@ async def test_output_cap_and_reasoning_corrections_share_one_session() -> None:
     execution = provider._admission.start_execution()
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream, used_body, attempt = await provider._create_stream(
+        _stream, used_body, attempt, _sent_body = await provider._create_stream(
             body,
             execution,
             ProviderOperationKind.GENERATION,

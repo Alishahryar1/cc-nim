@@ -144,6 +144,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         """Validate synchronously when a route snapshot is already warm."""
         snapshot = self._catalog.current_snapshot
@@ -152,9 +153,13 @@ class OpenCodeProvider(OpenAIChatProvider):
         route = self._require_route(snapshot, request.model)
         routed = _routed_messages_request(request, route)
         if route.transport is OpenCodeUpstreamTransport.RESPONSES:
-            self._responses.preflight_messages(routed, reasoning=reasoning)
+            self._responses.preflight_messages(
+                routed, reasoning=reasoning, model_info=route.model_info
+            )
             return
-        super().preflight_messages(routed, reasoning=reasoning)
+        super().preflight_messages(
+            routed, reasoning=reasoning, model_info=route.model_info
+        )
 
     def preflight_responses(
         self,
@@ -183,6 +188,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
         endpoint_context: EndpointContext | None = None,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         return self._dispatch_stream(
             request,
@@ -211,7 +217,9 @@ class OpenCodeProvider(OpenAIChatProvider):
         selected_stream: AsyncIterator[str] | None = None
         try:
             if route.transport is OpenCodeUpstreamTransport.RESPONSES:
-                self._responses.preflight_messages(routed, reasoning=reasoning)
+                self._responses.preflight_messages(
+                    routed, reasoning=reasoning, model_info=route.model_info
+                )
                 selected_stream = self._responses.stream_messages(
                     routed,
                     input_tokens=input_tokens,
@@ -220,9 +228,12 @@ class OpenCodeProvider(OpenAIChatProvider):
                     reasoning=reasoning,
                     endpoint_context=endpoint_context,
                     extra_headers=self._upstream_headers(request_headers or {}),
+                    model_info=route.model_info,
                 )
             else:
-                super().preflight_messages(routed, reasoning=reasoning)
+                super().preflight_messages(
+                    routed, reasoning=reasoning, model_info=route.model_info
+                )
                 selected_stream = super().stream_messages(
                     routed,
                     input_tokens=input_tokens,
@@ -231,6 +242,7 @@ class OpenCodeProvider(OpenAIChatProvider):
                     reasoning=reasoning,
                     endpoint_context=endpoint_context,
                     request_headers=request_headers,
+                    model_info=route.model_info,
                 )
             async for event in selected_stream:
                 yield event

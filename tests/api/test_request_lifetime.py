@@ -398,6 +398,7 @@ class _ControlledProvider:
         _request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         del reasoning
 
@@ -418,6 +419,7 @@ class _ControlledProvider:
         response_model: str,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, response_model, reasoning
         self.request_ids.append(request_id)
@@ -478,7 +480,7 @@ class _Requests:
     async def acquire(
         self, *, include_model_infos: bool = False
     ) -> RequestRuntimeLease:
-        assert include_model_infos is False
+        del include_model_infos
         return self._lease
 
     def current_settings(self) -> Settings:

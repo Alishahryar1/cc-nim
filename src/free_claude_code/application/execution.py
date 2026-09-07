@@ -29,6 +29,7 @@ from free_claude_code.core.trace import (
     traced_async_stream,
 )
 
+from .model_metadata import ProviderModelInfo
 from .ports import ProviderResolver
 from .routing import (
     ProviderModelTarget,
@@ -61,10 +62,12 @@ class ProviderExecutor:
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
         request_headers: Mapping[str, str] | None = None,
+        model_infos: tuple[ProviderModelInfo, ...] = (),
     ) -> None:
         if not math.isfinite(progress_timeout_seconds) or progress_timeout_seconds <= 0:
             raise ValueError("progress_timeout_seconds must be finite and positive")
         self._provider_resolver = provider_resolver
+        self._model_infos = {info.model_id: info for info in model_infos}
         self._token_counter = token_counter
         self._responses_token_counter = responses_token_counter
         self._generation_id = generation_id
@@ -179,6 +182,7 @@ class ProviderExecutor:
             primary_provider.preflight_messages(
                 primary_request,
                 reasoning=routed.reasoning,
+                model_info=self._model_infos.get(primary.provider_model_ref),
             )
         except ExecutionFailure as failure:
             primary_failure = failure
@@ -208,13 +212,18 @@ class ProviderExecutor:
             if index == 0 and primary_failure is not None:
                 raise primary_failure
             if index > 0:
-                provider.preflight_messages(request, reasoning=routed.reasoning)
+                provider.preflight_messages(
+                    request,
+                    reasoning=routed.reasoning,
+                    model_info=self._model_infos.get(target.provider_model_ref),
+                )
             return provider.stream_messages(
                 request,
                 input_tokens=input_tokens,
                 request_id=request_id,
                 response_model=routed.resolved.original_model,
                 reasoning=routed.reasoning,
+                model_info=self._model_infos.get(target.provider_model_ref),
                 request_headers=self._request_headers,
             )
 

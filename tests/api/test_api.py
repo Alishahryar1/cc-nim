@@ -193,7 +193,7 @@ def test_auto_mode_classifier_without_stream_returns_json(client: TestClient):
     assert body["usage"] == {"input_tokens": 0, "output_tokens": 0}
     routed_request = _stream_messages_calls[0][0][0]
     assert routed_request.stream is False
-    assert _stream_messages_calls[0][1]["reasoning"] == ReasoningPolicy.off()
+    assert _stream_messages_calls[0][1]["reasoning"] == ReasoningPolicy.prefer_off()
 
 
 def test_create_message_ingress_error_has_request_id_without_terminal_header(

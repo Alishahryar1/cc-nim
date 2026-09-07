@@ -75,6 +75,7 @@ class _ModelListingProvider(BaseProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         return None
 
@@ -103,6 +104,7 @@ class _ModelListingProvider(BaseProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         del input_tokens, request_id, response_model
         summary = str(request.system).startswith("Summarize")

@@ -52,7 +52,11 @@ class FakeProvider:
         ]
 
     def preflight_messages(
-        self, request: MessagesRequest, *, reasoning: ReasoningPolicy
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         self.preflight_calls.append((request, reasoning))
 
@@ -76,6 +80,7 @@ class FakeProvider:
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         self.requests.append(request)
         self.stream_kwargs.append(
@@ -170,6 +175,7 @@ async def test_messages_handler_preflight_invalid_request_stays_http_error(
             request: MessagesRequest,
             *,
             reasoning: ReasoningPolicy,
+            model_info: ProviderModelInfo | None = None,
         ) -> None:
             raise InvalidRequestError("bad tool shape")
 
@@ -379,6 +385,7 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
             response_model: str | None = None,
             reasoning: ReasoningPolicy,
             request_headers: Mapping[str, str] | None = None,
+            model_info: ProviderModelInfo | None = None,
         ) -> AsyncIterator[str]:
             self.requests.append(request)
             self.stream_kwargs.append(
@@ -446,8 +453,8 @@ async def test_messages_handler_normalizes_safety_classifier_policy(
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
-    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.prefer_off()
+    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.prefer_off()
     assert provider.requests[0].model == "test-model"
     assert provider.requests[0].system == system
     assert provider.preflight_calls[0][0].stop_sequences is None
@@ -507,7 +514,7 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
 
 
 @pytest.mark.asyncio
-async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> None:
+async def test_messages_handler_tolerates_required_thinking_for_classifier() -> None:
     provider = FakeProvider()
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
@@ -524,8 +531,8 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
-    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.prefer_off()
+    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.prefer_off()
     assert provider.requests[0].stop_sequences is None
     assert request.stop_sequences == ["</block>"]
     assert _trace_events(
@@ -537,14 +544,14 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
             "source": "api",
             "model": "claude-3-freecc-no-thinking/nvidia_nim/test-model",
             "classifier_stop_sequence": "</block>",
-            "reasoning_changed": False,
+            "reasoning_changed": True,
             "stop_sequence_removed": True,
         }
     ]
 
 
 @pytest.mark.asyncio
-async def test_messages_handler_forces_no_thinking_without_classifier_stop_hint() -> (
+async def test_messages_handler_prefers_no_thinking_without_classifier_stop_hint() -> (
     None
 ):
     provider = FakeProvider()
@@ -562,7 +569,7 @@ async def test_messages_handler_forces_no_thinking_without_classifier_stop_hint(
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.prefer_off()
     assert provider.requests[0].stop_sequences is None
     assert _trace_events(
         trace_mock, "free_claude_code.api.route.safety_classifier_policy"
@@ -597,7 +604,7 @@ async def test_messages_handler_preserves_unowned_classifier_stop_sequences() ->
     assert isinstance(response, StreamingResponse)
     await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.prefer_off()
     assert provider.preflight_calls[0][0].stop_sequences == [
         "custom",
         "custom",

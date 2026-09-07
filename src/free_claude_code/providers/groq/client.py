@@ -25,6 +25,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIModelListing,
     validate_extra_body_does_not_override_reasoning_fields,
 )
+from free_claude_code.providers.reasoning_compatibility import ReasoningCorrection
 
 from .tpm import correct_tpm_completion_budget
 
@@ -117,6 +118,10 @@ class GroqProvider(OpenAIChatProvider):
             return body
         return _rewrite_reasoning_effort(body, accepted) or body
 
+    def _reasoning_disable_rejected(self, error: Exception) -> bool:
+        accepted = _parse_reasoning_vocabulary(error)
+        return accepted is not None and "none" not in accepted
+
     def _get_retry_request_body(
         self, error: Exception, body: dict[str, Any]
     ) -> dict[str, Any] | None:
@@ -143,8 +148,17 @@ class GroqProvider(OpenAIChatProvider):
         error: Exception,
         body: JsonObject,
         used_retry_kinds: set[str],
+        *,
+        reasoning_correction: ReasoningCorrection | None = None,
+        sent_body: Mapping[str, Any] | None = None,
     ) -> JsonObject | None:
-        retry_body = super()._next_create_retry_body(error, body, used_retry_kinds)
+        retry_body = super()._next_create_retry_body(
+            error,
+            body,
+            used_retry_kinds,
+            reasoning_correction=reasoning_correction,
+            sent_body=sent_body,
+        )
         if retry_body is not None or "groq_tpm" in used_retry_kinds:
             return retry_body
 

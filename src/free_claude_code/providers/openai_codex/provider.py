@@ -24,6 +24,7 @@ from free_claude_code.providers.http import ProviderAttemptScope
 from free_claude_code.providers.model_listing import (
     optional_input_modalities,
     optional_positive_int,
+    reasoning_capability_from_options,
 )
 from free_claude_code.providers.openai_responses import OpenAIResponsesTransport
 
@@ -96,8 +97,11 @@ class OpenAICodexProvider(BaseProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
-        self._responses.preflight_messages(request, reasoning=reasoning)
+        self._responses.preflight_messages(
+            request, reasoning=reasoning, model_info=model_info
+        )
 
     def preflight_responses(
         self,
@@ -174,6 +178,7 @@ class OpenAICodexProvider(BaseProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         return self._responses.stream_messages(
             request,
@@ -182,6 +187,7 @@ class OpenAICodexProvider(BaseProvider):
             response_model=response_model or request.model,
             reasoning=reasoning,
             endpoint_context=self._endpoint(session_id=str(uuid.uuid4())),
+            model_info=model_info,
         )
 
     def stream_responses(
@@ -233,6 +239,13 @@ def _model_infos(payload: Any) -> frozenset[ProviderModelInfo]:
             ProviderModelInfo(
                 model_id=model_id,
                 supports_thinking=_supports_reasoning(efforts),
+                reasoning_capability=reasoning_capability_from_options(
+                    {
+                        "supported_efforts": [level["effort"] for level in efforts]
+                        if _supports_reasoning(efforts) is not None
+                        else None,
+                    }
+                ),
                 input_modalities=optional_input_modalities(
                     model.get("input_modalities")
                 ),

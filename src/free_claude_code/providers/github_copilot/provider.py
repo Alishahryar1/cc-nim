@@ -120,6 +120,7 @@ class GitHubCopilotProvider(BaseProvider):
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        model_info: ProviderModelInfo | None = None,
     ) -> None:
         # Endpoint family and capabilities belong to the current account lease.
         # Conversion runs after acquisition and before opening the physical stream.
@@ -151,6 +152,7 @@ class GitHubCopilotProvider(BaseProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
         request_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
         self.preflight_messages(request, reasoning=reasoning)
         return self._dispatch(
@@ -236,6 +238,7 @@ class GitHubCopilotProvider(BaseProvider):
                                 request_id=request_id,
                                 response_model=response_model,
                                 reasoning=reasoning,
+                                model_info=lease.model.info,
                             )
                         else:
                             selected = native.stream_responses(
@@ -255,14 +258,28 @@ class GitHubCopilotProvider(BaseProvider):
                             else self._chat(lease.model)
                         )
                         if isinstance(request, MessagesRequest):
-                            selected = transport.stream_messages(
-                                request,
-                                input_tokens=input_tokens,
-                                request_id=request_id,
-                                response_model=response_model,
-                                reasoning=resolved,
-                                endpoint_context=lease,
-                            )
+                            if lease.egress is CopilotEgress.RESPONSES:
+                                selected = self._responses.stream_messages(
+                                    request,
+                                    input_tokens=input_tokens,
+                                    request_id=request_id,
+                                    response_model=response_model,
+                                    reasoning=resolved,
+                                    endpoint_context=lease,
+                                    model_info=lease.model.info,
+                                    can_disable_reasoning="none"
+                                    in (lease.model.supported_efforts or ()),
+                                )
+                            else:
+                                selected = self._chat(lease.model).stream_messages(
+                                    request,
+                                    input_tokens=input_tokens,
+                                    request_id=request_id,
+                                    response_model=response_model,
+                                    reasoning=resolved,
+                                    endpoint_context=lease,
+                                    model_info=lease.model.info,
+                                )
                         else:
                             selected = transport.stream_responses(
                                 request,

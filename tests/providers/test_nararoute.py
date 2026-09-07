@@ -7,6 +7,7 @@ import pytest
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import NARAROUTE_DEFAULT_BASE
+from free_claude_code.core.reasoning import ReasoningCapability
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -44,7 +45,11 @@ async def test_model_catalog_extracts_strict_optional_reasoning_boolean() -> Non
     assert infos == frozenset(
         {
             ProviderModelInfo("reasoning", supports_thinking=True),
-            ProviderModelInfo("plain", supports_thinking=False),
+            ProviderModelInfo(
+                "plain",
+                supports_thinking=False,
+                reasoning_capability=ReasoningCapability.NONE,
+            ),
             ProviderModelInfo("unknown"),
             ProviderModelInfo("malformed"),
         }

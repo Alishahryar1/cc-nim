@@ -12,6 +12,7 @@ from openai.types.responses import ResponseInputParam, ResponseStreamEvent
 from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.diagnostics import extract_upstream_error_detail
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
@@ -28,10 +29,11 @@ from free_claude_code.core.openai_responses import (
     responses_stream_failure_from_event,
 )
 from free_claude_code.core.openai_tool_names import OpenAIToolNameCodec
-from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
+    ProviderCorrectionAction,
     ProviderExecution,
     ProviderOperationKind,
 )
@@ -46,6 +48,10 @@ from free_claude_code.providers.failure_policy import (
     reports_context_window_incomplete,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
+from free_claude_code.providers.reasoning_compatibility import (
+    ReasoningCorrection,
+    prepare_messages_reasoning,
+)
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
@@ -112,8 +118,15 @@ class OpenAIResponsesTransport:
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
+        can_disable_reasoning: bool = True,
     ) -> None:
-        self._build_messages_body(request, reasoning=reasoning)
+        self._build_messages_body(
+            request,
+            reasoning=reasoning,
+            model_info=model_info,
+            can_disable_reasoning=can_disable_reasoning,
+        )
 
     def stream_messages(
         self,
@@ -125,12 +138,28 @@ class OpenAIResponsesTransport:
         reasoning: ReasoningPolicy,
         endpoint_context: EndpointContext | None = None,
         extra_headers: Mapping[str, str] | None = None,
+        model_info: ProviderModelInfo | None = None,
+        can_disable_reasoning: bool = True,
     ) -> AsyncIterator[str]:
-        body = self._build_messages_body(request, reasoning=reasoning)
+        prepared, wire_reasoning = prepare_messages_reasoning(
+            request,
+            reasoning,
+            model_info=model_info,
+            can_disable=can_disable_reasoning,
+            normal_max_tokens=None,
+        )
+        body = self._build_messages_body(prepared, reasoning=wire_reasoning)
+        correction = (
+            ReasoningCorrection((("reasoning",),), "max_output_tokens", None)
+            if reasoning.control is ReasoningControl.PREFER_OFF
+            and wire_reasoning.control is ReasoningControl.OFF
+            else None
+        )
         tool_names = OpenAIToolNameCodec.from_request(request)
         message_id = f"msg_{uuid.uuid4()}"
         return self._run_stream(
             body,
+            reasoning_correction=correction,
             endpoint_context=endpoint_context,
             extra_headers=dict(extra_headers or {}),
             request_id=request_id,
@@ -183,7 +212,16 @@ class OpenAIResponsesTransport:
         request: MessagesRequest,
         *,
         reasoning: ReasoningPolicy,
+        model_info: ProviderModelInfo | None = None,
+        can_disable_reasoning: bool = True,
     ) -> JsonObject:
+        request, reasoning = prepare_messages_reasoning(
+            request,
+            reasoning,
+            model_info=model_info,
+            can_disable=can_disable_reasoning,
+            normal_max_tokens=None,
+        )
         try:
             return self._prepare_body(
                 cast(
@@ -234,6 +272,7 @@ class OpenAIResponsesTransport:
         presenter_factory: ResponsesPresenterFactory,
         endpoint_context: EndpointContext | None = None,
         extra_headers: Mapping[str, str] | None = None,
+        reasoning_correction: ReasoningCorrection | None = None,
     ) -> AsyncIterator[str]:
         execution = self._admission.start_execution(request_id=request_id)
         outcome = ResponsesExecutionOutcome()
@@ -244,6 +283,7 @@ class OpenAIResponsesTransport:
         )
         provider_stream = self._run_execution(
             body,
+            reasoning_correction=reasoning_correction,
             request_id=request_id,
             response_model=response_model,
             presenter_factory=presenter_factory,
@@ -288,6 +328,7 @@ class OpenAIResponsesTransport:
         outcome: ResponsesExecutionOutcome,
         endpoint: RequestEndpoint | None = None,
         extra_headers: Mapping[str, str] | None = None,
+        reasoning_correction: ReasoningCorrection | None = None,
     ) -> AsyncIterator[str]:
         recovery = RecoveryController()
         trace_event(
@@ -404,6 +445,24 @@ class OpenAIResponsesTransport:
                 ):
                     recovery.discard()
                     continue
+                if (
+                    scope is not None
+                    and reasoning_correction is not None
+                    and not recovery.committed
+                ):
+                    corrected_body = reasoning_correction.retry_body(raw_error, body)
+                    if corrected_body is not None:
+                        retry = (
+                            execution.can_attempt
+                            if scope.attempt.accepted
+                            else await scope.attempt.correct(error)
+                            is ProviderCorrectionAction.RETRY
+                        )
+                        reasoning_correction = None
+                        if retry:
+                            body = corrected_body
+                            recovery.discard()
+                            continue
                 attempt_failure = None
                 if scope is not None and not scope.attempt.accepted:
                     attempt_failure = await scope.attempt.fail(error)

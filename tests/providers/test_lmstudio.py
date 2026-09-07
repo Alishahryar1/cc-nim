@@ -119,8 +119,9 @@ def test_preflight_builds_before_context_budget_and_preserves_policy(
     request = make_request()
     calls: list[tuple[str, object]] = []
 
-    def build(request_arg, *, reasoning):
+    def build(request_arg, *, reasoning, model_info):
         assert request_arg is request
+        assert model_info is None
         calls.append(("build", reasoning))
         return {}
 

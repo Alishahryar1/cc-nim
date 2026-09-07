@@ -42,6 +42,7 @@ from free_claude_code.providers.anthropic_messages.request_policy import (
     MessagesModelCapabilities,
 )
 from free_claude_code.providers.endpoint import HttpEndpoint
+from free_claude_code.providers.model_listing import reasoning_capability_from_options
 
 from .lifecycle import drain_owned
 from .types import (
@@ -444,6 +445,9 @@ def _model(model: Model) -> CopilotModel:
     context = limits.max_context_window_tokens if limits is not None else None
     info = ProviderModelInfo(
         model_id=model.id,
+        reasoning_capability=reasoning_capability_from_options(
+            {"supported_efforts": efforts}
+        ),
         supports_thinking=True
         if effort_support is True or adaptive in {"optional", "required"}
         else None,
