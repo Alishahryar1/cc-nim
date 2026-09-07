@@ -294,6 +294,151 @@ def test_question_input_survives_streaming_and_secret_answer_is_not_stored(
     )
 
 
+def delete_from_other_client(code_control, session_id):
+    async def remove():
+        detail = await code_control.service.get_detail(session_id)
+        await code_control.service.delete_session(session_id, detail.session.revision)
+        await code_control.service.wait_idle(session_id)
+
+    code_control.run(remove())
+
+
+def hold_deleted_detail(page, code_control, session_id):
+    page.evaluate("window.dropCodeEvents = ['session.deleted']")
+    delete_from_other_client(code_control, session_id)
+    endpoint = f"/admin/api/code/sessions/{session_id}"
+    hold_code_reads(page, endpoint)
+    page.evaluate("window.replayCodeReady()")
+    page.wait_for_function(
+        "path => window.codeReadHolds.some(held => held.path === path && held.status === 404)",
+        arg=endpoint,
+    )
+
+
+@pytest.mark.parametrize("source", ["event", "detail404"])
+def test_hidden_code_removal_preserves_chat_and_deleted_history(
+    page, admin_base_url, tmp_path, code_control, source
+):
+    control_feed(page)
+    url = create_session(page, admin_base_url, tmp_path)
+    session_id = url.rsplit("/", 1)[1]
+    if source == "detail404":
+        hold_deleted_detail(page, code_control, session_id)
+    page.get_by_role("button", name="Chat Sessions", exact=True).click()
+    page.get_by_role("button", name="New chat", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/admin/chat/[0-9a-f-]+$"))
+    chat_url = page.url
+    composer = page.locator("#chatComposer")
+    composer.fill("Keep this Chat draft")
+    composer.evaluate("input => input.setSelectionRange(2, 7)")
+    history_length = page.evaluate("history.length")
+    if source == "event":
+        delete_from_other_client(code_control, session_id)
+        page.wait_for_function("id => window.lastCodeDeleted === id", arg=session_id)
+    else:
+        page.evaluate("window.releaseCodeReads()")
+        expect(page.locator("#codeLibrary")).to_have_count(1)
+    expect(page).to_have_url(chat_url)
+    assert page.evaluate("history.length") == history_length
+    expect(page.locator("#view-chat")).to_be_visible()
+    expect(page.locator('.nav-link[data-view="chat"]')).to_have_attribute(
+        "aria-current", "page"
+    )
+    expect(composer).to_be_focused()
+    expect(composer).to_have_value("Keep this Chat draft")
+    assert composer.evaluate("input => [input.selectionStart, input.selectionEnd]") == [
+        2,
+        7,
+    ]
+
+    # The old Code entry remains in history until it is visited and replaced.
+    reads = []
+    endpoint = f"/admin/api/code/sessions/{session_id}"
+    page.on("request", lambda request: reads.append(request.url))
+    page.go_back()
+    expect(page).to_have_url(f"{admin_base_url}/admin/chat")
+    page.go_back()
+    expect(page).to_have_url(f"{admin_base_url}/admin/code")
+    expect(page.locator("#codeNew")).to_be_enabled()
+    expect(page.locator("#codeLibrary .session-card")).to_have_count(0)
+    assert not any(request.endswith(endpoint) for request in reads)
+    assert page.evaluate("history.length") == history_length
+    page.go_forward()
+    expect(page).to_have_url(f"{admin_base_url}/admin/chat")
+    page.go_forward()
+    expect(page).to_have_url(chat_url)
+    expect(composer).to_have_value("Keep this Chat draft")
+    page.reload()
+    expect(page).to_have_url(chat_url)
+    expect(composer).to_have_value("Keep this Chat draft")
+
+
+@pytest.mark.parametrize("source", ["event", "detail404", "returned_detail404"])
+def test_visible_code_removal_replaces_history(
+    page, admin_base_url, tmp_path, code_control, source
+):
+    control_feed(page)
+    url = create_session(page, admin_base_url, tmp_path)
+    session_id = url.rsplit("/", 1)[1]
+    if source != "event":
+        hold_deleted_detail(page, code_control, session_id)
+    if source == "returned_detail404":
+        page.get_by_role("button", name="Chat Sessions", exact=True).click()
+        page.go_back()
+        expect(page).to_have_url(url)
+        expect(page.locator("#view-code")).to_be_visible()
+    history_length = page.evaluate("history.length")
+    if source == "event":
+        delete_from_other_client(code_control, session_id)
+        page.wait_for_function("id => window.lastCodeDeleted === id", arg=session_id)
+    else:
+        page.evaluate("window.releaseCodeReads()")
+    expect(page).to_have_url(f"{admin_base_url}/admin/code")
+    expect(page.locator("#codeNotice")).to_contain_text("deleted")
+    expect(page.locator("#codeNew")).to_be_enabled()
+    assert page.evaluate("history.length") == history_length
+    if source == "returned_detail404":
+        page.go_forward()
+        expect(page).to_have_url(f"{admin_base_url}/admin/chat")
+        page.go_back()
+        expect(page).to_have_url(f"{admin_base_url}/admin/code")
+    reads = []
+    page.on("request", lambda request: reads.append(request.url))
+    page.go_back()
+    expect(page).to_have_url(f"{admin_base_url}/admin/code")
+    expect(page.locator("#codeNew")).to_be_enabled()
+    assert not any(request.endswith(f"/sessions/{session_id}") for request in reads)
+
+
+@pytest.mark.parametrize("source", ["event", "detail404"])
+def test_code_removal_does_not_redirect_another_code_session(
+    page, admin_base_url, tmp_path, code_control, source
+):
+    control_feed(page)
+    url = create_session(page, admin_base_url, tmp_path)
+    session_id = url.rsplit("/", 1)[1]
+    other = code_control.run(
+        code_control.service.create_session(str(uuid.uuid4()), str(tmp_path))
+    )
+    if source == "detail404":
+        hold_deleted_detail(page, code_control, session_id)
+    page.get_by_role("button", name="← Code sessions", exact=True).click()
+    page.locator(f'#codeLibrary [data-id="{other.id}"]').click()
+    other_url = f"{admin_base_url}/admin/code/{other.id}"
+    expect(page).to_have_url(other_url)
+    page.locator("#codeComposer").fill("Keep B's draft")
+    history_length = page.evaluate("history.length")
+    if source == "event":
+        delete_from_other_client(code_control, session_id)
+        page.wait_for_function("id => window.lastCodeDeleted === id", arg=session_id)
+    else:
+        page.evaluate("window.releaseCodeReads()")
+    expect(page.locator("#codeSend")).to_be_enabled()
+    expect(page).to_have_url(other_url)
+    expect(page.locator("#codeComposer")).to_have_value("Keep B's draft")
+    assert page.evaluate("history.length") == history_length
+
+
 def control_feed(page):
     page.add_init_script("""(() => {
       const Native = window.EventSource;
@@ -312,14 +457,17 @@ def control_feed(page):
             listener(event);
             if (this.isCode && type === 'run.updated')
               window.lastCodeRun = JSON.parse(event.data).run;
+            if (this.isCode && type === 'session.deleted')
+              window.lastCodeDeleted = JSON.parse(event.data).session_id;
           }, ...options);
         }
       };
     })();""")
 
 
-def hold_code_reads(page):
-    page.evaluate("""() => {
+def hold_code_reads(page, endpoint=None):
+    page.evaluate(
+        """endpoint => {
       const original = window.fetch;
       window.codeReadHolds = [];
       window.holdCodeReads = true;
@@ -327,15 +475,18 @@ def hold_code_reads(page):
         const response = await original(...args);
         const path = new URL(String(args[0]), location.origin).pathname;
         if (window.holdCodeReads && path.startsWith('/admin/api/code/') &&
+            (!endpoint || path === endpoint) &&
             (!args[1]?.method || args[1].method === 'GET'))
-          await new Promise(resolve => window.codeReadHolds.push({path, resolve}));
+          await new Promise(resolve => window.codeReadHolds.push({path, status: response.status, resolve}));
         return response;
       };
       window.releaseCodeReads = () => {
         window.holdCodeReads = false;
         for (const held of window.codeReadHolds.splice(0)) held.resolve();
       };
-    }""")
+    }""",
+        endpoint,
+    )
 
 
 def send_from_other_client(page, url, text):

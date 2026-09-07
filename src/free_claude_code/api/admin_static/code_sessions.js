@@ -151,13 +151,7 @@
     if (data.epoch !== epoch) return;
     const previousRevision = records.get(data.session_id)?.session?.revision;
     if (type === "session.deleted") {
-      deleted.add(data.session_id);
-      records.delete(data.session_id);
-      visibleIds = visibleIds.filter((id) => id !== data.session_id);
-      if (selected === data.session_id) {
-        navigate(null);
-        notice = "Session deleted.";
-      }
+      removeDeletedSession(data.session_id, "Session deleted.");
     } else {
       merge(data);
       if (type === "session.notice" && data.session_id === selected)
@@ -246,10 +240,7 @@
       if (token !== viewToken || connection !== syncToken || selected !== id)
         return;
       if (error.status === 404) {
-        deleted.add(id);
-        records.delete(id);
-        navigate(null);
-        notice = "This session was deleted.";
+        removeDeletedSession(id, "This session was deleted.");
         render();
         return;
       }
@@ -383,6 +374,27 @@
     source.onerror = disconnected;
   }
 
+  function replaceDeletedRoute(id) {
+    const view = root?.closest(".admin-view");
+    if (
+      !view ||
+      view.hidden ||
+      window.location.pathname !== `/admin/code/${id}`
+    )
+      return false;
+    history.replaceState({}, "", "/admin/code");
+    return true;
+  }
+  function removeDeletedSession(id, message) {
+    deleted.add(id);
+    records.delete(id);
+    visibleIds = visibleIds.filter((visibleId) => visibleId !== id);
+    const replaced = replaceDeletedRoute(id);
+    if (selected === id || replaced) {
+      activate("/admin/code");
+      notice = message;
+    }
+  }
   function navigate(id) {
     const path = id ? `/admin/code/${id}` : "/admin/code";
     history.pushState({}, "", path);
@@ -391,7 +403,13 @@
   function activate(path) {
     desiredPath = path;
     if (!api) return;
-    const id = /^\/admin\/code\/([0-9a-f-]+)$/.exec(path)?.[1] || null;
+    let id = /^\/admin\/code\/([0-9a-f-]+)$/.exec(path)?.[1] || null;
+    const missing = id !== null && deleted.has(id);
+    if (missing) {
+      replaceDeletedRoute(id);
+      desiredPath = "/admin/code";
+      id = null;
+    }
     if (id !== selected || !rendered) {
       selected = id;
       ++viewToken;
@@ -406,6 +424,10 @@
           if (token === viewToken) restart(error.message);
         });
       }
+    }
+    if (missing) {
+      notice = "This session was deleted.";
+      render();
     }
     connect();
   }
