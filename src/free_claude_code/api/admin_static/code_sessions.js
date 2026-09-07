@@ -601,9 +601,29 @@
         folder.id = `code-folder-${id}`;
         caption.htmlFor = folder.id;
         const row = element("div", undefined, "code-folder-row");
+        let selectedPath = null;
+        const readFolder = () => selectedPath ?? folder.value;
+        const lineBreakNotice = element("p", "", "code-notice");
+        lineBreakNotice.id = `${folder.id}-notice`;
+        folder.setAttribute("aria-describedby", lineBreakNotice.id);
+        const manual = button("Enter path manually", () => {
+          setFolder("");
+          folder.focus();
+        });
+        manual.hidden = true;
+        function setFolder(path) {
+          const hasLineBreaks = /[\r\n]/.test(path);
+          selectedPath = hasLineBreaks ? path : null;
+          folder.readOnly = hasLineBreaks;
+          folder.value = path.replaceAll("\r", "␍").replaceAll("\n", "␊");
+          manual.hidden = !hasLineBreaks;
+          lineBreakNotice.textContent = hasLineBreaks
+            ? "Line breaks in this folder name are shown as ␍ and ␊."
+            : "";
+        }
         const browse = button("Browse…", async () => {
           if (!context.isOpen() || context.isBusy()) return;
-          const initial = folder.value;
+          const initial = readFolder();
           context.setBusy(true);
           context.message("Choose a folder in the open folder picker.");
           try {
@@ -613,7 +633,7 @@
               signal: context.signal,
             });
             if (context.isOpen()) {
-              if (result.path !== null) folder.value = result.path;
+              if (result.path !== null) setFolder(result.path);
               context.message("");
             }
           } catch (failure) {
@@ -626,7 +646,7 @@
           }
         });
         row.append(folder, browse);
-        field.append(caption, row);
+        field.append(caption, row, lineBreakNotice, manual);
         form.append(field);
         form.append(
           element(
@@ -635,16 +655,16 @@
             "code-notice",
           ),
         );
-        return folder;
+        return readFolder;
       },
       "Create session",
-      async (folder, context) => {
+      async (readFolder, context) => {
         await api(`${base}/sessions`, {
           method: "POST",
           body: JSON.stringify({
             session_id: id,
             harness: "codex",
-            cwd: folder.value,
+            cwd: readFolder(),
           }),
         });
         if (context.isOpen()) navigate(id);

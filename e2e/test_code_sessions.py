@@ -1,4 +1,5 @@
 import re
+import sys
 import uuid
 
 import pytest
@@ -33,6 +34,123 @@ def open_creation(page, base_url):
     page.goto(f"{base_url}/admin/code")
     page.get_by_role("button", name="New code session", exact=True).click()
     return page.get_by_role("dialog", name="New code session", exact=True)
+
+
+def test_settings_apply_preserves_open_creation_and_picker(
+    page, admin_base_url, tmp_path, code_control
+):
+    pending = []
+    page.route("**/admin/api/config/apply", lambda route: pending.append(route))
+    page.goto(f"{admin_base_url}/admin")
+    expect(page.locator("#messageArea")).to_have_text("")
+    page.locator("#field-NVIDIA_NIM_API_KEY").fill("new-key")
+    page.get_by_role("button", name="Apply", exact=True).click()
+    expect(page.locator("#messageArea")).to_have_text("Checking API keys…")
+    assert len(pending) == 1
+    page.get_by_role("button", name="Code sessions", exact=True).click()
+    page.get_by_role("button", name="New code session", exact=True).click()
+    form = page.get_by_role("dialog", name="New code session", exact=True)
+    form.get_by_role("button", name="Browse…", exact=True).click()
+    call = code_control.run(code_control.folder_picker.calls.get())
+
+    pending.pop().fulfill(json={"applied": True, "credential_checks": []})
+    expect(page.locator("#messageArea")).to_have_text("Applied")
+    expect(form).to_be_visible()
+    code_control.run(code_control.folder_picker.finish(call, str(tmp_path)))
+    expect(form.get_by_role("textbox", name="Folder", exact=True)).to_have_value(
+        str(tmp_path)
+    )
+    form.get_by_role("button", name="Create session", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/admin/code/[0-9a-f-]+$"))
+    sessions = page.request.get(f"{admin_base_url}/admin/api/code/sessions").json()[
+        "sessions"
+    ]
+    assert [session["cwd"] for session in sessions] == [str(tmp_path.resolve())]
+
+
+@pytest.mark.parametrize(
+    ("suffix", "display"), [("\nA", "␊A"), ("\rA", "␍A"), ("\r\nA", "␍␊A")]
+)
+def test_picker_preserves_line_breaks_in_hint_and_submission(
+    page, admin_base_url, tmp_path, code_control, suffix, display
+):
+    selected = str(tmp_path / f"project{suffix}")
+    form = open_creation(page, admin_base_url)
+    folder = form.get_by_role("textbox", name="Folder", exact=True)
+    browse = form.get_by_role("button", name="Browse…", exact=True)
+    browse.click()
+    call = code_control.run(code_control.folder_picker.calls.get())
+    code_control.run(code_control.folder_picker.finish(call, selected))
+    expect(browse).to_be_enabled()
+    # Returning to Browse must use the real path, even after a native Cancel.
+    browse.click()
+    call = code_control.run(code_control.folder_picker.calls.get())
+    assert call[0] == selected
+    code_control.run(code_control.folder_picker.finish(call, None))
+    with page.expect_response("**/admin/api/code/sessions") as submission:
+        form.get_by_role("button", name="Create session", exact=True).click()
+    assert submission.value.request.post_data_json["cwd"] == selected
+    # The directory deliberately does not exist; the form stays available.
+    expect(folder).to_have_value(str(tmp_path / f"project{display}"))
+    expect(folder).not_to_be_editable()
+
+
+@pytest.mark.parametrize("replacement", ["manual", "browse"])
+def test_replacing_line_break_selection_uses_the_new_path(
+    page, admin_base_url, tmp_path, code_control, replacement
+):
+    form = open_creation(page, admin_base_url)
+    folder = form.get_by_role("textbox", name="Folder", exact=True)
+    browse = form.get_by_role("button", name="Browse…", exact=True)
+    browse.click()
+    call = code_control.run(code_control.folder_picker.calls.get())
+    code_control.run(
+        code_control.folder_picker.finish(call, str(tmp_path / "project\nA"))
+    )
+    expect(browse).to_be_enabled()
+    expect(folder).not_to_be_editable()
+    if replacement == "manual":
+        form.get_by_role("button", name="Enter path manually", exact=True).click()
+        expect(folder).to_have_value("")
+    else:
+        browse.click()
+        call = code_control.run(code_control.folder_picker.calls.get())
+        code_control.run(code_control.folder_picker.finish(call, str(tmp_path)))
+        expect(folder).to_have_value(str(tmp_path))
+    expect(folder).to_be_editable()
+    expect(
+        form.get_by_role("button", name="Enter path manually", exact=True)
+    ).to_be_hidden()
+    replacement_folder = tmp_path / "manual replacement"
+    replacement_folder.mkdir()
+    folder.fill(str(replacement_folder))
+    form.get_by_role("button", name="Create session", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/admin/code/[0-9a-f-]+$"))
+    sessions = page.request.get(f"{admin_base_url}/admin/api/code/sessions").json()[
+        "sessions"
+    ]
+    assert [session["cwd"] for session in sessions] == [
+        str(replacement_folder.resolve())
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows forbids CR/LF in names")
+def test_picker_creates_in_selected_folder_not_its_line_break_free_neighbor(
+    page, admin_base_url, tmp_path, code_control
+):
+    selected = tmp_path / "project\r\nA"
+    selected.mkdir()
+    (tmp_path / "projectA").mkdir()
+    form = open_creation(page, admin_base_url)
+    form.get_by_role("button", name="Browse…", exact=True).click()
+    call = code_control.run(code_control.folder_picker.calls.get())
+    code_control.run(code_control.folder_picker.finish(call, str(selected)))
+    form.get_by_role("button", name="Create session", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/admin/code/[0-9a-f-]+$"))
+    sessions = page.request.get(f"{admin_base_url}/admin/api/code/sessions").json()[
+        "sessions"
+    ]
+    assert [session["cwd"] for session in sessions] == [str(selected.resolve())]
 
 
 def test_browse_fills_only_its_tab_and_waits_for_create(
