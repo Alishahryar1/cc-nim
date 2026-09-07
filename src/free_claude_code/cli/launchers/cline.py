@@ -26,7 +26,10 @@ def _configure(
     ctx: LaunchContext, args: list[str], files: LaunchResources
 ) -> PreparedLaunch:
     config = build_cline_config(
-        ctx.models, proxy_root_url=ctx.proxy_root_url, auth_token=ctx.auth_token
+        ctx.models,
+        proxy_root_url=ctx.proxy_root_url,
+        auth_token=ctx.auth_token,
+        launch_id=ctx.launch_id,
     )
     providers_path = files.write_json("settings/providers.json", config.providers)
     files.write_json("settings/models.json", config.models)

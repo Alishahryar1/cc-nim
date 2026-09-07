@@ -2,6 +2,7 @@
 
 import os
 import re
+import secrets
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -40,6 +41,7 @@ class LaunchContext:
     auth_token: str = field(repr=False)
     base_env: Mapping[str, str] = field(repr=False)
     models: tuple[ClientModel, ...]
+    launch_id: str = field(default_factory=lambda: secrets.token_hex(16))
 
 
 @dataclass(frozen=True, slots=True)

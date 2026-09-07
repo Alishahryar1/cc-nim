@@ -127,6 +127,10 @@ async def test_existing_session_id_reaches_opencode_without_forwarding_other_hea
             "X-OpenCode-Session",
             "X-Session-Id",
             "X-Claude-Code-Session-Id",
+            "session_id",
+            "X-Grok-Session-Id",
+            "X-Meta-Ai-Gateway-Session-Id",
+            "X-Tbh-Session-Id",
         ):
             for conversation in ("conversation-a", "conversation-a", "conversation-b"):
                 response = await client.post(
@@ -134,6 +138,7 @@ async def test_existing_session_id_reaches_opencode_without_forwarding_other_hea
                     json=payload(ingress, provider_id, selector),
                     headers=[
                         (name.encode(), conversation.encode()),
+                        (b"X-Fcc-Launch-Id", b"launcher-fallback"),
                         (b"Cookie", b"private=cookie"),
                         (b"X-Private", b"caf\xe9"),
                     ],
@@ -144,6 +149,7 @@ async def test_existing_session_id_reaches_opencode_without_forwarding_other_hea
                 assert upstream.headers["authorization"] == "Bearer test_opencode_key"
                 assert "cookie" not in upstream.headers
                 assert "x-private" not in upstream.headers
+                assert "x-fcc-launch-id" not in upstream.headers
         assert {
             name: value
             for name, value in provider._client.default_headers.items()
@@ -165,6 +171,10 @@ async def test_session_header_precedence_and_absence_do_not_invent_or_reuse_iden
                 "x-opencode-session": "explicit-session",
                 "session-id": "native-session",
                 "X-Claude-Code-Session-Id": "claude-session",
+                "session_id": "dsh-session",
+                "x-grok-session-id": "grok-session",
+                "x-meta-ai-gateway-session-id": "muse-session",
+                "x-fcc-launch-id": "launcher-fallback",
             },
         )
         assert response.status_code == 200, response.text
@@ -179,7 +189,42 @@ async def test_session_header_precedence_and_absence_do_not_invent_or_reuse_iden
 
 
 @pytest.mark.parametrize("selector", ["responses-selector", "chat-selector"])
-@pytest.mark.parametrize("session_header", ["session-id", "X-Claude-Code-Session-Id"])
+@pytest.mark.parametrize("ingress", ["responses", "messages"])
+async def test_launch_fallback_is_stable_until_a_native_conversation_id_is_available(
+    selector, ingress
+):
+    async with wire_client() as (client, _provider, requests, _catalogs):
+        for launch_id, native_id in (
+            ("launch-a", ""),
+            ("launch-a", ""),
+            ("launch-a", "native-conversation"),
+            ("launch-b", ""),
+        ):
+            response = await client.post(
+                f"/v1/{ingress}",
+                json=payload(ingress, "opencode_zen", selector),
+                headers={"x-fcc-launch-id": launch_id, "session-id": native_id},
+            )
+            assert response.status_code == 200, response.text
+            assert requests[-1].headers["x-opencode-session"] == (
+                native_id or launch_id
+            )
+            assert "x-fcc-launch-id" not in requests[-1].headers
+
+
+@pytest.mark.parametrize("selector", ["responses-selector", "chat-selector"])
+@pytest.mark.parametrize(
+    "session_header",
+    [
+        "session-id",
+        "X-Claude-Code-Session-Id",
+        "session_id",
+        "X-Grok-Session-Id",
+        "X-Meta-Ai-Gateway-Session-Id",
+        "X-Tbh-Session-Id",
+        "x-fcc-launch-id",
+    ],
+)
 async def test_concurrent_conversations_keep_their_session_ids_during_retry(
     selector, session_header
 ):

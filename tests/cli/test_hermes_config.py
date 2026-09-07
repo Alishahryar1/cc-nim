@@ -77,6 +77,7 @@ def test_hermes_config_pins_responses_catalog_and_fallbacks() -> None:
         "base_url": "",
         "api_key": "",
         "api_mode": "codex_responses",
+        "default_headers": {"x-fcc-launch-id": "a1b2c3"},
     }
     assert managed.config["fallback_providers"] == []
     assert managed.config["fallback_model"] == []

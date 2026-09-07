@@ -3,7 +3,6 @@
 import json
 import os
 import re
-import secrets
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -44,7 +43,7 @@ def _configure(
     if os.name != "nt" and Path("/etc/hermes").exists():
         raise ValueError("An existing Hermes managed policy cannot be replaced by FCC.")
     managed = build_hermes_managed_config(
-        ctx.models, proxy_root_url=ctx.proxy_root_url, nonce=secrets.token_hex(16)
+        ctx.models, proxy_root_url=ctx.proxy_root_url, nonce=ctx.launch_id
     )
     path = files.write_json("config.yaml", managed.config)
     env = client_environment(

@@ -153,6 +153,12 @@ export default async function freeClaudeCode(pi: ExtensionAPI): Promise<void> {
 		models,
 	});
 
+	pi.on("before_provider_headers", (event, ctx) => {
+		if (ctx.model?.provider === "free-claude-code") {
+			event.headers["x-opencode-session"] = ctx.sessionManager.getSessionId();
+		}
+	});
+
 	pi.on("before_provider_request", (event, ctx) => {
 		const payload = event.payload;
 		if (

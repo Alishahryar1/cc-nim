@@ -92,6 +92,7 @@ def build_hermes_managed_config(
             "base_url": "",
             "api_key": "",
             "api_mode": "codex_responses",
+            "default_headers": {"x-fcc-launch-id": nonce},
         },
         "fallback_providers": [],
         "fallback_model": [],

@@ -28,6 +28,7 @@ def build_cline_config(
     *,
     proxy_root_url: str,
     auth_token: str,
+    launch_id: str,
     now: datetime | None = None,
 ) -> ClineConfig:
     """Translate a non-empty FCC model snapshot into Cline's file contracts."""
@@ -42,6 +43,7 @@ def build_cline_config(
     provider_settings: JsonObject = {
         "provider": CLINE_PROVIDER_ID,
         "apiKey": auth_token,
+        "headers": {"x-fcc-launch-id": launch_id},
         "model": default_model,
         "protocol": "openai-responses",
         "baseUrl": proxy_v1_url(proxy_root_url),

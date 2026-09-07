@@ -45,6 +45,7 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
         ),
         proxy_root_url="http://127.0.0.1:9191/",
         auth_token="proxy-token",
+        launch_id="launch-a",
         now=datetime(2026, 8, 15, 12, 30, tzinfo=UTC),
     )
 
@@ -57,6 +58,7 @@ def test_cline_config_uses_responses_and_only_known_metadata() -> None:
                 "settings": {
                     "provider": "openai-native",
                     "apiKey": "proxy-token",
+                    "headers": {"x-fcc-launch-id": "launch-a"},
                     "model": "nvidia_nim/vendor/model",
                     "protocol": "openai-responses",
                     "baseUrl": "http://127.0.0.1:9191/v1",
@@ -127,11 +129,14 @@ def test_cline_config_rejects_empty_model_catalog() -> None:
             (),
             proxy_root_url="http://127.0.0.1:9191",
             auth_token="proxy-token",
+            launch_id="launch-a",
         )
 
 
 def test_cline_native_configuration_is_available_to_child(launch_capture) -> None:
     from tests.cli.test_launcher_workflow import launch
+
+    launch_ids = []
 
     def inspect(command, env):
         providers_path = Path(env["CLINE_PROVIDER_SETTINGS_PATH"])
@@ -140,6 +145,8 @@ def test_cline_native_configuration_is_available_to_child(launch_capture) -> Non
         settings = providers["providers"][CLINE_PROVIDER_ID]["settings"]
         assert settings["baseUrl"] == "http://127.0.0.1:8182/v1"
         assert settings["apiKey"] == "launcher-test-token"
+        launch_ids.append(settings["headers"]["x-fcc-launch-id"])
+        assert launch_ids[-1]
         assert settings["model"] in models["providers"][CLINE_PROVIDER_ID]["models"]
         assert env["CLINE_SESSION_BACKEND_MODE"] == "local"
         assert command[:3] == ["cline", "--provider", "openai-native"]
@@ -148,3 +155,5 @@ def test_cline_native_configuration_is_available_to_child(launch_capture) -> Non
     args = ["--model", "native-selection", "--data-dir", "native-data-dir"]
     launch("cline", args)
     assert launch_capture.commands[0][-len(args) :] == args
+    launch("cline", [])
+    assert launch_ids[0] != launch_ids[1]

@@ -44,7 +44,7 @@ class LaunchCapture:
     exit_code: int = 23
     versions: dict[str, str] = field(
         default_factory=lambda: {
-            "pi": "Pi Coding Agent --extension --models",
+            "pi": "0.80.4",
             "opencode": "1.18.18",
             "cline": "3.0.55",
             "hermes": "Hermes Agent 0.20.4",
