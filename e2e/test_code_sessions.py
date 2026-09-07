@@ -29,6 +29,166 @@ def send(page, text):
     expect(page.get_by_role("button", name="Stop", exact=True)).to_be_visible()
 
 
+def open_creation(page, base_url):
+    page.goto(f"{base_url}/admin/code")
+    page.get_by_role("button", name="New code session", exact=True).click()
+    return page.get_by_role("dialog", name="New code session", exact=True)
+
+
+def test_browse_fills_only_its_tab_and_waits_for_create(
+    page, context, admin_base_url, tmp_path, code_control
+):
+    second = context.new_page()
+    try:
+        other = open_creation(second, admin_base_url)
+        other.get_by_role("textbox", name="Folder", exact=True).fill("other tab")
+        form = open_creation(page, admin_base_url)
+        folder = form.get_by_role("textbox", name="Folder", exact=True)
+        folder.fill(str(tmp_path))
+        form.get_by_role("button", name="Browse…", exact=True).click()
+        call = code_control.run(code_control.folder_picker.calls.get())
+        assert call[0] == str(tmp_path)
+        expect(folder).to_be_disabled()
+        expect(
+            form.get_by_role("button", name="Create session", exact=True)
+        ).to_be_disabled()
+        other.get_by_role("button", name="Browse…", exact=True).click()
+        expect(
+            other.get_by_text("A folder picker is already open", exact=True)
+        ).to_be_visible()
+        selected = tmp_path / "project café with spaces"
+        selected.mkdir()
+        code_control.run(code_control.folder_picker.finish(call, str(selected)))
+        expect(folder).to_have_value(str(selected))
+        expect(folder).to_be_enabled()
+        expect(other.get_by_role("textbox", name="Folder", exact=True)).to_have_value(
+            "other tab"
+        )
+        expect(page).to_have_url(f"{admin_base_url}/admin/code")
+        assert (
+            page.request.get(f"{admin_base_url}/admin/api/code/sessions").json()[
+                "sessions"
+            ]
+            == []
+        )
+        other.get_by_role("button", name="Cancel", exact=True).click()
+        form.get_by_role("button", name="Create session", exact=True).click()
+        expect(page).to_have_url(re.compile(r"/admin/code/[0-9a-f-]+$"))
+        expect(
+            second.get_by_role("button", name=re.compile("project café"))
+        ).to_be_visible()
+        sessions = page.request.get(f"{admin_base_url}/admin/api/code/sessions").json()[
+            "sessions"
+        ]
+        assert [session["cwd"] for session in sessions] == [str(selected.resolve())]
+    finally:
+        second.close()
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_picker_cancel_or_error_preserves_manual_entry(
+    page, admin_base_url, tmp_path, code_control, failure
+):
+    form = open_creation(page, admin_base_url)
+    folder = form.get_by_role("textbox", name="Folder", exact=True)
+    folder.fill(str(tmp_path))
+    form.get_by_role("button", name="Browse…", exact=True).click()
+    call = code_control.run(code_control.folder_picker.calls.get())
+    if failure:
+        code_control.run(code_control.folder_picker.fail(call))
+        expect(
+            form.get_by_text(
+                "Could not open the folder picker. Enter the path manually.", exact=True
+            )
+        ).to_be_visible()
+    else:
+        code_control.run(code_control.folder_picker.finish(call, None))
+    expect(folder).to_have_value(str(tmp_path))
+    expect(folder).to_be_enabled()
+    form.get_by_role("button", name="Create session", exact=True).click()
+    expect(page).to_have_url(re.compile(r"/admin/code/[0-9a-f-]+$"))
+
+
+@pytest.mark.parametrize("leave", ["cancel", "escape", "refresh", "navigate", "view"])
+def test_dismissing_creation_closes_native_picker(
+    page, admin_base_url, code_control, leave
+):
+    form = open_creation(page, admin_base_url)
+    form.get_by_role("button", name="Browse…", exact=True).click()
+    call = code_control.run(code_control.folder_picker.calls.get())
+    if leave == "cancel":
+        form.get_by_role("button", name="Cancel", exact=True).click()
+    elif leave == "escape":
+        page.keyboard.press("Escape")
+    elif leave == "refresh":
+        page.reload()
+    elif leave == "view":
+        page.evaluate(
+            "history.pushState({}, '', '/admin'); window.dispatchEvent(new PopStateEvent('popstate'))"
+        )
+    else:
+        # Browser history works even with the modal's background made inert.
+        page.go_back()
+    code_control.run(call[2].wait())
+    expect(form).to_have_count(0)
+
+
+def test_closed_form_ignores_a_late_picker_response(
+    page, admin_base_url, tmp_path, code_control
+):
+    form = open_creation(page, admin_base_url)
+    page.evaluate("""() => {
+      const original = window.fetch;
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (String(args[0]).endsWith('/folder-picker')) {
+          window.pickerCaptured = true;
+          await new Promise(resolve => { window.releasePicker = resolve; });
+        }
+        return response;
+      };
+    }""")
+    form.get_by_role("button", name="Browse…", exact=True).click()
+    call = code_control.run(code_control.folder_picker.calls.get())
+    code_control.run(code_control.folder_picker.finish(call, str(tmp_path)))
+    page.wait_for_function("window.pickerCaptured === true")
+    form.get_by_role("button", name="Cancel", exact=True).click()
+    page.get_by_role("button", name="New code session", exact=True).click()
+    folder = page.get_by_role("textbox", name="Folder", exact=True)
+    folder.fill("new form")
+    page.evaluate("window.releasePicker()")
+    expect(folder).to_have_value("new form")
+
+
+def test_existing_session_keeps_streaming_while_folder_picker_is_open(
+    page, context, admin_base_url, tmp_path, code_control
+):
+    url = create_session(page, admin_base_url, tmp_path)
+    send(page, "Keep running")
+    connection = code_control.connection()
+    observer = context.new_page()
+    try:
+        observer.goto(url)
+        form = open_creation(page, admin_base_url)
+        form.get_by_role("button", name="Browse…", exact=True).click()
+        call = code_control.run(code_control.folder_picker.calls.get())
+        code_control.run(
+            connection.text(
+                "turn-1", "reply", "Update during folder selection", complete=True
+            )
+        )
+        expect(
+            observer.get_by_text("Update during folder selection", exact=True)
+        ).to_be_visible()
+        code_control.run(connection.finish("turn-1"))
+        expect(form).to_be_visible()
+        expect(form.get_by_role("textbox", name="Folder", exact=True)).to_be_disabled()
+        code_control.run(code_control.folder_picker.finish(call, None))
+        expect(form.get_by_role("textbox", name="Folder", exact=True)).to_be_enabled()
+    finally:
+        observer.close()
+
+
 def test_code_streams_survive_refresh_and_all_viewers_leaving(
     page, context, admin_base_url, tmp_path, code_control
 ):

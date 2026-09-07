@@ -35,6 +35,7 @@
     libraryLoading = false,
     notice = "",
     available = false;
+  let activeDialog = null;
 
   function element(tag, text, className) {
     const node = document.createElement(tag);
@@ -401,6 +402,7 @@
     activate(path);
   }
   function activate(path) {
+    if (path !== desiredPath) dismissDialog();
     desiredPath = path;
     if (!api) return;
     let id = /^\/admin\/code\/([0-9a-f-]+)$/.exec(path)?.[1] || null;
@@ -517,34 +519,69 @@
     }
     render();
   }
+  function dismissDialog() {
+    activeDialog?.();
+  }
   function dialog(title, build, actionLabel, action) {
+    dismissDialog();
     const node = element("dialog", undefined, "code-dialog"),
       form = element("form");
+    const controller = new AbortController();
+    let disposed = false;
     const heading = element("h3", title),
       error = element("p", "", "code-notice");
+    error.setAttribute("role", "status");
     heading.id = `code-dialog-${crypto.randomUUID()}`;
     node.setAttribute("aria-labelledby", heading.id);
     form.append(heading);
-    const value = build(form);
     const actions = element("div", undefined, "code-actions");
-    const cancel = button("Cancel", () => node.close());
+    const cancel = button("Cancel", close);
     const confirm = button(actionLabel, () => {}, "primary-button");
     confirm.type = "submit";
+    const context = {
+      signal: controller.signal,
+      isOpen: () => !disposed && node.open && node.isConnected,
+      isBusy: () => confirm.disabled,
+      setBusy(value) {
+        for (const control of form.querySelectorAll("input, select, button"))
+          if (control !== cancel) control.disabled = value;
+      },
+      message(text) {
+        error.textContent = text;
+      },
+    };
+    function close() {
+      if (disposed) return;
+      disposed = true;
+      controller.abort();
+      if (activeDialog === close) activeDialog = null;
+      node.close();
+      node.remove();
+    }
+    const value = build(form, context);
     actions.append(cancel, confirm);
     form.append(error, actions);
     node.append(form);
-    node.addEventListener("close", () => node.remove());
+    node.addEventListener("close", close);
+    node.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      close();
+    });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      confirm.disabled = true;
+      if (!context.isOpen() || context.isBusy()) return;
+      context.setBusy(true);
       try {
-        await action(value);
-        node.close();
+        await action(value, context);
+        if (context.isOpen()) close();
       } catch (failure) {
-        error.textContent = failure.message;
-        confirm.disabled = false;
+        if (context.isOpen()) {
+          context.message(failure.message);
+          context.setBusy(false);
+        }
       }
     });
+    activeDialog = close;
     root.append(node);
     node.showModal();
   }
@@ -552,25 +589,56 @@
     const id = crypto.randomUUID();
     dialog(
       "New code session",
-      (form) => {
+      (form, context) => {
         const harness = element("select");
         harness.append(new Option("Codex", "codex"));
         const folder = element("input");
         folder.required = true;
         folder.autocomplete = "off";
         label(form, "Harness", harness);
-        label(form, "Folder", folder);
+        const field = element("div", undefined, "code-field");
+        const caption = element("label", "Folder");
+        folder.id = `code-folder-${id}`;
+        caption.htmlFor = folder.id;
+        const row = element("div", undefined, "code-folder-row");
+        const browse = button("Browse…", async () => {
+          if (!context.isOpen() || context.isBusy()) return;
+          const initial = folder.value;
+          context.setBusy(true);
+          context.message("Choose a folder in the open folder picker.");
+          try {
+            const result = await api(`${base}/folder-picker`, {
+              method: "POST",
+              body: JSON.stringify({ initial_path: initial || null }),
+              signal: context.signal,
+            });
+            if (context.isOpen()) {
+              if (result.path !== null) folder.value = result.path;
+              context.message("");
+            }
+          } catch (failure) {
+            if (context.isOpen()) context.message(failure.message);
+          } finally {
+            if (context.isOpen()) {
+              context.setBusy(false);
+              folder.focus();
+            }
+          }
+        });
+        row.append(folder, browse);
+        field.append(caption, row);
+        form.append(field);
         form.append(
           element(
             "p",
-            "Choose an existing folder on the computer running FCC.",
+            "Choose an existing folder on the computer running FCC. You can also enter its path manually.",
             "code-notice",
           ),
         );
         return folder;
       },
       "Create session",
-      async (folder) => {
+      async (folder, context) => {
         await api(`${base}/sessions`, {
           method: "POST",
           body: JSON.stringify({
@@ -579,7 +647,7 @@
             cwd: folder.value,
           }),
         });
-        navigate(id);
+        if (context.isOpen()) navigate(id);
       },
     );
   }
@@ -670,6 +738,7 @@
     return node;
   }
   function shell() {
+    dismissDialog();
     root.replaceChildren();
     modelComboboxes.clear();
     modelControl = reasoningControl = null;
@@ -1289,6 +1358,7 @@
     }
     form.append(actions);
   }
+  window.addEventListener("pagehide", dismissDialog);
   window.CodeSessions = {
     initialize(client) {
       api = client;
@@ -1296,6 +1366,7 @@
       if (desiredPath) activate(desiredPath);
     },
     activate,
+    deactivate: dismissDialog,
     async refresh() {
       if (!api || !epoch) return;
       try {

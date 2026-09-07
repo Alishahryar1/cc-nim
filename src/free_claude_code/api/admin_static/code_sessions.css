@@ -59,6 +59,14 @@
 .code-field small {
   color: var(--muted);
 }
+.code-folder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.code-folder-row input {
+  min-width: 0;
+}
 .code-field input:not([type="checkbox"]):not([type="radio"]),
 .code-field select,
 .code-dialog input,

@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncIterator, Mapping
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,6 +19,7 @@ from free_claude_code.application.code_sessions import (
     CodeUnavailableError,
     CodeValidationError,
 )
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.session_events import EventOverflowError
 from free_claude_code.core.json_types import JsonObject, JsonValue
 
@@ -39,6 +40,10 @@ class CreatePayload(CommandPayload):
     session_id: str
     cwd: str = Field(min_length=1, max_length=4096)
     harness: Literal["codex"] = "codex"
+
+
+class FolderPickerPayload(CommandPayload):
+    initial_path: str | None = Field(default=None, max_length=4096)
 
 
 class SettingsPayload(CommandPayload):
@@ -89,6 +94,16 @@ def bootstrap(services: ApiServices = Depends(get_services)) -> JsonObject:
         "models": [model.model_dump(mode="json") for model in catalog.models],
         "default_model": catalog.default_model,
     }
+
+
+@router.post("/admin/api/code/folder-picker")
+async def pick_folder(
+    payload: FolderPickerPayload, services: ApiServices = Depends(get_services)
+) -> JsonObject:
+    try:
+        return {"path": await services.admin.pick_folder(payload.initial_path)}
+    except ApplicationUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=exc.message) from exc
 
 
 @router.get("/admin/api/code/events", response_class=EventSourceResponse)

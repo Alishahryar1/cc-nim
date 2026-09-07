@@ -48,6 +48,7 @@ from free_claude_code.providers.credential_validation import (
 )
 
 from .configuration import ConfigurationService
+from .folder_picker import NativeFolderPicker
 from .provider_manager import ProviderRuntimeManager
 from .retired_chat import remove_retired_chat_history
 
@@ -148,6 +149,7 @@ class ApplicationRuntime:
         self.provider_manager = provider_manager
         self._configuration = configuration
         self._code_service = code_service
+        self._folder_picker = NativeFolderPicker()
         self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._connected_accounts = dict(connected_accounts or {})
@@ -226,6 +228,7 @@ class ApplicationRuntime:
     def begin_shutdown(self) -> None:
         """Finish indefinite observer responses before the server drains HTTP."""
         self._draining = True
+        self._folder_picker.begin_shutdown()
         if self._code_service is not None:
             self._code_service.begin_shutdown()
 
@@ -245,6 +248,9 @@ class ApplicationRuntime:
                     "Server shutdown incomplete; owned resources remain for retry"
                 )
             return self._closed
+
+    async def pick_folder(self, initial_path: str | None) -> str | None:
+        return await self._folder_picker.pick_folder(initial_path)
 
     async def apply_admin_config(
         self,
@@ -585,6 +591,8 @@ class ApplicationRuntime:
         logger.info("{} platform started with messaging workflow", components.name)
 
     async def _close_owned_resources(self) -> bool:
+        if not await best_effort("folder_picker.close", self._folder_picker.close()):
+            return False
         if not await self._cleanup_messaging():
             return False
         verbose = self.settings.log_api_error_tracebacks

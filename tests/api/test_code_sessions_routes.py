@@ -6,6 +6,7 @@ import pytest
 import pytest_asyncio
 
 from free_claude_code.application.code_sessions import CodeService
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.runtime.code_sessions_sqlite import SQLiteCodeStore
 from tests.api.support import create_test_app
 from tests.code_sessions_support import FakeHarness
@@ -124,3 +125,74 @@ async def test_code_routes_share_admin_access_boundary(code_api, headers):
         response = await client.get(path, headers=headers)
         assert response.status_code == 403
     assert harness.connections == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_folder_selection_only_returns_to_requesting_form(
+    code_api, monkeypatch, cancelled
+):
+    client, _, harness, folder, app = code_api
+    selected = None if cancelled else str(folder)
+    hints = []
+
+    async def pick(initial_path):
+        hints.append(initial_path)
+        return selected
+
+    monkeypatch.setattr(app.state.services.admin, "pick_folder", pick)
+    response = await client.post(
+        "/admin/api/code/folder-picker", json={"initial_path": str(folder)}
+    )
+    assert response.status_code == 200
+    assert response.json() == {"path": selected}
+    assert response.headers["cache-control"] == "no-store"
+    assert hints == [str(folder)]
+    assert (await client.get("/admin/api/code/sessions")).json()["sessions"] == []
+    assert harness.connections == []
+
+
+@pytest.mark.asyncio
+async def test_folder_picker_errors_use_admin_detail(code_api, monkeypatch):
+    client, _, _, _, app = code_api
+
+    async def pick(_initial_path):
+        raise ApplicationUnavailableError("A folder picker is already open")
+
+    monkeypatch.setattr(app.state.services.admin, "pick_folder", pick)
+    response = await client.post("/admin/api/code/folder-picker", json={})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "A folder picker is already open"}
+
+
+@pytest.mark.asyncio
+async def test_folder_picker_only_opens_on_an_authorized_explicit_post(
+    code_api, monkeypatch
+):
+    client, _, _, _, app = code_api
+
+    async def unexpected(_initial_path):
+        pytest.fail("Unauthorized or passive request opened a dialog")
+
+    monkeypatch.setattr(app.state.services.admin, "pick_folder", unexpected)
+    for headers in (
+        {"host": "remote.example"},
+        {"origin": "https://remote.example"},
+    ):
+        response = await client.post(
+            "/admin/api/code/folder-picker", json={}, headers=headers
+        )
+        assert response.status_code == 403
+    for payload in ({"initial_path": "x" * 4097}, {"other": True}):
+        response = await client.post("/admin/api/code/folder-picker", json=payload)
+        assert response.status_code == 422
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, client=("192.0.2.1", 1234)),
+        base_url="http://127.0.0.1",
+    ) as remote:
+        assert (
+            await remote.post("/admin/api/code/folder-picker", json={})
+        ).status_code == 403
+    assert (await client.get("/admin/api/code/folder-picker")).status_code == 405
+    assert (await client.get("/admin/code")).status_code == 200
+    assert (await client.get("/admin/api/code/bootstrap")).status_code == 200

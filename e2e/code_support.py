@@ -12,6 +12,7 @@ from tests.code_sessions_support import FakeHarness
 class CodeControl:
     def __init__(self, directory):
         self.harness = FakeHarness()
+        self.folder_picker = FolderPickerControl()
         self.service = CodeService(
             SQLiteCodeStore(directory / "code.db", directory / "code.lock"),
             self.harness,
@@ -40,3 +41,31 @@ class CodeControl:
     async def release_send(self):
         self.admission.set()
         self.admission_patch.stop()
+
+
+class FolderPickerControl:
+    """Substitute the native dialog while retaining its real runtime owner."""
+
+    def __init__(self):
+        self.calls = asyncio.Queue()
+
+    async def select(self, initial_path, stop):
+        result = asyncio.get_running_loop().create_future()
+        closed = asyncio.Event()
+        self.calls.put_nowait((initial_path, result, closed))
+        stopped = asyncio.create_task(stop.wait())
+        try:
+            await asyncio.wait((result, stopped), return_when=asyncio.FIRST_COMPLETED)
+            return None if stop.is_set() else result.result()
+        finally:
+            stopped.cancel()
+            await asyncio.gather(stopped, return_exceptions=True)
+            closed.set()
+
+    async def finish(self, call, path):
+        call[1].set_result(path)
+        await call[2].wait()
+
+    async def fail(self, call):
+        call[1].set_exception(RuntimeError("No desktop available"))
+        await call[2].wait()

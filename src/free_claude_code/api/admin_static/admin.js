@@ -167,6 +167,7 @@ function setActiveView(viewId, { scroll = false } = {}) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   if (activeView.id === "code") window.CodeSessions.activate(window.location.pathname);
+  else window.CodeSessions.deactivate();
 }
 
 function navigateToView(viewId) {
