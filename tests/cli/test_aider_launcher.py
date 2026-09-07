@@ -15,6 +15,7 @@ def test_aider_receives_native_files_and_a_private_credential_reference(
     monkeypatch.setenv("fcc_aider_proxy_auth_stale", "stale-secret")
     monkeypatch.setenv("USER_SETTING", "preserved")
     key_names: list[str] = []
+    launch_ids: list[str] = []
 
     def inspect(command, env):
         settings_path = Path(env["AIDER_MODEL_SETTINGS_FILE"])
@@ -30,10 +31,18 @@ def test_aider_receives_native_files_and_a_private_credential_reference(
         assert env[key_name] == "launcher-test-token"
         key_names.append(key_name)
         bare = next(entry for entry in settings if entry["name"] == env["AIDER_MODEL"])
+        launch_id = bare["extra_params"]["extra_headers"]["x-fcc-launch-id"]
+        assert launch_id
+        launch_ids.append(launch_id)
+        assert all(
+            entry["extra_params"]["extra_headers"] == {"x-fcc-launch-id": launch_id}
+            for entry in settings
+        )
         assert bare["extra_params"] == {
             "model": "anthropic/nvidia_nim/catalog-model:variant",
             "api_base": "http://127.0.0.1:8182/v1/messages",
             "api_key": f"os.environ/{key_name}",
+            "extra_headers": {"x-fcc-launch-id": launch_id},
         }
         assert env["AIDER_MODEL"] in metadata
         assert "launcher-test-token" not in settings_path.read_text()
@@ -55,3 +64,4 @@ def test_aider_receives_native_files_and_a_private_credential_reference(
     assert launch_capture.commands[0][-len(args) :] == args
     launch("aider", [])
     assert key_names[0] != key_names[1]
+    assert launch_ids[0] != launch_ids[1]

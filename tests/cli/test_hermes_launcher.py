@@ -15,6 +15,8 @@ from tests.cli.test_launcher_workflow import launch
 def test_hermes_uses_native_defaults_and_keeps_user_commands(
     launch_capture: LaunchCapture,
 ) -> None:
+    launch_ids = []
+
     def inspect(command, env):
         config = json.loads(
             (Path(env["HERMES_MANAGED_DIR"]) / "config.yaml").read_text()
@@ -26,6 +28,8 @@ def test_hermes_uses_native_defaults_and_keeps_user_commands(
         assert entry["transport"] == "codex_responses"
         assert entry["api"] == "http://127.0.0.1:8182/v1"
         assert env[entry["key_env"]] == "launcher-test-token"
+        launch_ids.append(config["model"]["default_headers"]["x-fcc-launch-id"])
+        assert launch_ids[-1]
         assert all(aux["provider"] == provider for aux in config["auxiliary"].values())
         assert "launcher-test-token" not in json.dumps(config)
 
@@ -47,6 +51,8 @@ def test_hermes_uses_native_defaults_and_keeps_user_commands(
         "model.provider",
         "--json",
     ]
+    launch("hermes", [])
+    assert launch_ids[0] != launch_ids[1]
 
 
 @pytest.mark.parametrize("output", ['"other-provider"', "{}", "", "not json"])

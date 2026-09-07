@@ -129,6 +129,7 @@ def test_aider_native_settings_resolve_bare_and_transport_names_without_rewritin
         (ClientModel(wire_name, wire_name, "Model", False),),
         messages_url="http://localhost:8182/v1/messages",
         api_key_env="FCC_AIDER_PROXY_AUTH_TEST123",
+        launch_id="launch-a",
     )
     entries = {entry["name"]: entry for entry in config.settings}
     for name in (wire_name, f"anthropic/{wire_name}"):

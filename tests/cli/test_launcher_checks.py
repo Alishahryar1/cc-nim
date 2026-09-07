@@ -37,9 +37,11 @@ from tests.cli.test_launcher_workflow import HARNESSES, launch
         ("muse", "Muse Code 0.2.1", True),
         ("muse", "Muse Code 1.0.3 (1.0.3-R2198.1)", True),
         ("muse", "Muse Code 0.2.0", False),
-        ("pi", "--extension --models", True),
-        ("pi", "--extension", False),
-        ("pi", "--models", False),
+        ("pi", "0.80.4", True),
+        ("pi", "0.85.0", True),
+        ("pi", "0.80.3", False),
+        ("pi", "0.80.4-beta", False),
+        ("pi", "--extension --models", False),
     ],
 )
 def test_native_compatibility_precedes_fcc_setup(

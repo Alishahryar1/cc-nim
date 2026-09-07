@@ -44,6 +44,7 @@ def test_aider_config_projects_messages_route_and_canonical_catalog() -> None:
         _models(),
         messages_url="http://127.0.0.1:9191/v1/messages",
         api_key_env="FCC_AIDER_PROXY_AUTH_A1B2C3",
+        launch_id="launch-a",
     )
 
     expected_metadata = {
@@ -77,6 +78,7 @@ def test_aider_config_projects_messages_route_and_canonical_catalog() -> None:
                 "model": f"anthropic/{wire_name}",
                 "api_base": "http://127.0.0.1:9191/v1/messages",
                 "api_key": "os.environ/FCC_AIDER_PROXY_AUTH_A1B2C3",
+                "extra_headers": {"x-fcc-launch-id": "launch-a"},
             }
     assert entries["nvidia_nim/vendor/model"]["accepts_settings"] == [
         "reasoning_effort"
@@ -106,6 +108,7 @@ def test_aider_config_rejects_empty_catalog() -> None:
             (),
             messages_url="http://127.0.0.1:9191/v1/messages",
             api_key_env="FCC_AIDER_PROXY_AUTH_A1B2C3",
+            launch_id="launch-a",
         )
 
 
@@ -120,6 +123,7 @@ def test_aider_catalog_ids_take_precedence_over_generated_transport_spellings() 
         models,
         messages_url="http://localhost:8182/v1/messages",
         api_key_env="FCC_AIDER_PROXY_AUTH_COLLISION",
+        launch_id="launch-a",
     )
     entries = {entry["name"]: entry for entry in config.settings}
     extra = entries["anthropic/provider/model"]["extra_params"]
@@ -147,4 +151,5 @@ def test_aider_config_rejects_invalid_api_key_environment_name(
             _models(),
             messages_url="http://127.0.0.1:9191/v1/messages",
             api_key_env=api_key_env,
+            launch_id="launch-a",
         )

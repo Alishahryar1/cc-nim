@@ -138,6 +138,11 @@ class OpenCodeProvider(OpenAIChatProvider):
             "session-id",
             "x-session-id",
             "x-claude-code-session-id",
+            "session_id",
+            "x-grok-session-id",
+            "x-meta-ai-gateway-session-id",
+            "x-tbh-session-id",
+            "x-fcc-launch-id",
         ):
             session_id = headers.get(name)
             if session_id and session_id.strip():

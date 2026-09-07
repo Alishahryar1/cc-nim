@@ -25,6 +25,7 @@ def build_aider_config(
     *,
     messages_url: str,
     api_key_env: str,
+    launch_id: str,
 ) -> AiderConfig:
     """Project a non-empty FCC Messages catalog into Aider's file contracts."""
 
@@ -47,6 +48,7 @@ def build_aider_config(
                 "model": f"anthropic/{model.wire_slug}",
                 "api_base": messages_url,
                 "api_key": f"os.environ/{api_key_env}",
+                "extra_headers": {"x-fcc-launch-id": launch_id},
             },
         }
         if model.supports_reasoning is not None:
