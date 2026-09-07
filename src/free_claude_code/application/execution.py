@@ -1,10 +1,9 @@
 """Provider execution shared by inbound API adapters."""
 
 import asyncio
-import inspect
 import math
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from types import MappingProxyType
 from typing import Literal
 
@@ -45,8 +44,6 @@ TokenCounter = Callable[
 ResponsesTokenCounter = Callable[[OpenAIResponsesRequest], int]
 WireApi = Literal["messages", "responses"]
 CandidateStreamOpener = Callable[[int, ProviderModelTarget], AsyncIterator[str]]
-CandidateSelected = Callable[[ProviderModelTarget], Awaitable[None] | None]
-CandidateFailed = Callable[[ExecutionFailure], None]
 
 
 class ProviderExecutor:
@@ -169,8 +166,6 @@ class ProviderExecutor:
         *,
         raw_log_payload: object,
         request_id: str,
-        candidate_selected: CandidateSelected | None = None,
-        candidate_failed: CandidateFailed | None = None,
     ) -> AsyncIterator[str]:
         """Preflight and execute one Anthropic Messages request."""
 
@@ -238,8 +233,6 @@ class ProviderExecutor:
             ingress_count=len(routed.request.messages),
             request_id=request_id,
             open_candidate=open_candidate,
-            candidate_selected=candidate_selected,
-            candidate_failed=candidate_failed,
         )
 
     def stream_responses(
@@ -315,8 +308,6 @@ class ProviderExecutor:
             ingress_count=input_item_count,
             request_id=request_id,
             open_candidate=open_candidate,
-            candidate_selected=None,
-            candidate_failed=None,
         )
 
     def _stream_candidates(
@@ -332,8 +323,6 @@ class ProviderExecutor:
         ingress_count: int,
         request_id: str,
         open_candidate: CandidateStreamOpener,
-        candidate_selected: CandidateSelected | None,
-        candidate_failed: CandidateFailed | None,
     ) -> AsyncIterator[str]:
         """Run one protocol-blind candidate lifecycle after eager preflight."""
 
@@ -435,10 +424,6 @@ class ProviderExecutor:
                             continue
                         if not candidate_committed:
                             candidate_committed = True
-                            if candidate_selected is not None:
-                                selected_result = candidate_selected(target)
-                                if inspect.isawaitable(selected_result):
-                                    await selected_result
                             if index > 0:
                                 self._trace_fallback_selected(
                                     request_id=request_id,
@@ -473,13 +458,7 @@ class ProviderExecutor:
                             ) from exc
 
                 if candidate_failure is None:
-                    if not candidate_committed and candidate_selected is not None:
-                        selected_result = candidate_selected(target)
-                        if inspect.isawaitable(selected_result):
-                            await selected_result
                     return
-                if candidate_failed is not None:
-                    candidate_failed(candidate_failure)
                 if candidate_committed or index + 1 >= len(candidates):
                     raise candidate_failure
                 next_target = candidates[index + 1]

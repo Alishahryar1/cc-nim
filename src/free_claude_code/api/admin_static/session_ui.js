@@ -188,32 +188,7 @@
       scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80
     );
   }
-  function captureSelection(input) {
-    if (!input || document.activeElement !== input) return null;
-    return {
-      start: input.selectionStart,
-      end: input.selectionEnd,
-      direction: input.selectionDirection,
-    };
-  }
-  function restoreSelection(input, selection) {
-    if (!input || input.disabled || !selection) return;
-    input.focus({ preventScroll: true });
-    input.setSelectionRange(
-      Math.min(selection.start, input.value.length),
-      Math.min(selection.end, input.value.length),
-      selection.direction,
-    );
-  }
-  function focusIsUnclaimed() {
-    const active = document.activeElement;
-    return (
-      !active || active === document.body || active === document.documentElement
-    );
-  }
   window.SessionUI = {
-    node,
-    button,
     libraryHeader,
     search,
     card,
@@ -226,8 +201,5 @@
     thinking,
     resizeComposer,
     nearBottom,
-    captureSelection,
-    restoreSelection,
-    focusIsUnclaimed,
   };
 })();

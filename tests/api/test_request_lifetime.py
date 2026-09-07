@@ -60,8 +60,8 @@ async def _unused_send(_message: Message) -> None:
     [
         _http_scope("/health"),
         _http_scope("/v1/messages", method="OPTIONS"),
-        _http_scope("/admin/api/chat/sessions/session/send"),
-        _http_scope("/admin/api/chat/sessions/session/stop"),
+        _http_scope("/admin/api/code/sessions/session/turns"),
+        _http_scope("/admin/api/code/sessions/session/stop"),
         cast(Scope, {"type": "lifespan", "asgi": {"version": "3.0"}}),
     ],
 )

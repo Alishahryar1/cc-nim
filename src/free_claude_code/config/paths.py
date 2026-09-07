@@ -16,9 +16,6 @@ OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
 CONFIG_LOCK_FILENAME = "config.lock"
 FCC_TEMP_DIRNAME = "tmp"
 LAUNCHER_TEMP_DIRNAME = "launchers"
-CHAT_STATE_DIRNAME = "chat"
-CHAT_DATABASE_FILENAME = "chat.db"
-CHAT_LOCK_FILENAME = "chat.lock"
 CODE_STATE_DIRNAME = "code"
 CODE_DATABASE_FILENAME = "code.db"
 CODE_LOCK_FILENAME = "code.lock"
@@ -46,24 +43,6 @@ def launcher_temp_dir_path() -> Path:
     """Return the base directory for private native launcher configuration."""
 
     return config_dir_path() / FCC_TEMP_DIRNAME / LAUNCHER_TEMP_DIRNAME
-
-
-def chat_state_dir_path() -> Path:
-    """Return the managed Chat Sessions state directory."""
-
-    return config_dir_path() / CHAT_STATE_DIRNAME
-
-
-def chat_database_path() -> Path:
-    """Return the managed Chat Sessions database path."""
-
-    return chat_state_dir_path() / CHAT_DATABASE_FILENAME
-
-
-def chat_lock_path() -> Path:
-    """Return the exclusive Chat Sessions process-lock path."""
-
-    return chat_state_dir_path() / CHAT_LOCK_FILENAME
 
 
 def code_database_path() -> Path:

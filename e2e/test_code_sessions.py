@@ -4,7 +4,6 @@ import uuid
 import pytest
 from playwright.sync_api import expect
 
-from e2e.test_chat_sessions import _new_chat
 from free_claude_code.application.code_sessions.models import (
     HarnessEvent,
     PromptRequest,
@@ -316,7 +315,7 @@ def hold_deleted_detail(page, code_control, session_id):
 
 
 @pytest.mark.parametrize("source", ["event", "detail404"])
-def test_hidden_code_removal_preserves_chat_and_deleted_history(
+def test_hidden_code_removal_preserves_providers_and_deleted_history(
     page, admin_base_url, tmp_path, code_control, source
 ):
     control_feed(page)
@@ -324,13 +323,12 @@ def test_hidden_code_removal_preserves_chat_and_deleted_history(
     session_id = url.rsplit("/", 1)[1]
     if source == "detail404":
         hold_deleted_detail(page, code_control, session_id)
-    page.get_by_role("button", name="Chat Sessions", exact=True).click()
-    page.get_by_role("button", name="New chat", exact=True).click()
-    expect(page).to_have_url(re.compile(r"/admin/chat/[0-9a-f-]+$"))
-    chat_url = page.url
-    composer = page.locator("#chatComposer")
-    composer.fill("Keep this Chat draft")
-    composer.evaluate("input => input.setSelectionRange(2, 7)")
+    page.get_by_role("button", name="Providers", exact=True).click()
+    providers_url = f"{admin_base_url}/admin"
+    expect(page).to_have_url(providers_url)
+    field = page.locator("#field-MISTRAL_API_KEY")
+    field.fill("Keep this provider edit")
+    field.evaluate("input => input.setSelectionRange(2, 7)")
     history_length = page.evaluate("history.length")
     if source == "event":
         delete_from_other_client(code_control, session_id)
@@ -338,25 +336,21 @@ def test_hidden_code_removal_preserves_chat_and_deleted_history(
     else:
         page.evaluate("window.releaseCodeReads()")
         expect(page.locator("#codeLibrary")).to_have_count(1)
-    expect(page).to_have_url(chat_url)
+    expect(page).to_have_url(providers_url)
     assert page.evaluate("history.length") == history_length
-    expect(page.locator("#view-chat")).to_be_visible()
-    expect(page.locator('.nav-link[data-view="chat"]')).to_have_attribute(
+    expect(page.locator("#view-providers")).to_be_visible()
+    expect(page.locator('.nav-link[data-view="providers"]')).to_have_attribute(
         "aria-current", "page"
     )
-    expect(composer).to_be_focused()
-    expect(composer).to_have_value("Keep this Chat draft")
-    assert composer.evaluate("input => [input.selectionStart, input.selectionEnd]") == [
+    expect(field).to_be_focused()
+    expect(field).to_have_value("Keep this provider edit")
+    assert field.evaluate("input => [input.selectionStart,input.selectionEnd]") == [
         2,
         7,
     ]
-
-    # The old Code entry remains in history until it is visited and replaced.
     reads = []
     endpoint = f"/admin/api/code/sessions/{session_id}"
     page.on("request", lambda request: reads.append(request.url))
-    page.go_back()
-    expect(page).to_have_url(f"{admin_base_url}/admin/chat")
     page.go_back()
     expect(page).to_have_url(f"{admin_base_url}/admin/code")
     expect(page.locator("#codeNew")).to_be_enabled()
@@ -364,13 +358,8 @@ def test_hidden_code_removal_preserves_chat_and_deleted_history(
     assert not any(request.endswith(endpoint) for request in reads)
     assert page.evaluate("history.length") == history_length
     page.go_forward()
-    expect(page).to_have_url(f"{admin_base_url}/admin/chat")
-    page.go_forward()
-    expect(page).to_have_url(chat_url)
-    expect(composer).to_have_value("Keep this Chat draft")
-    page.reload()
-    expect(page).to_have_url(chat_url)
-    expect(composer).to_have_value("Keep this Chat draft")
+    expect(page).to_have_url(providers_url)
+    expect(field).to_have_value("Keep this provider edit")
 
 
 @pytest.mark.parametrize("source", ["event", "detail404", "returned_detail404"])
@@ -383,7 +372,7 @@ def test_visible_code_removal_replaces_history(
     if source != "event":
         hold_deleted_detail(page, code_control, session_id)
     if source == "returned_detail404":
-        page.get_by_role("button", name="Chat Sessions", exact=True).click()
+        page.get_by_role("button", name="Providers", exact=True).click()
         page.go_back()
         expect(page).to_have_url(url)
         expect(page.locator("#view-code")).to_be_visible()
@@ -399,7 +388,7 @@ def test_visible_code_removal_replaces_history(
     assert page.evaluate("history.length") == history_length
     if source == "returned_detail404":
         page.go_forward()
-        expect(page).to_have_url(f"{admin_base_url}/admin/chat")
+        expect(page).to_have_url(f"{admin_base_url}/admin")
         page.go_back()
         expect(page).to_have_url(f"{admin_base_url}/admin/code")
     reads = []
@@ -426,7 +415,9 @@ def test_code_removal_does_not_redirect_another_code_session(
     page.locator(f'#codeLibrary [data-id="{other.id}"]').click()
     other_url = f"{admin_base_url}/admin/code/{other.id}"
     expect(page).to_have_url(other_url)
-    page.locator("#codeComposer").fill("Keep B's draft")
+    composer = page.locator("#codeComposer")
+    composer.fill("Keep B's draft")
+    composer.evaluate("input => input.setSelectionRange(2, 7)")
     history_length = page.evaluate("history.length")
     if source == "event":
         delete_from_other_client(code_control, session_id)
@@ -435,8 +426,16 @@ def test_code_removal_does_not_redirect_another_code_session(
         page.evaluate("window.releaseCodeReads()")
     expect(page.locator("#codeSend")).to_be_enabled()
     expect(page).to_have_url(other_url)
-    expect(page.locator("#codeComposer")).to_have_value("Keep B's draft")
+    expect(composer).to_have_value("Keep B's draft")
+    expect(composer).to_be_focused()
+    assert composer.evaluate("input => [input.selectionStart,input.selectionEnd]") == [
+        2,
+        7,
+    ]
     assert page.evaluate("history.length") == history_length
+    page.reload()
+    expect(page).to_have_url(other_url)
+    expect(composer).to_have_value("Keep B's draft")
 
 
 def control_feed(page):
@@ -447,7 +446,6 @@ def control_feed(page):
           super(...args);
           this.isCode = String(args[0]).includes('/api/code/events');
           if (this.isCode) window.codeFeed = this;
-          if (String(args[0]).includes('/api/chat/events')) window.chatFeed = this;
         }
         addEventListener(type, listener, ...options) {
           return super.addEventListener(type, event => {
@@ -503,48 +501,6 @@ def send_from_other_client(page, url, text):
     )
     assert response.ok, response.text()
     return response.json()["id"]
-
-
-def test_hidden_chat_cannot_change_code_control_state(
-    page, admin_base_url, tmp_path, code_control
-):
-    control_feed(page)
-    _new_chat(page, admin_base_url)
-    chat_id = page.url.rsplit("/", 1)[1]
-    expect(page.locator("#chatModel")).to_be_enabled()
-    page.get_by_role("button", name="Code sessions", exact=True).click()
-    page.get_by_role("button", name="New code session", exact=True).click()
-    page.get_by_role("textbox", name="Folder", exact=True).fill(str(tmp_path))
-    page.get_by_role("button", name="Create session", exact=True).click()
-    send(page, "Keep working")
-    connection = code_control.connection()
-    controls = page.locator(
-        "#codeRoot .session-model-control input, "
-        "#codeRoot .session-model-control button, #codeReasoning, #codeDelete"
-    )
-    assert controls.count() == 4
-    for control in controls.all():
-        expect(control).to_be_disabled()
-    endpoint = f"{admin_base_url}/admin/api/chat/sessions/{chat_id}"
-    session = page.request.get(endpoint).json()["session"]
-    response = page.request.patch(
-        endpoint,
-        data={"expected_revision": session["revision"], "title": "Hidden update"},
-    )
-    assert response.ok
-    expect(page.locator("#chatRoot .session-title")).to_have_value("Hidden update")
-    for control in controls.all():
-        expect(control).to_be_disabled()
-    expect(page.locator("#codeRoot .session-title")).to_be_enabled()
-
-    code_control.run(connection.finish("turn-1"))
-    for control in controls.all():
-        expect(control).to_be_enabled()
-    page.evaluate("window.chatFeed.dispatchEvent(new Event('error'))")
-    expect(page.locator("#chatModel")).to_be_disabled()
-    for control in controls.all():
-        expect(control).to_be_enabled()
-    expect(page.locator("#codeRoot .session-title")).to_be_enabled()
 
 
 def test_model_default_clears_effort_when_all_choices_disappear(
@@ -908,7 +864,7 @@ def test_library_reconnect_removes_missed_deletion_and_searches_beyond_first_pag
 
 
 @pytest.mark.parametrize("width,height", [(1440, 1000), (390, 844)])
-def test_code_composer_uses_chat_geometry_and_preserves_focus(
+def test_code_composer_fits_viewport_and_preserves_focus(
     page, admin_base_url, tmp_path, code_control, width, height
 ):
     page.set_viewport_size({"width": width, "height": height})
@@ -916,9 +872,6 @@ def test_code_composer_uses_chat_geometry_and_preserves_focus(
     composer = page.locator("#codeComposer")
     composer.fill("a draft\nwith a second line")
     composer.evaluate("input => input.setSelectionRange(2, 6)")
-    expected = composer.evaluate(
-        "input => { const s=getComputedStyle(input); return [s.minHeight,s.maxHeight,s.padding,s.lineHeight,s.resize]; }"
-    )
     page.locator("#codeModel").click()
     page.keyboard.press("Escape")
     composer.focus()
@@ -934,11 +887,3 @@ def test_code_composer_uses_chat_geometry_and_preserves_focus(
         + page.locator("#codeComposer").bounding_box()["height"]
         <= height
     )
-    page.goto(f"{admin_base_url}/admin/chat")
-    page.get_by_role("button", name="New chat", exact=True).click()
-    chat = page.locator("#chatComposer")
-    expect(chat).to_be_visible()
-    actual = chat.evaluate(
-        "input => { const s=getComputedStyle(input); return [s.minHeight,s.maxHeight,s.padding,s.lineHeight,s.resize]; }"
-    )
-    assert actual == expected
