@@ -9,17 +9,19 @@ from free_claude_code.core.version import package_version
 
 def test_admin_removes_chat_drafts_and_preserves_other_storage(page, admin_base_url):
     page.add_init_script("""(() => {
-      sessionStorage.setItem('fcc.chat.draft.first', 'old first draft');
-      sessionStorage.setItem('fcc.chat.draft.second', 'old second draft');
-      sessionStorage.setItem('fcc.chat.draft.third', 'old third draft');
-      sessionStorage.setItem('fcc.code.saved-session', 'keep code draft');
+      for (let index = 0; index < 16; index++) {
+        sessionStorage.setItem(`fcc.chat.draft.${index}`, `old draft ${index}`);
+      }
+      for (let index = 0; index < 16; index++) {
+        sessionStorage.setItem(`fcc.code.${index}`, `keep code draft ${index}`);
+      }
       sessionStorage.setItem('fcc.chat.draftWithoutDot', 'keep unrelated key');
       sessionStorage.setItem('other-admin-state', 'keep admin state');
     })();""")
     page.goto(f"{admin_base_url}/admin")
     expect(page.locator('[data-provider="nvidia_nim"]')).to_be_visible()
     assert page.evaluate("Object.fromEntries(Object.entries(sessionStorage))") == {
-        "fcc.code.saved-session": "keep code draft",
+        **{f"fcc.code.{index}": f"keep code draft {index}" for index in range(16)},
         "fcc.chat.draftWithoutDot": "keep unrelated key",
         "other-admin-state": "keep admin state",
     }

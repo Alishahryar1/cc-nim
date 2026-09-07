@@ -1231,8 +1231,7 @@ window.addEventListener("popstate", () => {
 });
 
 try {
-  for (let index = sessionStorage.length - 1; index >= 0; index--) {
-    const key = sessionStorage.key(index);
+  for (const key of Object.keys(sessionStorage)) {
     if (key.startsWith("fcc.chat.draft.")) sessionStorage.removeItem(key);
   }
 } catch {
