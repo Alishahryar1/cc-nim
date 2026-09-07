@@ -1,7 +1,7 @@
 """Application-owned provider execution contracts."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -52,6 +52,7 @@ class FakeProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -73,6 +74,7 @@ class FakeProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         raise AssertionError("Messages test provider received a Responses request")
         yield ""
@@ -127,6 +129,7 @@ class ResponsesFakeProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         raise AssertionError("Responses test provider received a Messages request")
         yield ""
@@ -139,6 +142,7 @@ class ResponsesFakeProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self.stream_calls.append(
             {
@@ -189,6 +193,7 @@ class ControlledProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -263,6 +268,7 @@ class FailingStreamConstructionProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         raise RuntimeError("stream construction failed")
 
@@ -280,6 +286,7 @@ class ExecutionFailureStreamConstructionProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         del request, input_tokens, request_id, response_model, reasoning
         raise self._failure
@@ -307,6 +314,7 @@ class CloseControlledProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
@@ -915,6 +923,7 @@ async def test_candidate_requests_are_isolated_from_provider_mutation() -> None:
             request_id: str | None = None,
             response_model: str | None = None,
             reasoning: ReasoningPolicy,
+            request_headers: Mapping[str, str] | None = None,
         ) -> AsyncIterator[str]:
             request.messages[0].content = "mutated"
             async for chunk in super().stream_messages(
@@ -1209,35 +1218,52 @@ async def test_empty_chunks_do_not_renew_provider_progress() -> None:
 
 @pytest.mark.asyncio
 async def test_fallback_transition_does_not_reset_shared_progress_deadline() -> None:
-    timeout_seconds = 0.2
+    primary_wait = WaitStep()
     primary = ControlledProvider(
-        [DelayStep(0.06), _execution_failure("primary overloaded")]
+        [primary_wait, _execution_failure("primary overloaded")]
     )
     fallback_wait = WaitStep()
     fallback = ControlledProvider([fallback_wait])
     providers = {"provider": primary, "fallback": fallback}
     executor = ProviderExecutor(
         providers.__getitem__,
-        progress_timeout_seconds=timeout_seconds,
+        progress_timeout_seconds=60,
     )
     stream = executor.stream_messages(
         _routed_request(_target("fallback", "model")),
         raw_log_payload={},
         request_id="req_shared_deadline",
     )
-    loop = asyncio.get_running_loop()
-    started = loop.time()
+    deadlines: list[float | None] = []
+    timeouts: list[asyncio.Timeout] = []
+
+    def controlled_timeout_at(deadline):
+        deadlines.append(deadline)
+        timeout = asyncio.timeout(None)
+        timeouts.append(timeout)
+        return timeout
 
     with (
         patch("free_claude_code.application.execution.trace_event") as trace_mock,
-        pytest.raises(ExecutionFailure) as exc_info,
+        patch(
+            "free_claude_code.application.execution.asyncio.timeout_at",
+            controlled_timeout_at,
+        ),
     ):
-        await anext(stream)
+        reading = asyncio.ensure_future(anext(stream))
+        await primary_wait.started.wait()
+        primary_wait.release.set()
+        await fallback_wait.started.wait()
+        # Expire the actual fallback read context after observing its admission;
+        # machine load must not determine whether the shared deadline was reused.
+        timeouts[-1].reschedule(asyncio.get_running_loop().time())
+        with pytest.raises(ExecutionFailure) as exc_info:
+            await reading
 
-    elapsed = loop.time() - started
-    assert fallback_wait.started.is_set()
+    read_deadlines = [deadline for deadline in deadlines if deadline is not None]
+    assert len(read_deadlines) >= 3
+    assert len(set(read_deadlines)) == 1
     assert exc_info.value.kind == FailureKind.TIMEOUT
-    assert elapsed < 0.24
     assert primary.stream_close_calls == fallback.stream_close_calls == 1
     timeout_trace = next(
         call.kwargs

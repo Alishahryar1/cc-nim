@@ -12,6 +12,7 @@ import pytest
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.stream_contracts import (
+    assert_anthropic_stream_contract,
     parse_sse_text,
 )
 from free_claude_code.core.anthropic.streaming import (
@@ -46,6 +47,7 @@ from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
     make_provider_config,
+    profiled_provider,
 )
 
 
@@ -647,6 +649,97 @@ class TestStreamingExceptionHandling:
         assert len(thinking_starts) == 1
         assert thinking_deltas == []
         assert parsed[-1].event == "message_stop"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wire", ["messages", "responses"])
+    @pytest.mark.parametrize(
+        ("deltas", "expected"),
+        [
+            pytest.param(
+                [("plan", ""), ("", "The quick"), ("", " brown fox"), ("", "")],
+                [("reasoning", "plan"), ("text", "The quick brown fox")],
+                id="empty-placeholders-after-reasoning",
+            ),
+            pytest.param(
+                [("", "The quick"), ("", " brown fox"), ("", "")],
+                [("reasoning", ""), ("text", "The quick brown fox")],
+                id="first-empty-reasoning-is-preserved",
+            ),
+            pytest.param(
+                [(None, "The quick"), (None, " brown fox")],
+                [("text", "The quick brown fox")],
+                id="no-reasoning-is-invented",
+            ),
+            pytest.param(
+                [("", None), ("", "first"), ("more", None), ("", "second")],
+                [
+                    ("reasoning", ""),
+                    ("text", "first"),
+                    ("reasoning", "more"),
+                    ("text", "second"),
+                ],
+                id="nonempty-reasoning-can-resume",
+            ),
+        ],
+    )
+    async def test_empty_reasoning_placeholders_preserve_content_blocks(
+        self, wire, deltas, expected
+    ):
+        provider = profiled_provider(
+            "qwencloud",
+            make_provider_config(api_key="test", base_url="https://provider.invalid"),
+        )
+        chunks = [
+            _make_chunk(reasoning_content=reasoning, content=content)
+            for reasoning, content in deltas
+        ] + [_make_chunk(finish_reason="stop")]
+        try:
+            with patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                side_effect=lambda **kwargs: AsyncStreamMock(chunks),
+            ):
+                # Each request must preserve its own first explicit reasoning value.
+                for _ in range(2):
+                    if wire == "messages":
+                        stream = provider.stream_messages(_make_request())
+                    else:
+                        stream = provider.stream_responses(
+                            OpenAIResponsesRequest(model="test-model", input="Hello")
+                        )
+                    events = parse_sse_text("".join([frame async for frame in stream]))
+                    if wire == "messages":
+                        assert_anthropic_stream_contract(events)
+                        actual = [
+                            (
+                                "reasoning"
+                                if start.data["content_block"]["type"] == "thinking"
+                                else start.data["content_block"]["type"],
+                                "".join(
+                                    event.data["delta"].get(
+                                        "thinking", event.data["delta"].get("text", "")
+                                    )
+                                    for event in events
+                                    if event.event == "content_block_delta"
+                                    and event.data["index"] == start.data["index"]
+                                ),
+                            )
+                            for start in events
+                            if start.event == "content_block_start"
+                        ]
+                    else:
+                        assert events[-1].event == "response.completed"
+                        actual = [
+                            (
+                                "text" if item["type"] == "message" else item["type"],
+                                "".join(part["text"] for part in item["content"]),
+                            )
+                            for item in events[-1].data["response"]["output"]
+                        ]
+                    assert actual == expected
+        finally:
+            await provider.cleanup()
 
     @pytest.mark.asyncio
     async def test_stream_with_reasoning_content_suppressed_when_disabled(self):

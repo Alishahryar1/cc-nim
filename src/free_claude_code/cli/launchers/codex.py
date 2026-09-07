@@ -50,7 +50,7 @@ def codex_config_args(*, api_url: str, model: str | None = None) -> list[str]:
     ]
 
 
-def _configure(
+def prepare_codex_launch(
     ctx: LaunchContext, args: list[str], files: LaunchResources
 ) -> PreparedLaunch:
     catalog_path = files.write_json(
@@ -81,7 +81,7 @@ SPEC = HarnessSpec(
     binary_name="codex",
     display_name="Codex CLI",
     install_hint="Install Codex with: npm install -g @openai/codex",
-    configure=_configure,
+    configure=prepare_codex_launch,
     catalog_view="responses",
 )
 

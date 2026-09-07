@@ -60,27 +60,21 @@
     "operation.failed",
   ];
 
+  const UI = window.SessionUI;
+  const {
+    node,
+    button,
+    nearBottom,
+    resizeComposer,
+    focusIsUnclaimed: composerFocusIsUnclaimed,
+  } = UI;
   const root = () => document.getElementById("chatRoot");
-
-  function node(tag, className = "", text = "") {
-    const element = document.createElement(tag);
-    if (className) element.className = className;
-    if (text) element.textContent = text;
-    return element;
-  }
-
-  function button(label, className, action) {
-    const element = node("button", className, label);
-    element.type = "button";
-    element.addEventListener("click", action);
-    return element;
-  }
 
   function setNotice(message, kind = "") {
     const area = document.getElementById("chatNotice");
     if (!area) return;
     area.textContent = message;
-    area.className = `chat-notice ${kind}`.trim();
+    area.className = `session-notice ${kind}`.trim();
     area.hidden = !message;
   }
 
@@ -158,7 +152,9 @@
     state.feedLastId = cursor;
     state.feedStatus = "synchronizing";
     refreshFeedState();
-    const snapshotOperationIds = installActiveSnapshot(snapshot.active_operations);
+    const snapshotOperationIds = installActiveSnapshot(
+      snapshot.active_operations,
+    );
     if (!snapshotOperationIds) {
       restartEventFeed();
       return;
@@ -296,7 +292,9 @@
   }
 
   function upsertLibrarySummary(summary) {
-    state.libraryItems = state.libraryItems.filter((item) => item.id !== summary.id);
+    state.libraryItems = state.libraryItems.filter(
+      (item) => item.id !== summary.id,
+    );
     if (matchesLibraryQuery(summary)) state.libraryItems.push(summary);
     sortLibraryItems();
   }
@@ -417,12 +415,12 @@
   function validOperationSnapshot(snapshot) {
     return Boolean(
       snapshot &&
-        typeof snapshot.session_id === "string" &&
-        typeof snapshot.operation_id === "string" &&
-        validOperationKind(snapshot.kind) &&
-        ["generating", "compacting"].includes(snapshot.phase) &&
-        Number.isInteger(snapshot.operation_sequence) &&
-        Array.isArray(snapshot.segments),
+      typeof snapshot.session_id === "string" &&
+      typeof snapshot.operation_id === "string" &&
+      validOperationKind(snapshot.kind) &&
+      ["generating", "compacting"].includes(snapshot.phase) &&
+      Number.isInteger(snapshot.operation_sequence) &&
+      Array.isArray(snapshot.segments),
     );
   }
 
@@ -496,7 +494,8 @@
     const active = state.activeOperations.get(payload.session_id);
     const pending = state.pendingCommands.get(payload.session_id);
     const matchingActive = active?.id === payload.operation_id ? active : null;
-    const matchingPending = pending?.id === payload.operation_id ? pending : null;
+    const matchingPending =
+      pending?.id === payload.operation_id ? pending : null;
     if (isTerminalEvent(type, payload.kind)) {
       if (
         matchingActive &&
@@ -560,7 +559,10 @@
     } else if (type === "compaction.started") {
       operation.phase = "compacting";
       operation.status = "Compacting…";
-    } else if (type === "compaction.completed" && operation.action !== "compact") {
+    } else if (
+      type === "compaction.completed" &&
+      operation.action !== "compact"
+    ) {
       operation.phase = "generating";
       operation.status = "Thinking…";
     }
@@ -647,7 +649,9 @@
     state.draftOperationId = null;
     state.draftSubmittedText = "";
     try {
-      const stored = JSON.parse(sessionStorage.getItem(draftKey(sessionId)) || "null");
+      const stored = JSON.parse(
+        sessionStorage.getItem(draftKey(sessionId)) || "null",
+      );
       if (!stored || typeof stored !== "object") return;
       if (typeof stored.text === "string") state.draft = stored.text;
       if (typeof stored.operationId === "string") {
@@ -809,18 +813,22 @@
   }
 
   function routedSessionId(path) {
-    return path.match(/^\/admin\/chat\/([0-9a-f-]+)$/i)?.[1].toLowerCase() || null;
+    return (
+      path.match(/^\/admin\/chat\/([0-9a-f-]+)$/i)?.[1].toLowerCase() || null
+    );
   }
 
   function renderLoading() {
     state.modelComboboxes.clear();
     const container = root();
-    container.replaceChildren(node("div", "chat-empty", "Loading Chat Sessions…"));
+    container.replaceChildren(
+      node("div", "session-empty", "Loading Chat Sessions…"),
+    );
   }
 
   function renderUnavailable() {
     state.modelComboboxes.clear();
-    const container = node("section", "chat-empty");
+    const container = node("section", "session-empty");
     container.append(
       node("h3", "", "Chat Sessions unavailable"),
       node(
@@ -845,37 +853,24 @@
 
   function renderLibraryShell() {
     state.modelComboboxes.clear();
-    const header = node("header", "chat-library-header");
-    const copy = node("div");
-    copy.append(
-      node("h2", "", "Chat Sessions"),
-      node("p", "", "Talk directly to any configured FCC model."),
+    const create = button("New chat", "primary-button", createSession);
+    create.dataset.testid = "chat-new";
+    create.disabled = !mutationsReady();
+    const header = UI.libraryHeader(
+      "Chat Sessions",
+      "Talk directly to any configured FCC model.",
+      create,
     );
-    const newButton = button("New chat", "primary-button", createSession);
-    newButton.dataset.testid = "chat-new";
-    newButton.disabled = !mutationsReady();
-    header.append(copy, newButton);
-
-    const search = node("input", "chat-search");
-    search.type = "search";
-    search.placeholder = "Search chats";
-    search.value = state.libraryQuery;
-    search.setAttribute("aria-label", "Search chats");
-    let timer = null;
-    search.addEventListener("input", () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        state.libraryQuery = search.value;
-        loadLibrary(true, state.routeVersion);
-      }, 200);
+    const search = UI.search("Search chats", state.libraryQuery, (value) => {
+      state.libraryQuery = value;
+      loadLibrary(true, state.routeVersion);
     });
-
-    const notice = node("div", "chat-notice");
+    const notice = node("div", "session-notice");
     notice.id = "chatNotice";
     notice.hidden = true;
-    const list = node("div", "chat-session-list");
+    const list = node("div", "session-list");
     list.id = "chatSessionList";
-    const more = button("Load more", "secondary-button chat-load-more", () =>
+    const more = button("Load more", "secondary-button session-load-more", () =>
       loadLibrary(false, state.routeVersion),
     );
     more.id = "chatLoadMore";
@@ -897,7 +892,7 @@
       state.libraryItems = [];
       state.libraryCursor = null;
       state.libraryLoadMore = null;
-      list.replaceChildren(node("div", "chat-empty", "Loading chats…"));
+      list.replaceChildren(node("div", "session-empty", "Loading chats…"));
     } else {
       state.libraryLoadMore = loadMore;
       const more = document.getElementById("chatLoadMore");
@@ -920,7 +915,8 @@
       page.sessions.forEach((session) => {
         if (state.deletedSessions.has(session.id)) return;
         const current = reduceSessionSummary(session);
-        if (current && matchesLibraryQuery(current)) merged.set(current.id, current);
+        if (current && matchesLibraryQuery(current))
+          merged.set(current.id, current);
       });
       state.libraryItems = [...merged.values()].filter(matchesLibraryQuery);
       sortLibraryItems();
@@ -945,23 +941,24 @@
       list.appendChild(
         node(
           "div",
-          "chat-empty",
+          "session-empty",
           state.libraryQuery ? "No matching chats." : "Start your first chat.",
         ),
       );
     }
     state.libraryItems.forEach((session) => {
-      const item = button("", "chat-session-card", () => openSession(session.id));
-      const heading = node("strong", "", session.title);
-      const preview = node("p", "", session.preview || "No messages yet");
-      const meta = node("span", "", `${session.model} · ${relativeTime(session.updated_at)}`);
-      item.append(heading, preview, meta);
+      const item = UI.card(
+        session.title,
+        session.preview || "No messages yet",
+        `${session.model} · ${relativeTime(session.updated_at)}`,
+        () => openSession(session.id),
+      );
       const active = state.activeOperations.get(session.id);
       if (active) {
         item.appendChild(
           node(
             "span",
-            "chat-session-status",
+            "session-status",
             active.action === "compact" ? "Compacting…" : "Thinking…",
           ),
         );
@@ -1000,7 +997,8 @@
       return;
     }
     const refreshingVisibleSession =
-      state.session?.id === id && Boolean(document.getElementById("chatTranscript"));
+      state.session?.id === id &&
+      Boolean(document.getElementById("chatTranscript"));
     if (!refreshingVisibleSession) renderLoading();
     try {
       const detail = await state.api(`/admin/api/chat/sessions/${id}`);
@@ -1023,7 +1021,7 @@
       }
     } catch (error) {
       if (version !== state.routeVersion) return;
-      const empty = node("section", "chat-empty");
+      const empty = node("section", "session-empty");
       empty.append(
         node("h3", "", "Could not open this chat"),
         node("p", "", error.message),
@@ -1067,22 +1065,20 @@
   function renderSession({ followLatest = true, scrollTop = 0 } = {}) {
     const session = state.session;
     if (!session) return;
-    const previousTitle = document.querySelector(".chat-title");
+    const previousTitle = root().querySelector(".session-title");
     if (previousTitle instanceof HTMLInputElement) {
       state.retiredTitleInputs.add(previousTitle);
     }
     state.modelComboboxes.clear();
-    const shell = node("div", "chat-session-shell");
     const header = renderSessionHeader(session);
-    const notice = node("div", "chat-notice");
+    const notice = node("div", "session-notice");
     notice.id = "chatNotice";
     notice.hidden = true;
-    const scroller = node("div", "chat-transcript");
+    const scroller = node("div", "session-transcript");
     scroller.id = "chatTranscript";
     scroller.setAttribute("aria-label", "Conversation");
     const composer = renderComposer();
-    shell.append(header, notice, scroller, composer);
-    root().replaceChildren(shell);
+    root().replaceChildren(UI.shell(header, notice, scroller, composer));
     renderTranscript();
     refreshComposerState();
     if (followLatest) {
@@ -1102,28 +1098,7 @@
   }
 
   function renderSessionHeader(session) {
-    const header = node("header", "chat-session-header");
-    const top = node("div", "chat-header-row");
-    top.appendChild(button("← Chats", "chat-back-button", goLibrary));
-    const title = node("input", "chat-title");
-    title.value = session.title;
-    title.maxLength = 200;
-    title.setAttribute("aria-label", "Chat title");
-    title.addEventListener("blur", () => {
-      if (
-        title.isConnected &&
-        !state.retiredTitleInputs.has(title) &&
-        title.value !== state.session?.title
-      )
-        void updateSession({ title: title.value });
-    });
-    title.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") title.blur();
-    });
-    top.appendChild(title);
-    top.appendChild(button("Delete", "danger-button", deleteSession));
-
-    const controls = node("div", "chat-controls");
+    const controls = node("div", "session-controls");
     const compact = button("Compact now", "secondary-button", compactSession);
     compact.id = "chatCompact";
     controls.append(
@@ -1133,65 +1108,49 @@
       compact,
       button("System prompt", "secondary-button", editSystemPrompt),
     );
-    header.append(top, controls);
-    return header;
+    return UI.header(
+      "← Chats",
+      goLibrary,
+      session.title,
+      "Chat title",
+      (title) => {
+        if (
+          !state.retiredTitleInputs.has(title) &&
+          title.value !== state.session?.title
+        )
+          void updateSession({ title: title.value });
+      },
+      [button("Delete", "danger-button", deleteSession)],
+      controls,
+    );
   }
 
   function renderModelControl(session) {
-    const group = node("div", "chat-control chat-model-control");
-    const label = node("label", "", "Model");
-    label.htmlFor = "chatModel";
-    const input = node("input", "chat-model-input");
-    input.id = "chatModel";
-    input.type = "text";
-    input.autocomplete = "off";
-    input.value = session.model;
-    input.setAttribute("aria-label", "Selected model");
-    let committedModel = session.model;
-    const availableModels = () =>
-      (state.bootstrap?.models || []).map((option) => option.model_ref);
-    const combobox = new window.FccModelCombobox(input, {
-      listboxId: "chat-model-options",
-      label: "model",
-      values: availableModels,
-      emptyMessage: () =>
-        availableModels().length ? "No matching models." : "No models available.",
-      registry: state.modelComboboxes,
-      onSelect: (model) => {
-        committedModel = model;
+    return UI.modelControl(
+      "chatModel",
+      session.model,
+      () => (state.bootstrap?.models || []).map((option) => option.model_ref),
+      state.modelComboboxes,
+      (model) => {
         void updateSession({ model });
       },
-      onClose: () => {
-        input.value = committedModel;
-      },
-    });
-    group.append(label, combobox.element);
-    return group;
+    ).group;
   }
 
   function renderReasoningControl(session) {
-    const group = node("label", "chat-control");
-    group.appendChild(node("span", "", "Thinking"));
-    const select = node("select");
-    select.id = "chatReasoning";
-    [
-      ["off", "Off"],
-      ["low", "Low"],
-      ["medium", "Medium"],
-      ["high", "High"],
-      ["xhigh", "Extra High"],
-      ["max", "Max"],
-    ].forEach(([value, label]) => {
-      const option = node("option", "", label);
-      option.value = value;
-      select.appendChild(option);
-    });
-    select.value = session.reasoning;
-    select.addEventListener("change", () =>
-      updateSession({ reasoning: select.value }),
-    );
-    group.appendChild(select);
-    return group;
+    return UI.reasoningControl(
+      "chatReasoning",
+      [
+        ["off", "Off"],
+        ["low", "Low"],
+        ["medium", "Medium"],
+        ["high", "High"],
+        ["xhigh", "Extra High"],
+        ["max", "Max"],
+      ],
+      session.reasoning,
+      (reasoning) => updateSession({ reasoning }),
+    ).group;
   }
 
   function renderContextMeter() {
@@ -1201,7 +1160,9 @@
     return meter;
   }
 
-  function updateContextMeter(element = document.getElementById("chatContextMeter")) {
+  function updateContextMeter(
+    element = document.getElementById("chatContextMeter"),
+  ) {
     if (!element) return;
     const context = state.context;
     if (!context || context.context_window_tokens === null) {
@@ -1215,74 +1176,33 @@
   }
 
   function renderComposer() {
-    const wrapper = node("div", "chat-composer");
-    const textarea = node("textarea");
-    textarea.id = "chatComposer";
-    textarea.rows = 2;
-    textarea.placeholder = "Message this model";
-    textarea.value = state.draft;
-    textarea.setAttribute("aria-label", "Message");
-    textarea.addEventListener("input", () => {
-      state.draft = textarea.value;
-      state.draftOperationId = null;
-      state.draftSubmittedText = "";
-      saveDraft();
-      refreshComposerState();
-      scheduleEstimate();
-    });
-    textarea.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        if (!document.getElementById("chatSend")?.disabled) sendMessage();
-      }
-    });
-    const actions = node("div", "chat-composer-actions");
-    const status = node("span", "chat-composer-status");
-    status.id = "chatComposerStatus";
-    status.setAttribute("aria-live", "polite");
-    const send = button("Send", "primary-button", sendMessage);
-    send.id = "chatSend";
-    const stop = button("Stop", "danger-button", stopOperation);
-    stop.id = "chatStop";
-    stop.hidden = true;
-    actions.append(status, send, stop);
-    wrapper.append(textarea, actions);
-    return wrapper;
-  }
-
-  function resizeComposer(textarea) {
-    textarea.style.height = "auto";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-    textarea.style.overflowY =
-      textarea.scrollHeight > textarea.clientHeight ? "auto" : "hidden";
-  }
-
-  function composerFocusIsUnclaimed() {
-    const active = document.activeElement;
-    return !active || active === document.body || active === document.documentElement;
+    return UI.composer(
+      "chat",
+      state.draft,
+      "Message this model",
+      (value) => {
+        state.draft = value;
+        state.draftOperationId = null;
+        state.draftSubmittedText = "";
+        saveDraft();
+        refreshComposerState();
+        scheduleEstimate();
+      },
+      sendMessage,
+      stopOperation,
+    );
   }
 
   function captureComposerSelection() {
-    const textarea = document.getElementById("chatComposer");
-    if (!textarea || document.activeElement !== textarea) return null;
-    return {
-      start: textarea.selectionStart,
-      end: textarea.selectionEnd,
-      direction: textarea.selectionDirection,
-    };
+    return UI.captureSelection(document.getElementById("chatComposer"));
   }
 
   function restoreComposerSelection(selection) {
-    const textarea = document.getElementById("chatComposer");
-    if (!textarea || textarea.disabled || !selection) return;
-    const start = Math.min(selection.start, textarea.value.length);
-    const end = Math.min(selection.end, textarea.value.length);
-    textarea.focus({ preventScroll: true });
-    textarea.setSelectionRange(start, end, selection.direction);
+    UI.restoreSelection(document.getElementById("chatComposer"), selection);
   }
 
   function captureTitleEdit() {
-    const input = document.querySelector(".chat-title");
+    const input = root().querySelector(".session-title");
     if (
       !(input instanceof HTMLInputElement) ||
       document.activeElement !== input ||
@@ -1298,7 +1218,7 @@
   }
 
   function restoreTitleEdit(edit) {
-    const input = document.querySelector(".chat-title");
+    const input = root().querySelector(".session-title");
     if (!(input instanceof HTMLInputElement) || !edit) return;
     input.value = edit.value;
     input.focus({ preventScroll: true });
@@ -1314,12 +1234,20 @@
     scroller.replaceChildren();
     if (state.nextBefore) {
       scroller.appendChild(
-        button("Load older messages", "secondary-button chat-older", loadOlder),
+        button(
+          "Load older messages",
+          "secondary-button session-older",
+          loadOlder,
+        ),
       );
     }
     if (!state.turns.length && !state.operation) {
       scroller.appendChild(
-        node("div", "chat-empty chat-transcript-empty", "Start the conversation."),
+        node(
+          "div",
+          "session-empty session-transcript-empty",
+          "Start the conversation.",
+        ),
       );
       return;
     }
@@ -1348,10 +1276,10 @@
       state.operation.userText &&
       !operationHasTurn
     ) {
-      const pending = node("article", "chat-message user-message");
+      const pending = node("article", "session-message user-message");
       pending.append(
-        node("div", "chat-message-label", "You"),
-        node("div", "chat-message-plain", state.operation.userText),
+        node("div", "session-message-label", "You"),
+        node("div", "session-message-plain", state.operation.userText),
       );
       scroller.appendChild(pending);
     }
@@ -1364,53 +1292,59 @@
   }
 
   function renderUserMessage(turn) {
-    const message = node("article", "chat-message user-message");
-    message.append(node("div", "chat-message-label", "You"));
-    const body = node("div", "chat-message-plain", turn.user_text);
+    const message = UI.message("user", "You");
+    const body = node("div", "session-message-plain", turn.user_text);
     message.appendChild(body);
     return message;
   }
 
   function renderAssistantMessage(turn) {
     const generation = turn.generation;
-    const message = node("article", "chat-message assistant-message");
-    const label = node("div", "chat-message-label", "Assistant");
+    const message = UI.message("assistant", "Assistant");
+    const label = message.firstElementChild;
     if (
       generation.actual_model &&
       generation.actual_model !== generation.requested_model
     ) {
       label.appendChild(
-        node("span", "chat-fallback-label", `Answered by ${generation.actual_model}`),
+        node(
+          "span",
+          "chat-fallback-label",
+          `Answered by ${generation.actual_model}`,
+        ),
       );
     }
     message.appendChild(label);
     generation.segments.forEach((segment) => {
       if (segment.kind === "thinking") {
-        const details = document.createElement("details");
-        details.className = "chat-thinking";
-        details.appendChild(node("summary", "", "Thinking"));
-        const content = node("div", "chat-markdown");
+        const details = UI.thinking();
+        const content = node("div", "session-markdown");
         content.innerHTML = segment.html;
         details.appendChild(content);
         message.appendChild(details);
       } else {
-        const content = node("div", "chat-markdown");
+        const content = node("div", "session-markdown");
         // The server renders this with raw HTML disabled and safe-link rules.
         content.innerHTML = segment.html;
         message.appendChild(content);
       }
     });
     if (!generation.segments.length && generation.status === "running") {
-      message.appendChild(node("p", "chat-muted", "Running in another tab…"));
+      message.appendChild(
+        node("p", "session-muted", "Running in another tab…"),
+      );
     }
     if (generation.status !== "completed" && generation.status !== "running") {
-      const status = node("div", `chat-generation-status ${generation.status}`);
+      const status = node(
+        "div",
+        `session-generation-status ${generation.status}`,
+      );
       status.textContent =
         generation.error_message || `${capitalize(generation.status)} answer`;
       message.appendChild(status);
     }
     if (turn === state.turns[state.turns.length - 1]) {
-      const actions = node("div", "chat-message-actions");
+      const actions = node("div", "session-message-actions");
       if (["failed", "stopped", "interrupted"].includes(generation.status)) {
         actions.appendChild(button("Retry", "secondary-button", retryMessage));
       }
@@ -1425,24 +1359,27 @@
   }
 
   function renderLiveAssistant(operation) {
-    const message = node("article", "chat-message assistant-message live-message");
-    message.appendChild(node("div", "chat-message-label", "Assistant"));
+    const message = node(
+      "article",
+      "session-message assistant-message live-message",
+    );
+    message.appendChild(node("div", "session-message-label", "Assistant"));
     if (!operation.segments.length || operation.status !== "Thinking…") {
       const status = node(
         "p",
-        "chat-muted chat-operation-status",
+        "session-muted chat-operation-status",
         operation.status,
       );
       status.setAttribute("aria-live", "polite");
       message.appendChild(status);
     }
     operation.segments.forEach((segment, ordinal) => {
-      const content = node("div", "chat-message-plain");
+      const content = node("div", "session-message-plain");
       content.dataset.liveSegment = String(ordinal);
       content.appendChild(document.createTextNode(segment.text));
       if (segment.kind === "thinking") {
         const details = document.createElement("details");
-        details.className = "chat-thinking";
+        details.className = "session-thinking";
         details.open = true;
         details.appendChild(node("summary", "", "Thinking"));
         details.appendChild(content);
@@ -1458,7 +1395,7 @@
     const details = document.createElement("details");
     details.className = "chat-compaction";
     details.appendChild(node("summary", "", "Earlier conversation compacted"));
-    const summary = node("div", "chat-markdown");
+    const summary = node("div", "session-markdown");
     summary.innerHTML = state.compaction.summary_html;
     details.appendChild(summary);
     return details;
@@ -1478,7 +1415,7 @@
       return;
     const request = { sessionId, before };
     state.olderLoad = request;
-    const button = scroller.querySelector(".chat-older");
+    const button = scroller.querySelector(".session-older");
     if (button) button.disabled = true;
     const oldHeight = scroller.scrollHeight;
     const isCurrent = () =>
@@ -1514,16 +1451,13 @@
     const expectedRevision = state.session.revision;
     const routeVersion = state.routeVersion;
     try {
-      const session = await state.api(
-        `/admin/api/chat/sessions/${sessionId}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            expected_revision: expectedRevision,
-            ...changes,
-          }),
-        },
-      );
+      const session = await state.api(`/admin/api/chat/sessions/${sessionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          expected_revision: expectedRevision,
+          ...changes,
+        }),
+      });
       if (
         routeVersion !== state.routeVersion ||
         state.session?.id !== sessionId ||
@@ -1536,7 +1470,10 @@
       renderSessionPreservingScroll();
       scheduleEstimate(true);
     } catch (error) {
-      if (routeVersion !== state.routeVersion || state.session?.id !== sessionId)
+      if (
+        routeVersion !== state.routeVersion ||
+        state.session?.id !== sessionId
+      )
         return;
       await reloadSession();
       setNotice(error.message, "error");
@@ -1575,7 +1512,7 @@
       node("h3", "", "System prompt"),
       node(
         "p",
-        "chat-muted",
+        "session-muted",
         "Shared by every Chat Session and applied on the next turn.",
       ),
     );
@@ -1638,7 +1575,8 @@
 
   async function updateEstimate(version) {
     const session = state.session;
-    if (!session || state.operation || version !== state.estimateVersion) return;
+    if (!session || state.operation || version !== state.estimateVersion)
+      return;
     const textarea = document.getElementById("chatComposer");
     const revision = session.revision;
     const draft = textarea?.value || "";
@@ -1693,7 +1631,10 @@
     if (latest?.generation?.status === "running") return "This chat is running";
     const option = modelOption(state.session.model);
     if (!option) return "Choose an available model";
-    if (option.supports_reasoning === false && state.session.reasoning !== "off") {
+    if (
+      option.supports_reasoning === false &&
+      state.session.reasoning !== "off"
+    ) {
       return "This model requires Thinking Off";
     }
     if (state.contextError) return state.contextError;
@@ -1731,15 +1672,15 @@
         : state.operation
           ? ""
           : blocked;
-    document
+    root()
       .querySelectorAll(
-        ".chat-controls button, .chat-controls input, .chat-controls select",
+        ".session-controls button, .session-controls input, .session-controls select",
       )
       .forEach((control) => {
         control.disabled = busy || !mutationsReady();
       });
-    document
-      .querySelectorAll(".chat-header-row .danger-button, .chat-title")
+    root()
+      .querySelectorAll(".session-header-row .danger-button, .session-title")
       .forEach((control) => {
         control.disabled = !mutationsReady();
       });
@@ -1807,7 +1748,9 @@
         acknowledgement.operation_id !== operation.id ||
         acknowledgement.kind !== action
       ) {
-        throw new Error("The server returned an invalid operation acknowledgement.");
+        throw new Error(
+          "The server returned an invalid operation acknowledgement.",
+        );
       }
       operation.commandPending = false;
       operation.serverObserved = true;
@@ -1918,10 +1861,6 @@
       }
       setNotice(error.message, "error");
     }
-  }
-
-  function nearBottom(scroller) {
-    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
   }
 
   function scrollLatest(smooth) {

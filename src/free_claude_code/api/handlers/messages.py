@@ -1,7 +1,7 @@
 """Claude Messages API product flow."""
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 
 from fastapi.responses import JSONResponse, Response
@@ -82,6 +82,7 @@ class MessagesHandler:
         token_counter: TokenCounter = get_token_count,
         provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
+        request_headers: Mapping[str, str] | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -92,6 +93,7 @@ class MessagesHandler:
             token_counter=token_counter,
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,
+            request_headers=request_headers,
         )
         self._message_intercepts: tuple[MessageIntercept, ...] = (
             self._intercept_web_server_tool,

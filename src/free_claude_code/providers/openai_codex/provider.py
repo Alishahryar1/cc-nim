@@ -3,7 +3,7 @@
 import asyncio
 import sys
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
@@ -173,6 +173,7 @@ class OpenAICodexProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         return self._responses.stream_messages(
             request,
@@ -191,6 +192,7 @@ class OpenAICodexProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         return self._responses.stream_responses(
             request,

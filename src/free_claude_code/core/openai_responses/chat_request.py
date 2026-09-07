@@ -26,11 +26,13 @@ from .reasoning import (
 from .reasoning_replay import reject_messages_reasoning_for_other_egress
 from .tools import (
     call_id_from_item,
+    custom_tool_description,
+    custom_tool_input_schema,
     custom_tool_input_text,
+    flatten_responses_tool_name,
     optional_str,
     parse_arguments,
     required_str,
-    responses_tool_name_to_anthropic_name,
 )
 
 _PASSIVE_TOOL_TYPES = frozenset(
@@ -460,7 +462,7 @@ def _image_part(part: Mapping[str, JsonValue], *, context: str) -> dict[str, obj
 def _tool_identity_name(item: Mapping[str, JsonValue]) -> str:
     name = required_str(item.get("name"), f"{item.get('type')}.name")
     namespace = optional_str(item.get("namespace"))
-    return responses_tool_name_to_anthropic_name(name, namespace=namespace)
+    return flatten_responses_tool_name(name, namespace=namespace)
 
 
 def _arguments_text(value: JsonValue) -> str:
@@ -593,7 +595,7 @@ def _chat_function_tool(
     nested = tool.get("function")
     source = nested if isinstance(nested, Mapping) else tool
     name = required_str(source.get("name"), "tool.name")
-    wire_name = responses_tool_name_to_anthropic_name(name, namespace=namespace)
+    wire_name = flatten_responses_tool_name(name, namespace=namespace)
     parameters = source.get("parameters")
     if parameters is None:
         parameters = {"type": "object", "properties": {}}
@@ -619,43 +621,14 @@ def _chat_custom_tool(
     nested = tool.get("custom")
     source = nested if isinstance(nested, Mapping) else tool
     name = required_str(source.get("name"), "tool.name")
-    wire_name = responses_tool_name_to_anthropic_name(name, namespace=namespace)
+    wire_name = flatten_responses_tool_name(name, namespace=namespace)
     function: dict[str, object] = {
         "name": wire_name,
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "input": {
-                    "type": "string",
-                    "description": "Free-form input for the custom tool.",
-                }
-            },
-            "required": ["input"],
-        },
+        "parameters": custom_tool_input_schema(),
     }
-    if description := _custom_tool_description(source):
+    if description := custom_tool_description(source):
         function["description"] = description
     return {"type": "function", "function": function}, wire_name
-
-
-def _custom_tool_description(source: Mapping[str, JsonValue]) -> str | None:
-    parts: list[str] = []
-    if description := optional_str(source.get("description")):
-        parts.append(description)
-    format_value = source.get("format")
-    if isinstance(format_value, Mapping):
-        format_type = optional_str(format_value.get("type"))
-        if format_type == "text":
-            parts.append("Custom tool input format: unconstrained text.")
-        elif format_type == "grammar":
-            syntax = optional_str(format_value.get("syntax"))
-            definition = optional_str(format_value.get("definition"))
-            guidance = "Custom tool input format: grammar"
-            if syntax:
-                guidance = f"{guidance} ({syntax})"
-            guidance = f"{guidance}: {definition}" if definition else f"{guidance}."
-            parts.append(guidance)
-    return "\n\n".join(parts) if parts else None
 
 
 def _chat_tool_choice(
@@ -684,7 +657,7 @@ def _chat_tool_choice(
     namespace = optional_str(choice.get("namespace")) or optional_str(
         value.get("namespace")
     )
-    wire_name = responses_tool_name_to_anthropic_name(name, namespace=namespace)
+    wire_name = flatten_responses_tool_name(name, namespace=namespace)
     if wire_name not in available_names:
         return None
     return {"type": "function", "function": {"name": wire_name}}

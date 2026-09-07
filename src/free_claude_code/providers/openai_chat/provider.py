@@ -236,6 +236,7 @@ class _OpenAIChatStreamAssembler:
         )
         self._finish_reason: Any = None
         self._usage_info: Any = None
+        self._native_reasoning_seen = False
         self._tool_argument_aliases: dict[str, dict[str, str]] = {}
         self._tool_argument_alias_buffers: dict[int, str] = {}
         self._tool_name_buffers: dict[int, str] = {}
@@ -325,7 +326,12 @@ class _OpenAIChatStreamAssembler:
                     self._output,
                     native_reasoning=reasoning,
                 )
-            elif reasoning is not None:
+            elif reasoning is not None and (
+                reasoning or not self._native_reasoning_seen
+            ):
+                # Preserve initial empty reasoning for replay; later empty fields
+                # are placeholders and must not interrupt text or tool output.
+                self._native_reasoning_seen = True
                 yield from self._output.ensure_reasoning_block()
                 if reasoning:
                     yield self._output.emit_reasoning_delta(reasoning)
@@ -743,6 +749,12 @@ class OpenAIChatProvider(BaseProvider):
         """Return the body passed to the upstream OpenAI-compatible client."""
         return body
 
+    def _upstream_headers(
+        self, request_headers: Mapping[str, str]
+    ) -> Mapping[str, str]:
+        """Select provider-specific headers from this request's client metadata."""
+        return {}
+
     def _record_tool_call_extra_content(
         self, tool_call_id: str, extra_content: dict[str, Any]
     ) -> None:
@@ -784,6 +796,7 @@ class OpenAIChatProvider(BaseProvider):
         *,
         used_retry_kinds: set[str] | None = None,
         endpoint: RequestEndpoint | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> tuple[Any, dict, ProviderAttempt]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
@@ -801,9 +814,13 @@ class OpenAIChatProvider(BaseProvider):
                     if endpoint is not None
                     else self._client
                 )
-                if endpoint is not None:
+                if extra_headers or endpoint is not None:
                     create_body = create_body.copy()
-                    create_body["extra_headers"] = endpoint.openai_headers()
+                    create_body["extra_headers"] = {
+                        **(create_body.get("extra_headers") or {}),
+                        **(extra_headers or {}),
+                        **(endpoint.openai_headers() if endpoint is not None else {}),
+                    }
                 stream = await client.chat.completions.create(
                     **create_body,
                     stream=True,
@@ -919,6 +936,7 @@ class OpenAIChatProvider(BaseProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
         endpoint_context: EndpointContext | None = None,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
         body = self._build_request_body(request, reasoning=reasoning)
@@ -943,6 +961,7 @@ class OpenAIChatProvider(BaseProvider):
             ),
             reasoning=reasoning,
             endpoint_context=endpoint_context,
+            extra_headers=self._upstream_headers(request_headers or {}),
         )
         return runner.run()
 
@@ -955,6 +974,7 @@ class OpenAIChatProvider(BaseProvider):
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
         endpoint_context: EndpointContext | None = None,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         """Stream a Chat upstream directly as OpenAI Responses SSE."""
         translated = self._build_responses_request_body(request, reasoning=reasoning)
@@ -979,6 +999,7 @@ class OpenAIChatProvider(BaseProvider):
             response_model=public_model,
             reasoning=reasoning,
             endpoint_context=endpoint_context,
+            extra_headers=self._upstream_headers(request_headers or {}),
         )
         return runner.run()
 
@@ -1000,6 +1021,7 @@ class _OpenAIChatStreamRunner:
         response_model: str,
         reasoning: ReasoningPolicy,
         endpoint_context: EndpointContext | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> None:
         self._provider = provider
         self._body = body
@@ -1011,6 +1033,7 @@ class _OpenAIChatStreamRunner:
         self._request_id = request_id
         self._response_model = response_model
         self._reasoning = reasoning
+        self._extra_headers = dict(extra_headers or {})
         self._terminal_failure: ExecutionFailure | None = None
         self._endpoint = (
             RequestEndpoint(endpoint_context, provider._endpoint_transport)
@@ -1089,6 +1112,7 @@ class _OpenAIChatStreamRunner:
                     ProviderOperationKind.GENERATION,
                     used_retry_kinds=used_retry_kinds,
                     endpoint=self._endpoint,
+                    extra_headers=self._extra_headers,
                 )
                 scope = ProviderAttemptScope(
                     attempt,

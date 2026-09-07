@@ -17,7 +17,10 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.openai_responses import OpenAIResponsesRequest
+from free_claude_code.core.openai_responses import (
+    OpenAIResponsesRequest,
+    ResponsesToolPolicy,
+)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.openai_responses import OpenAIResponsesTransport
 from tests.providers.support import REASONING_ON, immediate_admission
@@ -117,7 +120,12 @@ def _client(
     )
 
 
-def _transport(client: AsyncOpenAI, *, max_attempts: int = 5):
+def _transport(
+    client: AsyncOpenAI,
+    *,
+    max_attempts: int = 5,
+    tool_policy: ResponsesToolPolicy = ResponsesToolPolicy(),
+):
     return OpenAIResponsesTransport(
         client=client,
         admission=immediate_admission(
@@ -127,6 +135,7 @@ def _transport(client: AsyncOpenAI, *, max_attempts: int = 5):
         provider_name="TEST_RESPONSES",
         read_timeout_s=120.0,
         log_raw_sse_events=False,
+        tool_policy=tool_policy,
     )
 
 
@@ -162,6 +171,183 @@ async def _collect_native(
             reasoning=reasoning,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_default_transport_keeps_native_tool_capabilities() -> None:
+    tools = [
+        {
+            "type": "custom",
+            "name": "edit",
+            "format": {"type": "text"},
+            "defer_loading": True,
+            "allowed_callers": ["direct"],
+        },
+        {"type": "web_search", "search_content_types": ["text", "image"]},
+    ]
+    history = [
+        {"type": "custom_tool_call", "call_id": "c", "name": "edit", "input": "patch"}
+    ]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        payload = json.loads(request.content)
+        assert payload["tools"] == tools and payload["input"] == history
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=_sse(_completed_event()),
+        )
+
+    client = _client(handler)
+    try:
+        await _collect_native(
+            _transport(client),
+            OpenAIResponsesRequest(model="example", tools=tools, input=history),
+        )
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_adaptation_retries_start_with_fresh_event_state() -> None:
+    attempts = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        wire = json.loads(request.content)
+        assert wire["tools"][0]["type"] == "function"
+        created = {
+            "type": "response.created",
+            "sequence_number": 100 if attempts == 1 else 0,
+            "response": {**_completed_response(), "status": "in_progress"},
+        }
+        text = (
+            _sse(created)
+            if attempts == 1
+            else _sse(
+                created, _text_delta("hello", sequence=1), _completed_event(sequence=2)
+            )
+        )
+        return httpx2.Response(
+            200, headers={"content-type": "text/event-stream"}, text=text
+        )
+
+    client = _client(handler)
+    try:
+        transport = _transport(
+            client,
+            max_attempts=2,
+            tool_policy=ResponsesToolPolicy(custom_tools_as_functions=True),
+        )
+        chunks = await _collect_native(
+            transport,
+            OpenAIResponsesRequest(
+                model="example",
+                input="hello",
+                tools=[{"type": "custom", "name": "edit"}],
+            ),
+        )
+    finally:
+        await client.close()
+    events = parse_sse_text("".join(chunks))
+    assert attempts == 2
+    assert [event.data["sequence_number"] for event in events] == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_do_not_share_tool_identities() -> None:
+    started = 0
+    both_started = asyncio.Event()
+
+    class ResponseStream(httpx2.AsyncByteStream):
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+        async def __aiter__(self):
+            await asyncio.wait_for(both_started.wait(), timeout=5)
+            yield self.content.encode()
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal started
+        started += 1
+        if started == 2:
+            both_started.set()
+        body = json.loads(request.content)
+        call = {
+            "type": "function_call",
+            "id": "same_item",
+            "call_id": "same_call",
+            "name": "edit",
+            "arguments": '{"input":"patch"}',
+            "status": "completed",
+        }
+        response = {
+            **_completed_response(),
+            "output": [call],
+            "metadata": {"owner": body["input"]},
+        }
+        events = _sse(
+            {
+                "type": "response.output_item.added",
+                "sequence_number": 0,
+                "output_index": 0,
+                "item": {**call, "arguments": "", "status": "in_progress"},
+            },
+            {
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 1,
+                "item_id": "same_item",
+                "output_index": 0,
+                "delta": call["arguments"],
+            },
+            {
+                "type": "response.output_item.done",
+                "sequence_number": 2,
+                "output_index": 0,
+                "item": call,
+            },
+            {"type": "response.completed", "sequence_number": 3, "response": response},
+        )
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=ResponseStream(events),
+        )
+
+    client = _client(handler)
+    transport = _transport(
+        client, tool_policy=ResponsesToolPolicy(custom_tools_as_functions=True)
+    )
+    try:
+        chunks = await asyncio.gather(
+            *[
+                _collect_native(
+                    transport,
+                    OpenAIResponsesRequest(
+                        model="example",
+                        input=kind,
+                        tools=[{"type": kind, "name": "edit"}],
+                    ),
+                )
+                for kind in ("custom", "function")
+            ]
+        )
+    finally:
+        await client.close()
+    custom_events, function_events = [
+        parse_sse_text("".join(output)) for output in chunks
+    ]
+    assert custom_events[-1].data["response"]["output"][0]["type"] == "custom_tool_call"
+    assert function_events[-1].data["response"]["output"][0]["type"] == "function_call"
+    assert not any(
+        event.event == "response.function_call_arguments.delta"
+        for event in custom_events
+    )
+    assert any(
+        event.event == "response.function_call_arguments.delta"
+        for event in function_events
+    )
 
 
 @pytest.mark.asyncio

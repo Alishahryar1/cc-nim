@@ -19,6 +19,9 @@ LAUNCHER_TEMP_DIRNAME = "launchers"
 CHAT_STATE_DIRNAME = "chat"
 CHAT_DATABASE_FILENAME = "chat.db"
 CHAT_LOCK_FILENAME = "chat.lock"
+CODE_STATE_DIRNAME = "code"
+CODE_DATABASE_FILENAME = "code.db"
+CODE_LOCK_FILENAME = "code.lock"
 
 
 def config_dir_path() -> Path:
@@ -61,6 +64,16 @@ def chat_lock_path() -> Path:
     """Return the exclusive Chat Sessions process-lock path."""
 
     return chat_state_dir_path() / CHAT_LOCK_FILENAME
+
+
+def code_database_path() -> Path:
+    """Return the managed Code sessions database path."""
+    return config_dir_path() / CODE_STATE_DIRNAME / CODE_DATABASE_FILENAME
+
+
+def code_lock_path() -> Path:
+    """Return the exclusive Code sessions process-lock path."""
+    return config_dir_path() / CODE_STATE_DIRNAME / CODE_LOCK_FILENAME
 
 
 def legacy_env_paths() -> tuple[Path, ...]:

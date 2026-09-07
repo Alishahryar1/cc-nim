@@ -2,7 +2,7 @@
 
 import asyncio
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import suppress
 
 import httpx
@@ -150,6 +150,7 @@ class GitHubCopilotProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self.preflight_messages(request, reasoning=reasoning)
         return self._dispatch(
@@ -168,6 +169,7 @@ class GitHubCopilotProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        request_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[str]:
         self.preflight_responses(request, reasoning=reasoning)
         return self._dispatch(

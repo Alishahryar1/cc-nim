@@ -178,6 +178,7 @@ def test_admin_page_uses_installed_version(monkeypatch, tmp_path):
         ("admin.js", "text/javascript"),
         ("chat_sessions.css", "text/css"),
         ("chat_sessions.js", "text/javascript"),
+        ("session_ui.js", "text/javascript"),
         ("model_combobox.js", "text/javascript"),
     ),
 )
