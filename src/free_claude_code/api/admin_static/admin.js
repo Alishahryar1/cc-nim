@@ -34,13 +34,6 @@ const VIEW_GROUPS = [
     containerId: "messagingSections",
   },
   {
-    id: "chat",
-    label: "Chat Sessions",
-    title: "Chat Sessions",
-    sections: [],
-    containerId: "chatRoot",
-  },
-  {
     id: "code",
     label: "Code sessions",
     title: "Code sessions",
@@ -50,7 +43,7 @@ const VIEW_GROUPS = [
 ];
 
 function sessionViewFromPath() {
-  return ["chat", "code"].find((id) => window.location.pathname.startsWith(`/admin/${id}`)) || "providers";
+  return window.location.pathname.startsWith("/admin/code") ? "code" : "providers";
 }
 
 const byId = (id) => document.getElementById(id);
@@ -117,7 +110,6 @@ async function load() {
     refreshConnectedAccounts(),
     hydrateModelOptions(),
     refreshLocalStatus(),
-    window.ChatSessions ? window.ChatSessions.initialize(api) : Promise.resolve(),
     window.CodeSessions.initialize(api),
   ]);
   updateDirtyState();
@@ -149,8 +141,7 @@ function setActiveView(viewId, { scroll = false } = {}) {
     VIEW_GROUPS.find((view) => view.id === viewId) || VIEW_GROUPS[0];
   state.activeView = activeView.id;
   byId("pageTitle").textContent = activeView.title;
-  const chatActive = activeView.id === "chat";
-  const sessionActive = chatActive || activeView.id === "code";
+  const sessionActive = activeView.id === "code";
   document.querySelector(".app-shell").classList.toggle("session-active", sessionActive);
   document.querySelector(".main").classList.toggle("session-main", sessionActive);
   document.querySelector(".topbar").hidden = sessionActive;
@@ -175,14 +166,11 @@ function setActiveView(viewId, { scroll = false } = {}) {
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
-  if (chatActive && window.ChatSessions) {
-    window.ChatSessions.activate(window.location.pathname);
-  }
   if (activeView.id === "code") window.CodeSessions.activate(window.location.pathname);
 }
 
 function navigateToView(viewId) {
-  if (["chat", "code"].includes(viewId)) {
+  if (viewId === "code") {
     if (window.location.pathname !== `/admin/${viewId}`) {
       window.history.pushState({}, "", `/admin/${viewId}`);
     }
@@ -965,7 +953,7 @@ function showCredentialErrors(checks) {
 
 function setApplying(applying) {
   state.applying = applying;
-  VIEW_GROUPS.filter((view) => !["chat", "code"].includes(view.id)).forEach((view) => {
+  VIEW_GROUPS.filter((view) => view.id !== "code").forEach((view) => {
     byId(`view-${view.id}`).inert = applying || !!state.restart;
   });
   if (applying) state.modelComboboxes.forEach((combobox) => combobox.close());
@@ -1180,7 +1168,6 @@ async function loadModelOptions(refresh = false) {
     method: refresh ? "POST" : "GET",
   });
   setModelOptions(result.models);
-  if (refresh && window.ChatSessions) await window.ChatSessions.refresh();
   if (refresh && window.CodeSessions) await window.CodeSessions.refresh();
   return result;
 }
@@ -1242,6 +1229,15 @@ window.addEventListener("popstate", () => {
   const viewId = sessionViewFromPath();
   setActiveView(viewId, { scroll: false });
 });
+
+try {
+  for (let index = sessionStorage.length - 1; index >= 0; index--) {
+    const key = sessionStorage.key(index);
+    if (key.startsWith("fcc.chat.draft.")) sessionStorage.removeItem(key);
+  }
+} catch {
+  console.warn("Chat draft cleanup deferred until the next page load: storage unavailable");
+}
 
 load().then(showRestartNotice).catch((error) => {
   showMessage(error.message, "error");

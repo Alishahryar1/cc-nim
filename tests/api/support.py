@@ -6,7 +6,6 @@ from fastapi import FastAPI
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
-from free_claude_code.application.chat import ChatApplicationPort
 from free_claude_code.application.code_sessions import CodeApplicationPort
 from free_claude_code.application.connected_accounts import ConnectedAccountPort
 from free_claude_code.config.loader import ManagedConfigStore
@@ -24,7 +23,6 @@ def create_test_app(
     providers: MutableMapping[str, BaseProvider] | None = None,
     restart_callback: RestartCallback | None = None,
     connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
-    chat: ChatApplicationPort | None = None,
     code: CodeApplicationPort | None = None,
 ) -> FastAPI:
     """Build an API app with explicit in-memory runtime services."""
@@ -66,7 +64,6 @@ def create_test_app(
             requests=manager,
             admin=runtime,
             tasks=runtime,
-            chat=chat,
             code=code,
         )
     )

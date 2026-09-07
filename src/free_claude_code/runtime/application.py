@@ -14,7 +14,6 @@ from loguru import logger
 import free_claude_code.cli.managed as cli_managed
 import free_claude_code.messaging.session as messaging_session
 import free_claude_code.messaging.workflow as messaging_workflow_module
-from free_claude_code.application.chat import ChatService
 from free_claude_code.application.code_sessions import CodeService
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
@@ -49,6 +48,7 @@ from free_claude_code.providers.credential_validation import (
 
 from .configuration import ConfigurationService
 from .provider_manager import ProviderRuntimeManager
+from .retired_chat import remove_retired_chat_history
 
 RestartCallback = Callable[[], None]
 
@@ -140,14 +140,12 @@ class ApplicationRuntime:
         *,
         configuration: ConfigurationService,
         transcriber: Transcriber | None,
-        chat_service: ChatService | None = None,
         code_service: CodeService | None = None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
     ) -> None:
         self.provider_manager = provider_manager
         self._configuration = configuration
-        self._chat_service = chat_service
         self._code_service = code_service
         self._transcriber = transcriber
         self._restart_callback = restart_callback
@@ -193,14 +191,15 @@ class ApplicationRuntime:
                 await _await_owned_task(
                     asyncio.create_task(self._configuration.initialize())
                 )
+                await _await_owned_task(
+                    asyncio.create_task(asyncio.to_thread(remove_retired_chat_history))
+                )
                 if self._draining:
                     raise ApplicationUnavailableError(
                         "Application runtime is shutting down."
                     )
                 await self.provider_manager.warm_referenced_model_cache()
                 self.provider_manager.start_model_list_refresh()
-                if self._chat_service is not None:
-                    await self._chat_service.start()
                 if self._code_service is not None:
                     await self._code_service.start()
                 await self._start_messaging_if_configured()
@@ -226,8 +225,6 @@ class ApplicationRuntime:
     def begin_shutdown(self) -> None:
         """Finish indefinite observer responses before the server drains HTTP."""
         self._draining = True
-        if self._chat_service is not None:
-            self._chat_service.begin_shutdown()
         if self._code_service is not None:
             self._code_service.begin_shutdown()
 
@@ -593,12 +590,6 @@ class ApplicationRuntime:
         if self._code_service is not None and not await best_effort(
             "code_service.close",
             self._code_service.close(),
-            log_verbose_errors=verbose,
-        ):
-            return False
-        if self._chat_service is not None and not await best_effort(
-            "chat_service.close",
-            self._chat_service.close(),
             log_verbose_errors=verbose,
         ):
             return False

@@ -164,15 +164,9 @@
   white-space: nowrap;
 }
 
-.session-card span,
-.session-muted {
+.session-card span {
   color: var(--muted);
   font-size: 12px;
-}
-
-.session-card .session-status {
-  color: var(--accent);
-  font-weight: 700;
 }
 
 .session-load-more {
@@ -274,10 +268,6 @@
   height: 38px;
 }
 
-.session-controls > button {
-  align-self: end;
-}
-
 .session-notice {
   grid-area: notice;
   margin-top: 12px;
@@ -287,12 +277,6 @@
   padding: 9px 12px;
   color: var(--muted);
   font-size: 13px;
-}
-
-.session-notice.error {
-  border-color: var(--error-border);
-  background: var(--error-bg);
-  color: var(--error);
 }
 
 .session-transcript {
@@ -399,12 +383,6 @@
   color: var(--error);
 }
 
-.session-message-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-
 .session-composer {
   grid-area: composer;
   margin: 8px 0 0;
@@ -457,15 +435,6 @@
   min-height: 220px;
   color: var(--muted);
   text-align: center;
-}
-
-.session-empty h3,
-.session-empty p {
-  margin: 0;
-}
-
-.session-transcript-empty {
-  min-height: 100%;
 }
 
 .danger-button {

@@ -6,7 +6,6 @@ import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator, Mapping
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,13 +15,6 @@ from playwright.sync_api import Page
 from e2e.code_support import CodeControl
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
-from free_claude_code.application.chat import (
-    ChatContextEstimate,
-    ChatReasoning,
-    ChatService,
-    ChatSessionDetail,
-    ChatSessionPage,
-)
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
@@ -32,14 +24,12 @@ from free_claude_code.config.loader import (
     get_settings,
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.asgi import RuntimeASGIApp
-from free_claude_code.runtime.chat_sqlite import SQLiteChatStore
 from free_claude_code.runtime.configuration import ConfigurationService
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 
@@ -68,7 +58,6 @@ class _ModelListingProvider(BaseProvider):
         )
         self._model_infos = model_infos
         self._error = error
-        self._message_attempts: dict[str, int] = {}
 
     def preflight_messages(
         self,
@@ -106,116 +95,8 @@ class _ModelListingProvider(BaseProvider):
         request_headers: Mapping[str, str] | None = None,
         model_info: ProviderModelInfo | None = None,
     ) -> AsyncIterator[str]:
-        del input_tokens, request_id, response_model
-        summary = str(request.system).startswith("Summarize")
-        user_content = str(request.messages[-1].content) if request.messages else ""
-        attempt = self._message_attempts.get(user_content, 0) + 1
-        self._message_attempts[user_content] = attempt
-        slow = (
-            ("[slow]" in user_content and attempt == 1)
-            or ("[slow-regenerate]" in user_content and attempt == 2)
-            or (summary and "[slow-compaction]" in user_content and attempt == 1)
-        )
-        fragmented = "[fragmented]" in user_content
-        failed_regeneration = "[fail-regenerate]" in user_content and attempt > 1
-        if summary:
-            text = "Earlier details retained."
-        elif failed_regeneration:
-            text = "Partial replacement"
-        else:
-            text = "E2E answer"
-        frames = [
-            format_sse_event(
-                "message_start",
-                {"type": "message_start", "message": {"content": []}},
-            ),
-            format_sse_event(
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "thinking", "thinking": ""},
-                },
-            ),
-            format_sse_event(
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "thinking_delta", "thinking": "E2E thought"},
-                },
-            ),
-            format_sse_event(
-                "content_block_stop", {"type": "content_block_stop", "index": 0}
-            ),
-            format_sse_event(
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 1,
-                    "content_block": {"type": "text", "text": ""},
-                },
-            ),
-        ]
-        if not fragmented:
-            frames.append(
-                format_sse_event(
-                    "content_block_delta",
-                    {
-                        "type": "content_block_delta",
-                        "index": 1,
-                        "delta": {"type": "text_delta", "text": text},
-                    },
-                )
-            )
-        for frame in frames:
-            yield frame
-            await asyncio.sleep(0)
-        if fragmented:
-            for _index in range(2_000):
-                yield format_sse_event(
-                    "content_block_delta",
-                    {
-                        "type": "content_block_delta",
-                        "index": 1,
-                        "delta": {"type": "text_delta", "text": "abcd"},
-                    },
-                )
-                await asyncio.sleep(0)
-        if summary and "[fail-compaction]" in user_content:
-            yield format_sse_event(
-                "error",
-                {
-                    "type": "error",
-                    "error": {
-                        "type": "api_error",
-                        "message": "summary provider failed",
-                    },
-                },
-            )
-            return
-        if not summary and ("[fail-turn]" in user_content or failed_regeneration):
-            yield format_sse_event(
-                "error",
-                {
-                    "type": "error",
-                    "error": {
-                        "type": "api_error",
-                        "message": "E2E provider failed",
-                    },
-                },
-            )
-            return
-        if slow:
-            await asyncio.Event().wait()
-        yield format_sse_event(
-            "content_block_stop", {"type": "content_block_stop", "index": 1}
-        )
-        yield format_sse_event(
-            "message_delta",
-            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
-        )
-        yield format_sse_event("message_stop", {"type": "message_stop"})
+        if False:
+            yield ""
 
     async def stream_responses(
         self,
@@ -296,116 +177,10 @@ def admin_base_url(
         get_settings(),
         runtime_factory=lambda snapshot: ProviderRuntime(snapshot, dict(providers)),
     )
-    chat_store = SQLiteChatStore(
-        config_dir / "chat" / "chat.db",
-        config_dir / "chat" / "chat.lock",
-    )
-    chat = ChatService(manager, chat_store)
-    original_estimate = chat.estimate
-    original_get_detail = chat.get_detail
-    original_get_turn_page = chat.get_turn_page
-    original_list_sessions = chat.list_sessions
-    original_update_session = chat.update_session
-    original_begin_send = chat_store.begin_send
-    delayed_estimate_seen = False
-
-    async def estimate_with_delayed_first_result(
-        session_id: str,
-        *,
-        draft: str,
-    ) -> ChatContextEstimate:
-        nonlocal delayed_estimate_seen
-        delay_result = "[delay-first-estimate]" in draft and not delayed_estimate_seen
-        delayed_estimate_seen = delayed_estimate_seen or delay_result
-        try:
-            return await original_estimate(session_id, draft=draft)
-        finally:
-            if delay_result:
-                await asyncio.sleep(0.75)
-
-    monkeypatch.setattr(chat, "estimate", estimate_with_delayed_first_result)
-
-    async def get_detail_with_test_pagination(
-        session_id: str,
-    ) -> ChatSessionDetail:
-        detail = await original_get_detail(session_id)
-        if "[delay-detail]" in detail.session.title:
-            await asyncio.sleep(0.75)
-        if "[delay-older-page]" in detail.session.title and len(detail.turns) > 1:
-            return replace(
-                detail,
-                turns=detail.turns[-1:],
-                next_before=detail.turns[-1].sequence,
-            )
-        return detail
-
-    async def get_turn_page_with_delayed_result(
-        session_id: str,
-        *,
-        before_sequence: int | None,
-        limit: int,
-    ):
-        result = await original_get_turn_page(
-            session_id,
-            before_sequence=before_sequence,
-            limit=limit,
-        )
-        if before_sequence is not None:
-            session = await chat.get_session(session_id)
-            if "[delay-older-page]" in session.title:
-                await asyncio.sleep(0.75)
-        return result
-
-    async def list_sessions_with_delayed_result(
-        *,
-        query: str,
-        cursor: tuple[int, str] | None,
-        limit: int,
-    ) -> ChatSessionPage:
-        result = await original_list_sessions(query=query, cursor=cursor, limit=limit)
-        if query == "race-old":
-            await asyncio.sleep(0.75)
-        elif cursor is not None:
-            await asyncio.sleep(0.5)
-        return result
-
-    monkeypatch.setattr(chat, "get_detail", get_detail_with_test_pagination)
-    monkeypatch.setattr(chat, "get_turn_page", get_turn_page_with_delayed_result)
-    monkeypatch.setattr(chat, "list_sessions", list_sessions_with_delayed_result)
-
-    async def update_session_with_delayed_result(
-        session_id: str,
-        *,
-        expected_revision: int,
-        title: str | None = None,
-        model: str | None = None,
-        reasoning: ChatReasoning | None = None,
-    ):
-        result = await original_update_session(
-            session_id,
-            expected_revision=expected_revision,
-            title=title,
-            model=model,
-            reasoning=reasoning,
-        )
-        if title is not None and "[delay-title-save]" in title:
-            await asyncio.sleep(0.75)
-        return result
-
-    monkeypatch.setattr(chat, "update_session", update_session_with_delayed_result)
-
-    async def begin_send_with_delayed_ack(*args, **kwargs):
-        result = await original_begin_send(*args, **kwargs)
-        if kwargs.get("user_text") == "[delay-send-ack] keep one draft":
-            await asyncio.sleep(0.75)
-        return result
-
-    monkeypatch.setattr(chat_store, "begin_send", begin_send_with_delayed_ack)
     runtime = ApplicationRuntime(
         manager,
         configuration=ConfigurationService(ManagedConfigStore()),
         transcriber=None,
-        chat_service=chat,
         code_service=code_control.service,
     )
     app = RuntimeASGIApp(
@@ -414,7 +189,6 @@ def admin_base_url(
                 requests=manager,
                 admin=runtime,
                 tasks=runtime,
-                chat=chat,
                 code=code_control.service,
             )
         ),
