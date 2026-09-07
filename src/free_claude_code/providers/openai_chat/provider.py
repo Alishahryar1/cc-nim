@@ -236,6 +236,7 @@ class _OpenAIChatStreamAssembler:
         )
         self._finish_reason: Any = None
         self._usage_info: Any = None
+        self._native_reasoning_seen = False
         self._tool_argument_aliases: dict[str, dict[str, str]] = {}
         self._tool_argument_alias_buffers: dict[int, str] = {}
         self._tool_name_buffers: dict[int, str] = {}
@@ -325,7 +326,12 @@ class _OpenAIChatStreamAssembler:
                     self._output,
                     native_reasoning=reasoning,
                 )
-            elif reasoning is not None:
+            elif reasoning is not None and (
+                reasoning or not self._native_reasoning_seen
+            ):
+                # Preserve initial empty reasoning for replay; later empty fields
+                # are placeholders and must not interrupt text or tool output.
+                self._native_reasoning_seen = True
                 yield from self._output.ensure_reasoning_block()
                 if reasoning:
                     yield self._output.emit_reasoning_delta(reasoning)
