@@ -121,18 +121,22 @@ def test_stream_retry_classification_only_accepts_post_open_timeouts() -> None:
     assert not is_retryable_stream_error(httpx.PoolTimeout("pool", request=request))
 
 
-def test_ssl_want_read_error_uses_stream_failure_policy() -> None:
+@pytest.mark.parametrize("read_timeout_s", [None, 120])
+def test_ssl_want_read_error_uses_stream_failure_policy(
+    read_timeout_s: float | None,
+) -> None:
     error = ssl.SSLWantReadError("the operation did not complete")
 
     assert is_retryable_stream_error(error)
     assert is_retryable_provider_error(error)
     failure = classify_provider_failure(
-        error, provider_name="NIM", read_timeout_s=120, request_id="request"
+        error, provider_name="NIM", read_timeout_s=read_timeout_s, request_id="request"
     )
-    assert failure.kind is FailureKind.TIMEOUT
+    assert failure.kind is FailureKind.UNAVAILABLE
     assert failure.status_code == 502
     assert failure.retryable
-    assert "timed out after 120s" in failure.message
+    assert "Could not read the provider response." in failure.message
+    assert "timed out" not in failure.message
 
 
 @pytest.mark.parametrize(

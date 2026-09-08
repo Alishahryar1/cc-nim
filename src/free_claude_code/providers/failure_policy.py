@@ -314,7 +314,9 @@ def provider_error_message(
         return "Could not connect to provider."
     if isinstance(exc, httpx.RemoteProtocolError | httpx2.RemoteProtocolError):
         return "Provider connection was interrupted before a response was received."
-    if isinstance(exc, TimeoutError | ssl.SSLWantReadError):
+    if isinstance(exc, ssl.SSLWantReadError):
+        return "Could not read the provider response."
+    if isinstance(exc, TimeoutError):
         if read_timeout_s is not None:
             return f"Provider request timed out after {read_timeout_s:g}s."
         return "Request timed out."
@@ -424,15 +426,11 @@ def _classify_provider_failure(
         )
 
     kind = FailureKind.UPSTREAM
-    if isinstance(
-        exc,
-        TimeoutError
-        | ssl.SSLWantReadError
-        | httpx.TimeoutException
-        | httpx2.TimeoutException,
-    ):
+    if isinstance(exc, TimeoutError | httpx.TimeoutException | httpx2.TimeoutException):
         kind = FailureKind.TIMEOUT
-    elif isinstance(exc, httpx.NetworkError | httpx2.NetworkError):
+    elif isinstance(
+        exc, ssl.SSLWantReadError | httpx.NetworkError | httpx2.NetworkError
+    ):
         kind = FailureKind.UNAVAILABLE
     return _failure(
         kind,
