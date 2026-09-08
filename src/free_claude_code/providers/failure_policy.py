@@ -1,6 +1,7 @@
 """Provider-owned SDK classification and retry qualification."""
 
 import json
+import ssl
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from dataclasses import replace
@@ -242,6 +243,7 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
         exc,
         (
             TimeoutError,
+            ssl.SSLWantReadError,
             httpx.TimeoutException,
             httpx2.TimeoutException,
             httpx.RemoteProtocolError,
@@ -269,6 +271,7 @@ def is_retryable_stream_error(exc: BaseException) -> bool:
         exc,
         (
             TimeoutError,
+            ssl.SSLWantReadError,
             httpx.ReadTimeout,
             httpx2.ReadTimeout,
             httpx.RemoteProtocolError,
@@ -311,6 +314,8 @@ def provider_error_message(
         return "Could not connect to provider."
     if isinstance(exc, httpx.RemoteProtocolError | httpx2.RemoteProtocolError):
         return "Provider connection was interrupted before a response was received."
+    if isinstance(exc, ssl.SSLWantReadError):
+        return "Could not read the provider response."
     if isinstance(exc, TimeoutError):
         if read_timeout_s is not None:
             return f"Provider request timed out after {read_timeout_s:g}s."
@@ -423,7 +428,9 @@ def _classify_provider_failure(
     kind = FailureKind.UPSTREAM
     if isinstance(exc, TimeoutError | httpx.TimeoutException | httpx2.TimeoutException):
         kind = FailureKind.TIMEOUT
-    elif isinstance(exc, httpx.NetworkError | httpx2.NetworkError):
+    elif isinstance(
+        exc, ssl.SSLWantReadError | httpx.NetworkError | httpx2.NetworkError
+    ):
         kind = FailureKind.UNAVAILABLE
     return _failure(
         kind,
