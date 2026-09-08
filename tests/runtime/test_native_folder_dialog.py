@@ -89,18 +89,24 @@ def test_macos_passes_the_hint_as_data_and_preserves_path_characters(monkeypatch
 @pytest.mark.parametrize("selection", ["", "C:/Projects/café"])
 def test_windows_destroys_hidden_parent_after_selection(monkeypatch, selection):
     calls = []
+    monkeypatch.setattr(native, "enable_dpi_awareness", lambda: calls.append("scaling"))
     root = SimpleNamespace(
         withdraw=lambda: calls.append("hidden"),
         attributes=lambda *_args: None,
         destroy=lambda: calls.append("destroyed"),
     )
+
+    def create_parent():
+        calls.append("created")
+        return root
+
     module = SimpleNamespace(
-        Tk=lambda: root,
+        Tk=create_parent,
         filedialog=SimpleNamespace(askdirectory=lambda **_kwargs: selection),
     )
     monkeypatch.setitem(native.sys.modules, "tkinter", module)
     assert native._windows(None) == (selection or None)
-    assert calls == ["hidden", "destroyed"]
+    assert calls == ["scaling", "created", "hidden", "destroyed"]
 
 
 def test_folder_hint_is_optional_and_checked_in_helper(tmp_path):

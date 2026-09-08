@@ -170,6 +170,7 @@ def test_browse_fills_only_its_tab_and_waits_for_create(
         expect(
             form.get_by_role("button", name="Create session", exact=True)
         ).to_be_disabled()
+        expect(form.get_by_role("status")).to_be_hidden()
         other.get_by_role("button", name="Browse…", exact=True).click()
         expect(
             other.get_by_text("A folder picker is already open", exact=True)

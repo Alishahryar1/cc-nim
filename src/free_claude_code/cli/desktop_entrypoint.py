@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from free_claude_code.cli.desktop_assets import export_app_icon
+from free_claude_code.core.windows_dpi import enable_dpi_awareness
 
 
 def launch(argv: Sequence[str] | None = None) -> None:
@@ -20,6 +21,8 @@ def launch(argv: Sequence[str] | None = None) -> None:
     if sys.platform not in {"darwin", "win32"}:
         print("FCC Desktop is supported on Windows and macOS.", file=sys.stderr)
         raise SystemExit(1)
+
+    enable_dpi_awareness()
 
     from free_claude_code.cli.desktop_tray import launch as launch_tray
 
