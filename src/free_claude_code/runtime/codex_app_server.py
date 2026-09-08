@@ -168,8 +168,9 @@ class CodexAppServer:
             "model": model,
         }
         if self._reasoning.get(selection.model, True):
-            params["summary"] = "auto"
-            params["effort"] = selection.reasoning_effort
+            off = selection.reasoning_effort == "off"
+            params["summary"] = "none" if off else "auto"
+            params["effort"] = "none" if off else selection.reasoning_effort
         result = await self.rpc("turn/start", params)
         turn_id = string_value(object_value(result.get("turn")).get("id"))
         if not turn_id:
@@ -594,7 +595,7 @@ class CodexHarnessFactory:
             and reasoning_effort not in option.reasoning_efforts
         ):
             raise CodeValidationError(
-                "This reasoning effort is unavailable. Choose another effort or Model default."
+                "This effort is unavailable. Choose another effort."
             )
         effort = reasoning_effort or option.default_reasoning_effort
         fingerprints = {
@@ -631,15 +632,19 @@ class CodexHarnessFactory:
 
 
 def _model_option(model: str, entry: JsonObject) -> CodeModel:
+    efforts = tuple(
+        string_value(object_value(level).get("effort"))
+        for level in array_value(entry.get("supported_reasoning_levels"))
+    )
     return CodeModel(
         id=model,
         display_name=string_value(entry.get("display_name")) or model,
         reasoning_efforts=tuple(
-            string_value(object_value(level).get("effort"))
-            for level in array_value(entry.get("supported_reasoning_levels"))
-        ),
+            "off" if effort == "none" else effort for effort in efforts
+        )
+        or ("off",),
         default_reasoning_effort=string_value(entry.get("default_reasoning_level"))
-        or None,
+        or "off",
     )
 
 

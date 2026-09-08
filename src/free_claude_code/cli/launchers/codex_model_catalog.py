@@ -11,6 +11,7 @@ from free_claude_code.core.model_capabilities import ModelInputModality
 from .model_catalog import ClientModel
 
 SUPPORTED_REASONING_LEVELS: list[JsonObject] = [
+    {"effort": "none", "description": "Turn reasoning off"},
     {"effort": "low", "description": "Fast responses with lighter reasoning"},
     {
         "effort": "medium",
@@ -21,6 +22,7 @@ SUPPORTED_REASONING_LEVELS: list[JsonObject] = [
         "effort": "xhigh",
         "description": "Extra high reasoning depth for complex problems",
     },
+    {"effort": "max", "description": "Maximum reasoning effort"},
 ]
 
 CODEX_BASE_INSTRUCTIONS = (

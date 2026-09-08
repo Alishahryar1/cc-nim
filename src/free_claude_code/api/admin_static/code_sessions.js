@@ -716,7 +716,7 @@
       record.session.reasoning_effort &&
       !model.reasoning_efforts.includes(record.session.reasoning_effort)
     )
-      return "Selected thinking effort is unavailable. Choose another effort or Model default.";
+      return "Selected effort is unavailable. Choose another effort.";
     return "";
   }
 
@@ -783,7 +783,7 @@
         [],
         "",
         (value) => {
-          void updateSettings({ reasoning_effort: value || null });
+          void updateSettings({ reasoning_effort: value });
         },
       );
       controls.append(modelControl.group, reasoningControl.group);
@@ -1035,21 +1035,15 @@
       !catalogLoaded;
     modelControl.update(record?.session?.model || "", disabled);
     const model = catalog.find((model) => model.id === record?.session?.model),
-      effort = record?.session?.reasoning_effort;
-    const options = [
-      [
-        "",
-        model?.default_reasoning_effort
-          ? `Model default (${model.default_reasoning_effort})`
-          : "Model default",
-      ],
-      ...(model?.reasoning_efforts || []).map((value) => [value, value]),
-    ];
-    if (effort && !model?.reasoning_efforts.includes(effort))
-      options.push([effort, `${effort} (unavailable)`]);
-    reasoningControl.update(options, effort || "");
-    reasoningControl.select.disabled =
-      disabled || !model || (!model.reasoning_efforts.length && !effort);
+      effort =
+        record?.session?.reasoning_effort || model?.default_reasoning_effort || "off";
+    const options = ["off", "low", "medium", "high", "xhigh", "max"].map(
+      (value) => [value, value],
+    );
+    reasoningControl.update(options, effort);
+    for (const option of reasoningControl.select.options)
+      option.disabled = !model?.reasoning_efforts.includes(option.value);
+    reasoningControl.select.disabled = disabled || !model;
     root.querySelector("#codeComposerStatus").textContent =
       record?.session?.error ||
       selectionError(record) ||

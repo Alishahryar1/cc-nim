@@ -133,7 +133,7 @@
     };
     update(options, value);
     select.addEventListener("change", () => onChange(select.value));
-    group.append(node("span", "", "Thinking"), select);
+    group.append(node("span", "", "Effort"), select);
     return { group, select, update };
   }
   function composer(id, draft, placeholder, onInput, onSend, onStop) {
