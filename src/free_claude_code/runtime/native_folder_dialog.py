@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from free_claude_code.core.windows_dpi import enable_dpi_awareness
+
 _TITLE = "Choose a Code Session folder"
 _MAC_SCRIPT = """
 on run argv
@@ -43,6 +45,8 @@ def _initial_directory(value: str) -> str | None:
 
 
 def _windows(initial: str | None) -> str | None:
+    enable_dpi_awareness()
+
     import tkinter
     from tkinter import filedialog
 

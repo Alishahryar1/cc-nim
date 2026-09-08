@@ -625,7 +625,7 @@
           if (!context.isOpen() || context.isBusy()) return;
           const initial = readFolder();
           context.setBusy(true);
-          context.message("Choose a folder in the open folder picker.");
+          context.message("");
           try {
             const result = await api(`${base}/folder-picker`, {
               method: "POST",

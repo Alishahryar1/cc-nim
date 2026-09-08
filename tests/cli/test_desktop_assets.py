@@ -1,7 +1,9 @@
 """Packaged desktop icon and export contracts."""
 
+import builtins
 import struct
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,3 +57,24 @@ def test_desktop_entrypoint_rejects_unknown_arguments(
 
     assert exc_info.value.code == 2
     assert "Usage: fcc-desktop" in capsys.readouterr().err
+
+
+def test_desktop_sets_scaling_before_importing_native_tray(monkeypatch):
+    calls = []
+    monkeypatch.setattr(desktop_entrypoint.sys, "platform", "win32")
+    monkeypatch.setattr(
+        desktop_entrypoint,
+        "enable_dpi_awareness",
+        lambda: calls.append("scaling"),
+    )
+    original_import = builtins.__import__
+
+    def import_module(name, *args, **kwargs):
+        if name == "free_claude_code.cli.desktop_tray":
+            assert calls == ["scaling"]
+            return SimpleNamespace(launch=lambda: calls.append("tray"))
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_module)
+    desktop_entrypoint.launch([])
+    assert calls == ["scaling", "tray"]
