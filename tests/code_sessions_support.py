@@ -27,7 +27,7 @@ class FakeHarness:
         self.connections: list[FakeConnection] = []
         self.model = "provider/model"
         self.configurations = {self.model: "capabilities-1"}
-        self.efforts = ("low", "medium", "high", "xhigh")
+        self.efforts = ("off", "low", "medium", "high", "xhigh", "max")
         self.default_effort = "medium"
         self.creation_gate = asyncio.Event()
         self.start_gate = asyncio.Event()

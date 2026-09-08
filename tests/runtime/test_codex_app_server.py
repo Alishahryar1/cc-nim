@@ -181,12 +181,15 @@ async def test_turn_start_resets_sticky_effort_and_preserves_client_identity(
 
     monkeypatch.setattr(native, "rpc", rpc)
     harness = FakeHarness()
-    for effort in (None, "high", None):
+    for effort in (None, "high", "off", "max", None):
         await native.start_turn(
             "hello", harness.prepare("provider/model", effort), "operation"
         )
     assert [request.get("effort") for request in requests] == (
-        ["medium", "high", "medium"] if reasoning else [None, None, None]
+        ["medium", "high", "none", "max", "medium"] if reasoning else [None] * 5
+    )
+    assert [request.get("summary") for request in requests] == (
+        ["auto", "auto", "none", "auto", "auto"] if reasoning else [None] * 5
     )
     assert all(
         request["clientUserMessageId"] == "operation"

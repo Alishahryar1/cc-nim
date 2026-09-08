@@ -782,7 +782,30 @@ def send_from_other_client(page, url, text):
     return response.json()["id"]
 
 
-def test_model_default_clears_effort_when_all_choices_disappear(
+@pytest.mark.parametrize("choice", ["off", "low", "medium", "high", "xhigh", "max"])
+def test_effort_options_persist_and_reach_the_harness(
+    page, admin_base_url, tmp_path, code_control, choice
+):
+    create_session(page, admin_base_url, tmp_path)
+    effort = page.get_by_role("combobox", name="Effort", exact=True)
+    expect(effort.locator("option")).to_have_text(
+        ["off", "low", "medium", "high", "xhigh", "max"]
+    )
+    expect(effort).to_have_value("medium")
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH" and "/api/code/sessions/" in response.url
+        )
+    ) as changed:
+        effort.select_option(choice)
+    assert changed.value.json()["reasoning_effort"] == choice
+    page.reload()
+    expect(effort).to_have_value(choice)
+    send(page, "Use this effort")
+    assert code_control.connection().efforts == [choice]
+
+
+def test_off_clears_effort_when_reasoning_becomes_unavailable(
     page, context, admin_base_url, tmp_path, code_control
 ):
     url = create_session(page, admin_base_url, tmp_path)
@@ -790,12 +813,15 @@ def test_model_default_clears_effort_when_all_choices_disappear(
     effort.select_option("high")
     expect(effort).to_be_enabled()
     page.locator("#codeComposer").fill("Preserve this draft")
-    code_control.harness.efforts = ()
-    code_control.harness.default_effort = None
+    code_control.harness.efforts = ("off",)
+    code_control.harness.default_effort = "off"
     page.evaluate("window.CodeSessions.refresh()")
     expect(page.locator("#codeComposerStatus")).to_contain_text("unavailable")
     expect(effort).to_have_value("high")
-    expect(effort.locator("option:checked")).to_have_text("high (unavailable)")
+    expect(effort.locator("option:checked")).to_have_text("high")
+    expect(effort.locator("option:disabled")).to_have_text(
+        ["low", "medium", "high", "xhigh", "max"]
+    )
     expect(page.locator("#codeSend")).to_be_disabled()
     expect(effort).to_be_enabled()
     patches = []
@@ -812,24 +838,22 @@ def test_model_default_clears_effort_when_all_choices_disappear(
             response.request.method == "PATCH" and "/api/code/sessions/" in response.url
         )
     ) as reset:
-        effort.select_option("")
-    assert reset.value.json()["reasoning_effort"] is None
-    assert len(patches) == 1 and patches[0]["reasoning_effort"] is None
-    expect(effort).to_be_disabled()
+        effort.select_option("off")
+    assert reset.value.json()["reasoning_effort"] == "off"
+    assert len(patches) == 1 and patches[0]["reasoning_effort"] == "off"
     expect(page.locator("#codeComposerStatus")).not_to_contain_text("unavailable")
     expect(page.locator("#codeSend")).to_be_enabled()
     page.reload()
-    expect(effort).to_have_value("")
-    expect(effort).to_be_disabled()
+    expect(effort).to_have_value("off")
     expect(page.locator("#codeComposer")).to_have_value("Preserve this draft")
     second = context.new_page()
     try:
         second.goto(url)
-        expect(second.locator("#codeReasoning")).to_have_value("")
+        expect(second.locator("#codeReasoning")).to_have_value("off")
         expect(second.locator("#codeModel")).to_have_value("provider/model")
         page.locator("#codeSend").click()
         connection = code_control.connection()
-        assert connection.efforts == [None]
+        assert connection.efforts == ["off"]
         assert connection.inputs[0][1:] == ("Preserve this draft", "provider/model")
     finally:
         second.close()
@@ -1087,8 +1111,8 @@ def test_model_effort_picker_syncs_tabs_and_keeps_missing_selection(
         expect(page.locator("#codeModel")).to_be_disabled()
         expect(second.locator("#codeReasoning")).to_be_disabled()
         code_control.run(connection.finish("turn-1"))
-        page.locator("#codeReasoning").select_option("")
-        expect(second.locator("#codeReasoning")).to_have_value("")
+        page.locator("#codeReasoning").select_option("medium")
+        expect(second.locator("#codeReasoning")).to_have_value("medium")
         page.get_by_role("textbox", name="Message", exact=True).fill("Preserve me")
         code_control.harness.configurations.pop("provider/other")
         if refresh_first:

@@ -111,12 +111,32 @@ def test_code_picker_and_native_selection_use_the_same_advertised_efforts():
     advertised = factory.catalog()
     assert advertised.default_model == "nvidia_nim/configured"
     model = advertised.models[1]
+    assert model.reasoning_efforts == ("off", "low", "medium", "high", "xhigh", "max")
     selected = factory.prepare(model.id, None)
     assert selected.model == model.id
     assert selected.context.settings.model == model.id
     assert selected.reasoning_effort == model.default_reasoning_effort == "medium"
-    assert factory.prepare(model.id, "high").reasoning_effort == "high"
+    for effort in model.reasoning_efforts:
+        assert factory.prepare(model.id, effort).reasoning_effort == effort
     with pytest.raises(CodeValidationError, match="effort"):
         factory.prepare(model.id, "unsupported")
     with pytest.raises(CodeValidationError, match="model"):
         factory.prepare("missing/model", None)
+
+
+def test_non_reasoning_model_off_selection_is_available():
+    runtime = FakeRequestRuntime(
+        settings=Settings().model_copy(update={"model": "nvidia_nim/configured"}),
+        cached_infos=(
+            ProviderModelInfo("open_router/text-only", supports_thinking=False),
+        ),
+    )
+    factory = CodexHarnessFactory(runtime, binary="codex")
+    model = next(
+        entry
+        for entry in factory.catalog().models
+        if entry.id == "open_router/text-only"
+    )
+    assert model.reasoning_efforts == ("off",)
+    assert model.default_reasoning_effort == "off"
+    assert factory.prepare(model.id, "off").reasoning_effort == "off"

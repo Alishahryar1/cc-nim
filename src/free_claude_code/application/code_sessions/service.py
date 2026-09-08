@@ -368,7 +368,7 @@ class CodeService:
                     effort = None
                 if effort is not None and effort not in entry.reasoning_efforts:
                     raise CodeValidationError(
-                        "This reasoning effort is unavailable. Choose another effort or Model default."
+                        "This effort is unavailable. Choose another effort."
                     )
                 updates.update(model=model, reasoning_effort=effort)
             session = await self._store.update_settings(
